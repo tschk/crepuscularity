@@ -17,8 +17,8 @@ gpui_text_run_styles = []
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
 # Pinned to gpui-ce git main (tracks upstream Zed newer than crates.io 0.2.2) so `text_transform`,
 # `letter_spacing`, and `div().hidden()` are available natively — no patched vendor tree needed.
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"] }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform" }
+gpui = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui", default-features = false, features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui_platform" }
 notify = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

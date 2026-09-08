@@ -38,8 +38,8 @@ gpui-text-extras = [
 # which conflicts with the gpui-ce fork. Re-add once gpui-symbols publishes a gpui-ce-compatible release.
 
 [dependencies]
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform" }
+gpui = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui", default-features = false }
+gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui_platform" }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
 crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.19" }
