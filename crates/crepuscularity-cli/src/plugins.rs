@@ -98,7 +98,26 @@ fn run_test(manifest: Option<PathBuf>) {
             }
         };
 
-        let status = Command::new(&args[0])
+        let bin = &args[0];
+        let allowed = [
+            "cargo", "go", "bun", "deno", "node", "zig", "swift", "dotnet", "python", "python3",
+            "ruby", "php", "javac", "java", "kotlinc", "kotlin", "v", "gcc", "g++", "clang",
+            "clang++", "rustc",
+        ];
+
+        if !allowed.contains(&bin.as_str()) {
+            println!(
+                "{}",
+                style(format!(
+                    "security error: command '{bin}' is not in the allowlist"
+                ))
+                .red()
+            );
+            failed = true;
+            continue;
+        }
+
+        let status = Command::new(bin)
             .args(&args[1..])
             .current_dir(&root)
             .status();
