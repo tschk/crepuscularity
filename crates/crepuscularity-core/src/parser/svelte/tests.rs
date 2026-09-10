@@ -284,6 +284,12 @@ fn script_body_never_leaks_into_markup() {
     assert_eq!(el(&comp.nodes[0]).tag, "p");
 }
 
+#[test]
+fn parse_svelte_component_propagates_errors() {
+    let result = parse_svelte_component("<div><span>hi</div>");
+    assert!(result.unwrap_err().to_string().contains("</span>"));
+}
+
 // ── Explicitly unsupported constructs ────────────────────────────────────────
 
 #[test]
