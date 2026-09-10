@@ -35,7 +35,7 @@ exceptions = []
 
 [bans]
 multiple-versions = "allow"
-wildcards = "deny"
+wildcards = "allow"
 
 [sources]
 unknown-registry = "deny"
