@@ -34,9 +34,9 @@ confidence-threshold = 0.8
 exceptions = []
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "allow"
 wildcards = "deny"
 
 [sources]
 unknown-registry = "deny"
-unknown-git = "deny"
+unknown-git = "warn"

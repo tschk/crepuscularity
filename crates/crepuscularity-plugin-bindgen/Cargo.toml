@@ -10,4 +10,4 @@ publish = true
 [dependencies]
 equilibrium-ffi = "0.1.3"
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "0.8.23"
