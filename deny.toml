@@ -36,7 +36,32 @@ exceptions = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+skip = [
+    { name = "windows" },
+    { name = "windows-core" },
+    { name = "windows-sys" },
+    { name = "windows-targets" },
+    { name = "windows_aarch64_gnullvm" },
+    { name = "windows_aarch64_msvc" },
+    { name = "windows_i686_gnu" },
+    { name = "windows_i686_msvc" },
+    { name = "windows_x86_64_gnu" },
+    { name = "windows_x86_64_gnullvm" },
+    { name = "windows_x86_64_msvc" },
+    { name = "winnow" },
+    { name = "windows-implement" },
+    { name = "windows-interface" },
+    { name = "windows-numerics" },
+    { name = "windows-result" },
+    { name = "windows-strings" },
+    { name = "windows-threading" },
+    { name = "windows-future" },
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+    "https://github.com/gpui-ce/gpui-ce",
+    "https://github.com/rust-lang/crates.io-index",
+]
