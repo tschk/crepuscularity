@@ -245,303 +245,497 @@ fn emit_for_each(
 fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
     let pad = "  ".repeat(indent);
     match node {
-        ViewNode::Text {
-            content,
-            bind,
-            style,
-        } => format!(
-            "{pad}<span{}>{}</span>",
-            class_attr(style.as_ref()),
-            text_child(content, bind.as_ref(), locals)
-        ),
-        ViewNode::Link {
-            href,
-            target,
-            rel,
-            style,
-            children,
-        } => {
-            let attrs = format!(
-                "{}{}{}{}",
-                attr("href", href),
-                opt_attr("target", target.as_ref()),
-                opt_attr("rel", rel.as_ref()),
-                class_attr(style.as_ref())
-            );
-            element("a", &attrs, children, indent, locals)
-        }
-        ViewNode::Stack {
-            on_long_press,
-            style,
-            children,
-            ..
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_on_long_press(on_long_press.as_ref())
-            );
-            element("div", &attrs, children, indent, locals)
-        }
-        ViewNode::Scroll { style, children, .. } => {
-            element("div", &class_attr(style.as_ref()), children, indent, locals)
-        }
-        ViewNode::Dropzone {
-            on_drop,
-            style,
-            children,
-            ..
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_dom_event("ondrop", on_drop.as_ref())
-            );
-            element("div", &attrs, children, indent, locals)
-        }
-        ViewNode::List {
-            ordered,
-            style,
-            children,
-        } => element(
-            if *ordered { "ol" } else { "ul" },
-            &class_attr(style.as_ref()),
-            children,
-            indent,
-            locals,
-        ),
-        ViewNode::ListItem {
-            on_long_press,
-            style,
-            children,
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_on_long_press(on_long_press.as_ref())
-            );
-            element("li", &attrs, children, indent, locals)
-        }
-        ViewNode::Button {
-            label,
-            on_click,
-            on_long_press,
-            style,
-        } => format!(
-            "{pad}<button type=\"button\"{}{}{}>{}</button>",
-            class_attr(style.as_ref()),
-            opt_on_click(on_click.as_ref()),
-            opt_on_long_press(on_long_press.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Badge { label, tone, style, .. } => format!(
-            "{pad}<span{}{}>{}</span>",
-            class_attr(style.as_ref()),
-            opt_attr("data-tone", tone.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Divider { style, .. } => {
-            format!("{pad}<hr{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Spacer { style, .. } => {
-            format!("{pad}<div aria-hidden=\"true\"{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Image {
-            src,
-            alt,
-            on_long_press,
-            style,
-            ..
-        } => format!(
-            "{pad}<img{}{}{}{} />",
-            attr("src", src),
-            attr("alt", alt.as_deref().unwrap_or("")),
-            class_attr(style.as_ref()),
-            opt_on_long_press(on_long_press.as_ref())
-        ),
-        ViewNode::WebView { src, style } => format!(
-            "{pad}<iframe{}{} />",
-            attr("src", src),
-            class_attr(style.as_ref())
-        ),
-        ViewNode::Toggle {
-            label,
-            checked,
-            on_change,
-            on_long_press,
-            style,
-            ..
-        } => format!(
-            "{pad}<button type=\"button\" role=\"switch\" aria-checked={{{}}}{}{}{}>{}</button>",
-            checked,
-            class_attr(style.as_ref()),
-            opt_dom_event("onchange", on_change.as_ref()),
-            opt_on_long_press(on_long_press.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Checkbox {
-            label,
-            checked,
-            on_change,
-            style,
-            ..
-        } => format!(
-            "{pad}<label{}>\n{pad}  <input type=\"checkbox\" checked={{{}}}{} />\n{pad}  {}\n{pad}</label>",
-            class_attr(style.as_ref()),
-            checked,
-            opt_dom_event("onchange", on_change.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Slider {
-            value,
-            min,
-            max,
-            step,
-            on_change,
-            style,
-            ..
-        } => format!(
-            "{pad}<input type=\"range\" value={{{value}}} min={{{min}}} max={{{max}}}{}{}{} />",
-            step.map(|s| format!(" step={{{s}}}")).unwrap_or_default(),
-            class_attr(style.as_ref()),
-            opt_dom_event("onchange", on_change.as_ref())
-        ),
-        ViewNode::Progress {
-            value, max, style, ..
-        } => format!(
-            "{pad}<progress value={{{value}}} max={{{max}}}{} />",
-            class_attr(style.as_ref())
-        ),
-        ViewNode::Meter {
-            value,
-            min,
-            max,
-            style,
-            ..
-        } => format!(
-            "{pad}<meter value={{{value}}} min={{{min}}} max={{{max}}}{} />",
-            class_attr(style.as_ref())
-        ),
-        ViewNode::Input {
-            placeholder,
-            bind,
-            secure,
-            multiline,
-            on_change,
-            style,
-        } => {
-            let cls = class_attr(style.as_ref());
-            let ph = attr("placeholder", placeholder);
-            let name = attr("name", bind);
-            let on_change_attr = opt_dom_event("onchange", on_change.as_ref());
-            if *multiline {
-                format!("{pad}<textarea{ph}{name}{cls}{on_change_attr}></textarea>")
-            } else {
-                let ty = if *secure { "password" } else { "text" };
-                format!("{pad}<input type=\"{ty}\"{ph}{name}{cls}{on_change_attr} />")
-            }
-        }
-        ViewNode::Picker {
-            options,
-            bind,
-            on_change,
-            style,
-        } => {
-            let opts: String = options
-                .iter()
-                .map(|o| {
-                    format!(
-                        "{pad}  <option{}>{}</option>",
-                        attr("value", &o.value),
-                        html_text(&o.label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "{pad}<select{}{}{}>\n{opts}\n{pad}</select>",
-                attr("name", bind),
-                class_attr(style.as_ref()),
-                opt_dom_event("onchange", on_change.as_ref())
-            )
-        }
-        ViewNode::FilePicker {
-            label,
-            accept,
-            multiple,
-            on_pick,
-            style,
-        } => {
-            let accept_attr = if accept.is_empty() {
-                String::new()
-            } else {
-                attr("accept", &accept.join(","))
-            };
-            let multiple_attr = if *multiple { " multiple" } else { "" };
-            format!(
-                "{pad}<label{}>\n{pad}  <input type=\"file\"{accept_attr}{multiple_attr}{} />\n{pad}  {}\n{pad}</label>",
-                class_attr(style.as_ref()),
-                opt_dom_event("onchange", on_pick.as_ref()),
-                html_text(label)
-            )
-        }
-        ViewNode::SlotRotate {
-            phrases,
-            interval_ms,
-            style,
-        } => format!(
-            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
-            attr("data-crepus-slot-rotate", &phrases.join("|")),
-            class_attr(style.as_ref()),
-            html_text(phrases.first().map(String::as_str).unwrap_or(""))
-        ),
-        ViewNode::Tabs {
-            tabs,
-            on_change,
-            style,
-            ..
-        } => {
-            let cls = class_attr(style.as_ref());
-            let buttons: String = tabs
-                .iter()
-                .map(|t| {
-                    let onclick = match on_change {
-                        Some(name) => on_click_arg_attr(name, &format!("\"{}\"", t.value)),
-                        None => String::new(),
-                    };
-                    format!(
-                        "{pad}    <button type=\"button\" role=\"tab\"{onclick}>{}</button>",
-                        html_text(&t.label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let panels: String = tabs
-                .iter()
-                .map(|t| {
-                    format!(
-                        "{pad}  <div role=\"tabpanel\">\n{}\n{pad}  </div>",
-                        emit_children(&t.children, indent + 2, locals)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
-            )
-        }
+        ViewNode::Text { .. } => emit_text(node, &pad, indent, locals),
+        ViewNode::Link { .. } => emit_link(node, &pad, indent, locals),
+        ViewNode::Stack { .. } => emit_stack(node, &pad, indent, locals),
+        ViewNode::Scroll { .. } => emit_scroll(node, &pad, indent, locals),
+        ViewNode::Dropzone { .. } => emit_dropzone(node, &pad, indent, locals),
+        ViewNode::List { .. } => emit_list(node, &pad, indent, locals),
+        ViewNode::ListItem { .. } => emit_list_item(node, &pad, indent, locals),
+        ViewNode::Button { .. } => emit_button(node, &pad, indent, locals),
+        ViewNode::Badge { .. } => emit_badge(node, &pad, indent, locals),
+        ViewNode::Divider { .. } => emit_divider(node, &pad, indent, locals),
+        ViewNode::Spacer { .. } => emit_spacer(node, &pad, indent, locals),
+        ViewNode::Image { .. } => emit_image(node, &pad, indent, locals),
+        ViewNode::WebView { .. } => emit_web_view(node, &pad, indent, locals),
+        ViewNode::Toggle { .. } => emit_toggle(node, &pad, indent, locals),
+        ViewNode::Checkbox { .. } => emit_checkbox(node, &pad, indent, locals),
+        ViewNode::Slider { .. } => emit_slider(node, &pad, indent, locals),
+        ViewNode::Progress { .. } => emit_progress(node, &pad, indent, locals),
+        ViewNode::Meter { .. } => emit_meter(node, &pad, indent, locals),
+        ViewNode::Input { .. } => emit_input(node, &pad, indent, locals),
+        ViewNode::Picker { .. } => emit_picker(node, &pad, indent, locals),
+        ViewNode::FilePicker { .. } => emit_file_picker(node, &pad, indent, locals),
+        ViewNode::SlotRotate { .. } => emit_slot_rotate(node, &pad, indent, locals),
+        ViewNode::Tabs { .. } => emit_tabs(node, &pad, indent, locals),
         ViewNode::If {
             condition,
             then_children,
             else_children,
             ..
-        } => emit_if(condition, then_children, else_children.as_ref(), indent, locals),
+        } => emit_if(
+            condition,
+            then_children,
+            else_children.as_ref(),
+            indent,
+            locals,
+        ),
         ViewNode::ForEach {
             bind,
             item_name,
             item_body,
             ..
         } => emit_for_each(bind, item_name, item_body, indent, locals),
+    }
+}
+
+fn emit_text(node: &ViewNode, pad: &str, _indent: usize, locals: &[String]) -> String {
+    let ViewNode::Text {
+        content,
+        bind,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<span{}>{}</span>",
+        class_attr(style.as_ref()),
+        text_child(content, bind.as_ref(), locals)
+    )
+}
+
+fn emit_link(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::Link {
+        href,
+        target,
+        rel,
+        style,
+        children,
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let attrs = format!(
+            "{}{}{}{}",
+            attr("href", href),
+            opt_attr("target", target.as_ref()),
+            opt_attr("rel", rel.as_ref()),
+            class_attr(style.as_ref())
+        );
+        element("a", &attrs, children, indent, locals)
+    }
+}
+
+fn emit_stack(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::Stack {
+        on_long_press,
+        style,
+        children,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let attrs = format!(
+            "{}{}",
+            class_attr(style.as_ref()),
+            opt_on_long_press(on_long_press.as_ref())
+        );
+        element("div", &attrs, children, indent, locals)
+    }
+}
+
+fn emit_scroll(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::Scroll {
+        style, children, ..
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        element("div", &class_attr(style.as_ref()), children, indent, locals)
+    }
+}
+
+fn emit_dropzone(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::Dropzone {
+        on_drop,
+        style,
+        children,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let attrs = format!(
+            "{}{}",
+            class_attr(style.as_ref()),
+            opt_dom_event("ondrop", on_drop.as_ref())
+        );
+        element("div", &attrs, children, indent, locals)
+    }
+}
+
+fn emit_list(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::List {
+        ordered,
+        style,
+        children,
+    } = node
+    else {
+        unreachable!()
+    };
+    element(
+        if *ordered { "ol" } else { "ul" },
+        &class_attr(style.as_ref()),
+        children,
+        indent,
+        locals,
+    )
+}
+
+fn emit_list_item(node: &ViewNode, _pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::ListItem {
+        on_long_press,
+        style,
+        children,
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let attrs = format!(
+            "{}{}",
+            class_attr(style.as_ref()),
+            opt_on_long_press(on_long_press.as_ref())
+        );
+        element("li", &attrs, children, indent, locals)
+    }
+}
+
+fn emit_button(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Button {
+        label,
+        on_click,
+        on_long_press,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<button type=\"button\"{}{}{}>{}</button>",
+        class_attr(style.as_ref()),
+        opt_on_click(on_click.as_ref()),
+        opt_on_long_press(on_long_press.as_ref()),
+        html_text(label)
+    )
+}
+
+fn emit_badge(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Badge {
+        label, tone, style, ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<span{}{}>{}</span>",
+        class_attr(style.as_ref()),
+        opt_attr("data-tone", tone.as_ref()),
+        html_text(label)
+    )
+}
+
+fn emit_divider(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Divider { style, .. } = node else {
+        unreachable!()
+    };
+    {
+        format!("{pad}<hr{} />", class_attr(style.as_ref()))
+    }
+}
+
+fn emit_spacer(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Spacer { style, .. } = node else {
+        unreachable!()
+    };
+    {
+        format!(
+            "{pad}<div aria-hidden=\"true\"{} />",
+            class_attr(style.as_ref())
+        )
+    }
+}
+
+fn emit_image(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Image {
+        src,
+        alt,
+        on_long_press,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<img{}{}{}{} />",
+        attr("src", src),
+        attr("alt", alt.as_deref().unwrap_or("")),
+        class_attr(style.as_ref()),
+        opt_on_long_press(on_long_press.as_ref())
+    )
+}
+
+fn emit_web_view(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::WebView { src, style } = node else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<iframe{}{} />",
+        attr("src", src),
+        class_attr(style.as_ref())
+    )
+}
+
+fn emit_toggle(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Toggle {
+        label,
+        checked,
+        on_change,
+        on_long_press,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<button type=\"button\" role=\"switch\" aria-checked={{{}}}{}{}{}>{}</button>",
+        checked,
+        class_attr(style.as_ref()),
+        opt_dom_event("onchange", on_change.as_ref()),
+        opt_on_long_press(on_long_press.as_ref()),
+        html_text(label)
+    )
+}
+
+fn emit_checkbox(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Checkbox {
+        label,
+        checked,
+        on_change,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+            "{pad}<label{}>\n{pad}  <input type=\"checkbox\" checked={{{}}}{} />\n{pad}  {}\n{pad}</label>",
+            class_attr(style.as_ref()),
+            checked,
+            opt_dom_event("onchange", on_change.as_ref()),
+            html_text(label)
+        )
+}
+
+fn emit_slider(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Slider {
+        value,
+        min,
+        max,
+        step,
+        on_change,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<input type=\"range\" value={{{value}}} min={{{min}}} max={{{max}}}{}{}{} />",
+        step.map(|s| format!(" step={{{s}}}")).unwrap_or_default(),
+        class_attr(style.as_ref()),
+        opt_dom_event("onchange", on_change.as_ref())
+    )
+}
+
+fn emit_progress(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Progress {
+        value, max, style, ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<progress value={{{value}}} max={{{max}}}{} />",
+        class_attr(style.as_ref())
+    )
+}
+
+fn emit_meter(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Meter {
+        value,
+        min,
+        max,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<meter value={{{value}}} min={{{min}}} max={{{max}}}{} />",
+        class_attr(style.as_ref())
+    )
+}
+
+fn emit_input(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Input {
+        placeholder,
+        bind,
+        secure,
+        multiline,
+        on_change,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let cls = class_attr(style.as_ref());
+        let ph = attr("placeholder", placeholder);
+        let name = attr("name", bind);
+        let on_change_attr = opt_dom_event("onchange", on_change.as_ref());
+        if *multiline {
+            format!("{pad}<textarea{ph}{name}{cls}{on_change_attr}></textarea>")
+        } else {
+            let ty = if *secure { "password" } else { "text" };
+            format!("{pad}<input type=\"{ty}\"{ph}{name}{cls}{on_change_attr} />")
+        }
+    }
+}
+
+fn emit_picker(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::Picker {
+        options,
+        bind,
+        on_change,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let opts: String = options
+            .iter()
+            .map(|o| {
+                format!(
+                    "{pad}  <option{}>{}</option>",
+                    attr("value", &o.value),
+                    html_text(&o.label)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{pad}<select{}{}{}>\n{opts}\n{pad}</select>",
+            attr("name", bind),
+            class_attr(style.as_ref()),
+            opt_dom_event("onchange", on_change.as_ref())
+        )
+    }
+}
+
+fn emit_file_picker(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::FilePicker {
+        label,
+        accept,
+        multiple,
+        on_pick,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let accept_attr = if accept.is_empty() {
+            String::new()
+        } else {
+            attr("accept", &accept.join(","))
+        };
+        let multiple_attr = if *multiple { " multiple" } else { "" };
+        format!(
+                "{pad}<label{}>\n{pad}  <input type=\"file\"{accept_attr}{multiple_attr}{} />\n{pad}  {}\n{pad}</label>",
+                class_attr(style.as_ref()),
+                opt_dom_event("onchange", on_pick.as_ref()),
+                html_text(label)
+            )
+    }
+}
+
+fn emit_slot_rotate(node: &ViewNode, pad: &str, _indent: usize, _locals: &[String]) -> String {
+    let ViewNode::SlotRotate {
+        phrases,
+        interval_ms,
+        style,
+    } = node
+    else {
+        unreachable!()
+    };
+    format!(
+        "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
+        attr("data-crepus-slot-rotate", &phrases.join("|")),
+        class_attr(style.as_ref()),
+        html_text(phrases.first().map(String::as_str).unwrap_or(""))
+    )
+}
+
+fn emit_tabs(node: &ViewNode, pad: &str, indent: usize, locals: &[String]) -> String {
+    let ViewNode::Tabs {
+        tabs,
+        on_change,
+        style,
+        ..
+    } = node
+    else {
+        unreachable!()
+    };
+    {
+        let cls = class_attr(style.as_ref());
+        let buttons: String = tabs
+            .iter()
+            .map(|t| {
+                let onclick = match on_change {
+                    Some(name) => on_click_arg_attr(name, &format!("\"{}\"", t.value)),
+                    None => String::new(),
+                };
+                format!(
+                    "{pad}    <button type=\"button\" role=\"tab\"{onclick}>{}</button>",
+                    html_text(&t.label)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let panels: String = tabs
+            .iter()
+            .map(|t| {
+                format!(
+                    "{pad}  <div role=\"tabpanel\">\n{}\n{pad}  </div>",
+                    emit_children(&t.children, indent + 2, locals)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+                "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
+            )
     }
 }
 
