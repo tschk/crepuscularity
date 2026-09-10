@@ -597,7 +597,7 @@ mod tests {
             eval_expr("42", &ctx).unwrap(),
             TemplateValue::Int(42)
         ));
-        #[allow(clippy::approx_constant)]
+
         assert!(
             matches!(eval_expr("3.14", &ctx).unwrap(), TemplateValue::Float(f) if (f - 3.14).abs() < f64::EPSILON)
         );
