@@ -102,7 +102,7 @@ fn run_test(manifest: Option<PathBuf>) {
         let allowed = [
             "cargo", "go", "bun", "deno", "node", "zig", "swift", "dotnet", "python", "python3",
             "ruby", "php", "javac", "java", "kotlinc", "kotlin", "v", "gcc", "g++", "clang",
-            "clang++", "rustc",
+            "clang++", "rustc", "test",
         ];
 
         if !allowed.contains(&bin.as_str()) {
