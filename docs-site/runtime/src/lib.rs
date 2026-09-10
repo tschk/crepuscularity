@@ -570,6 +570,8 @@ async fn fetch_download_payloads(crates: &[CrateInfo]) -> Result<Vec<DownloadsRe
     let responses = js_sys::Array::from(&responses);
     let mut payloads = Vec::with_capacity(responses.length() as usize);
 
+    let json_promises = js_sys::Array::new();
+
     for response_value in responses.iter() {
         let response: web_sys::Response = response_value.dyn_into()?;
         if !response.ok() {
@@ -578,7 +580,13 @@ async fn fetch_download_payloads(crates: &[CrateInfo]) -> Result<Vec<DownloadsRe
                 response.status()
             )));
         }
-        let json = JsFuture::from(response.json()?).await?;
+        json_promises.push(&response.json()?.into());
+    }
+
+    let jsons = JsFuture::from(js_sys::Promise::all(&json_promises)).await?;
+    let jsons = js_sys::Array::from(&jsons);
+
+    for json in jsons.iter() {
         payloads.push(decode_json_value::<DownloadsResponse>(&json)?);
     }
 
