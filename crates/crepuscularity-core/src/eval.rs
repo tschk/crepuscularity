@@ -597,9 +597,9 @@ mod tests {
             eval_expr("42", &ctx).unwrap(),
             TemplateValue::Int(42)
         ));
-        #[allow(clippy::approx_constant)]
+
         assert!(
-            matches!(eval_expr("3.14", &ctx).unwrap(), TemplateValue::Float(f) if (f - 3.14).abs() < f64::EPSILON)
+            matches!(eval_expr("std::f64::consts::PI", &ctx).unwrap(), TemplateValue::Float(f) if (f - std::f64::consts::PI).abs() < f64::EPSILON)
         );
         assert!(matches!(eval_expr("\"foo\"", &ctx).unwrap(), TemplateValue::Str(s) if s == "foo"));
         assert!(matches!(
@@ -785,7 +785,7 @@ mod tests {
         assert!(!is_truthy(&TemplateValue::Bool(false)));
         assert!(is_truthy(&TemplateValue::Int(42)));
         assert!(!is_truthy(&TemplateValue::Int(0)));
-        assert!(is_truthy(&TemplateValue::Float(3.14)));
+        assert!(is_truthy(&TemplateValue::Float(std::f64::consts::PI)));
         assert!(!is_truthy(&TemplateValue::Float(0.0)));
         assert!(is_truthy(&TemplateValue::Str("foo".into())));
         assert!(!is_truthy(&TemplateValue::Str("".into())));
