@@ -100,11 +100,7 @@ fn process_run(payload: &Value) -> Result<Value, BridgeError> {
         .split_first()
         .ok_or_else(|| BridgeError::new("invalid_argument", "empty command"))?;
 
-    let is_in = std::path::Path::new(program)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n == "in" || n == "in.exe")
-        .unwrap_or(false);
+    let is_in = program == "in" || program == "in.exe";
 
     if !is_in {
         return Err(BridgeError::new(
