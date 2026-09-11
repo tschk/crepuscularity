@@ -102,11 +102,13 @@
 
   function collectWidgetPres() {
     const pres = [];
-    document.querySelectorAll("pre").forEach((node) => {
+    const nodes = document.getElementsByTagName("pre");
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
       if (node instanceof HTMLElement && hasAnywhereContent(node)) {
         pres.push(node);
       }
-    });
+    }
     return pres.filter(
       (pre) => !pres.some((other) => other !== pre && other.contains(pre))
     );
@@ -433,11 +435,13 @@
       pending.add(node);
       return;
     }
-    node.querySelectorAll("pre").forEach((pre) => {
+    const nodes = node.getElementsByTagName("pre");
+    for (let i = 0; i < nodes.length; i++) {
+      const pre = nodes[i];
       if (pre instanceof HTMLElement && hasAnywhereContent(pre)) {
         pending.add(pre);
       }
-    });
+    }
   }
 
   function flushPending() {
