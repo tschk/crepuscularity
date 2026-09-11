@@ -179,5 +179,11 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert_eq!(err.code, "access_denied");
+
+        let payload = json!({ "command": "/tmp/malicious/in build" });
+        let res = p.invoke("processRun", &payload);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert_eq!(err.code, "access_denied");
     }
 }
