@@ -636,3 +636,19 @@ fn filter_web_class(class: &str) -> Option<String> {
     }
     Some(class.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!(escape_html(""), "");
+        assert_eq!(escape_html("hello"), "hello");
+        assert_eq!(escape_html("&<>\"'"), "&amp;&lt;&gt;&quot;&#39;");
+        assert_eq!(
+            escape_html("<div>\"test\" & 'test'</div>"),
+            "&lt;div&gt;&quot;test&quot; &amp; &#39;test&#39;&lt;/div&gt;"
+        );
+    }
+}
