@@ -714,8 +714,8 @@ fn sync_downloads_list(root: &web_sys::Element, html: &str) -> Result<(), JsValu
     let incoming = document.create_element("div")?;
     incoming.set_inner_html(html);
 
-    let existing_rows = list.query_selector_all("[data-downloads-row-key]")?;
-    let incoming_rows = incoming.query_selector_all("[data-downloads-row-key]")?;
+    let existing_rows = list.children();
+    let incoming_rows = incoming.children();
 
     if existing_rows.length() != incoming_rows.length()
         || existing_rows.length() == 0
@@ -746,8 +746,8 @@ fn sync_downloads_list(root: &web_sys::Element, html: &str) -> Result<(), JsValu
 
 #[cfg(target_arch = "wasm32")]
 fn download_row_keys_match(
-    existing_rows: &web_sys::NodeList,
-    incoming_rows: &web_sys::NodeList,
+    existing_rows: &web_sys::HtmlCollection,
+    incoming_rows: &web_sys::HtmlCollection,
 ) -> bool {
     use wasm_bindgen::JsCast;
 
