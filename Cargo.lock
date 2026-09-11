@@ -28,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "accesskit_consumer"
-version = "0.37.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f950720ce064757a1b629caad3a408e8d2c63bb01f29b8a3ff8daa331053ffeb"
+checksum = "53cf47daed85312e763fbf85ceca136e0d7abc68e0a7e12abe11f48172bc3b10"
 dependencies = [
  "accesskit",
  "hashbrown 0.16.1",
@@ -80,12 +80,12 @@ dependencies = [
 
 [[package]]
 name = "accesskit_windows"
-version = "0.33.1"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36e93ac7bf50b964f1cbb75f741629a4e950571baa1ef1274457ab5a80d9bcc2"
+checksum = "eff7009f1a532e917d66970a1e80c965140c6cfbbabbdde3d64e5431e6c78e21"
 dependencies = [
  "accesskit",
- "accesskit_consumer 0.37.0",
+ "accesskit_consumer 0.35.0",
  "hashbrown 0.16.1",
  "static_assertions",
  "windows 0.62.2",
@@ -237,7 +237,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -248,7 +248,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2380,7 +2380,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2938,7 +2938,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3124,7 +3124,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
- "spin 0.9.9",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -3530,7 +3530,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.62.2",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -3556,7 +3556,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3633,7 +3633,7 @@ dependencies = [
  "uuid",
  "waker-fn",
  "web-time",
- "windows 0.62.2",
+ "windows 0.61.3",
  "zed-font-kit",
  "zed-scap",
 ]
@@ -3641,7 +3641,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_util"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "anyhow",
  "log",
@@ -3651,7 +3651,7 @@ dependencies = [
 [[package]]
 name = "gpui_collections"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "gpui_ce_util",
  "indexmap",
@@ -3661,7 +3661,7 @@ dependencies = [
 [[package]]
 name = "gpui_derive_refineable"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3671,7 +3671,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -3722,7 +3722,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3771,7 +3771,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3782,7 +3782,7 @@ dependencies = [
 [[package]]
 name = "gpui_media"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -3797,7 +3797,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -3810,7 +3810,7 @@ dependencies = [
 [[package]]
 name = "gpui_refineable"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "gpui_derive_refineable",
 ]
@@ -3818,7 +3818,7 @@ dependencies = [
 [[package]]
 name = "gpui_scheduler"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "async-task",
  "backtrace",
@@ -3833,7 +3833,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "schemars",
  "serde",
@@ -3843,7 +3843,7 @@ dependencies = [
 [[package]]
 name = "gpui_sum_tree"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "heapless 0.9.3",
  "log",
@@ -3854,7 +3854,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3876,7 +3876,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3906,7 +3906,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce#9949f8b2d27bb1d6dbc1efe90be039634cf1fb6b"
+source = "git+https://github.com/gpui-ce/gpui-ce#c738623ffbcec2aeddc44a645cc6b74646d5cf97"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3925,9 +3925,9 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "uuid",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "windows-numerics 0.3.1",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+ "windows-numerics 0.2.0",
  "windows-registry",
  "zed-scap",
 ]
@@ -5410,7 +5410,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6952,7 +6952,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7546,7 +7546,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8084,14 +8084,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "spin"
-version = "0.9.9"
+version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
 ]
@@ -8130,7 +8130,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8535,10 +8535,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9133,7 +9133,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9942,7 +9942,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10155,13 +10155,13 @@ dependencies = [
 
 [[package]]
 name = "windows-registry"
-version = "0.6.1"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+checksum = "5b8a9ed28765efc97bbc954883f4e6796c33a06546ebafacbabee9696967499e"
 dependencies = [
- "windows-link 0.2.1",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
+ "windows-strings 0.4.2",
 ]
 
 [[package]]
