@@ -100,11 +100,7 @@ fn process_run(payload: &Value) -> Result<Value, BridgeError> {
         .split_first()
         .ok_or_else(|| BridgeError::new("invalid_argument", "empty command"))?;
 
-    let is_in = std::path::Path::new(program)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n == "in" || n == "in.exe")
-        .unwrap_or(false);
+    let is_in = program == "in" || program == "in.exe";
 
     if !is_in {
         return Err(BridgeError::new(
@@ -179,6 +175,12 @@ mod tests {
 
         // Also reject arbitrary commands with spaces or quotes handled improperly previously
         let payload = json!({ "command": "rm -rf /" });
+        let res = p.invoke("processRun", &payload);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert_eq!(err.code, "access_denied");
+
+        let payload = json!({ "command": "/tmp/malicious/in build" });
         let res = p.invoke("processRun", &payload);
         assert!(res.is_err());
         let err = res.err().unwrap();
