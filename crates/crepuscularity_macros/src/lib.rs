@@ -134,9 +134,19 @@ fn generate_view(template: &str, span: Span) -> TokenStream2 {
 fn expand_includes_text(
     template: &str,
     base_dir: &std::path::Path,
-    _source_path: &std::path::Path,
+    source_path: &std::path::Path,
 ) -> String {
-    let mut output = String::new();
+    let mut cache = std::collections::HashMap::new();
+    expand_includes_inner(template, base_dir, source_path, &mut cache)
+}
+
+fn expand_includes_inner(
+    template: &str,
+    base_dir: &std::path::Path,
+    _source_path: &std::path::Path,
+    cache: &mut std::collections::HashMap<std::path::PathBuf, std::rc::Rc<String>>,
+) -> String {
+    let mut output = String::with_capacity(template.len() + 1024);
     for line in template.lines() {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("include ") {
@@ -153,19 +163,26 @@ fn expand_includes_text(
             };
             let include_path = base_dir.join(file_str);
             let include_dir = include_path.parent().unwrap_or(base_dir).to_path_buf();
-            let included = std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to read included template file `{}`: {}",
-                    include_path.display(),
-                    e
-                )
-            });
+
+            if !cache.contains_key(&include_path) {
+                let text = std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to read included template file `{}`: {}",
+                        include_path.display(),
+                        e
+                    )
+                });
+                cache.insert(include_path.clone(), std::rc::Rc::new(text));
+            }
+            let included = cache.get(&include_path).unwrap().clone();
+
             let section = match component_name {
                 Some(name) => extract_component_section(&included, name),
-                None => included,
+                None => included.to_string(),
             };
-            let expanded = expand_includes_text(&section, &include_dir, &include_path);
-            let indent = &line[..line.len() - line.trim_start().len()];
+            let expanded = expand_includes_inner(&section, &include_dir, &include_path, cache);
+            let indent_len = line.len() - trimmed.len();
+            let indent = &line[..indent_len];
             for included_line in expanded.lines() {
                 if included_line.is_empty() {
                     output.push('\n');
