@@ -15,15 +15,13 @@
 //! // paint alphas onto gpui::Canvas …
 //! ```
 
-#![allow(dead_code)]
-
 pub mod palette;
 pub mod sparkline;
 
 pub use palette::{
-    DITHER_BLUE, DITHER_BLUE_FILL, DITHER_GREEN, DITHER_GREY, DITHER_KIT_SEEDS, DITHER_ORANGE,
-    DITHER_PINK, DITHER_PURPLE, DITHER_RED, KUMO_BLUE, KUMO_CATEGORICAL, KUMO_ORANGE, KUMO_PINK,
-    KUMO_PURPLE, KUMO_TEAL, KUMO_YELLOW, THEME_NAMES, Rgb, Seed,
+    Rgb, Seed, DITHER_BLUE, DITHER_BLUE_FILL, DITHER_GREEN, DITHER_GREY, DITHER_KIT_SEEDS,
+    DITHER_ORANGE, DITHER_PINK, DITHER_PURPLE, DITHER_RED, KUMO_BLUE, KUMO_CATEGORICAL,
+    KUMO_ORANGE, KUMO_PINK, KUMO_PURPLE, KUMO_TEAL, KUMO_YELLOW, THEME_NAMES,
 };
 pub use sparkline::{
     backing_size, clamp01, resample, sparkline_alphas, sparkline_alphas_for_size, Variant, BAYER,
