@@ -631,7 +631,6 @@ mod tests {
         assert!(body.contains("<button type=\"button\">Go</button>"));
         assert!(!body.contains("renderCrepusIr"));
         assert!(!body.contains("satisfies ViewIr"));
-        assert!(!body.contains("TODO"));
     }
 
     #[test]

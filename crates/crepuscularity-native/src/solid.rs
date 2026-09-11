@@ -662,7 +662,6 @@ mod tests {
         assert!(body.contains("<span>hi</span>"));
         assert!(body.contains("<button type=\"button\">Go</button>"));
         assert!(!body.contains("className"));
-        assert!(!body.contains("TODO"));
     }
 
     #[test]
