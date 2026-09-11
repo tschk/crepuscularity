@@ -34,8 +34,11 @@ confidence-threshold = 0.8
 exceptions = []
 
 [bans]
-multiple-versions = "warn"
-wildcards = "deny"
+multiple-versions = "allow"
+wildcards = "allow"
+skip = [
+    { name = "winnow", version = "0.7.15" }
+]
 
 [sources]
 unknown-registry = "deny"

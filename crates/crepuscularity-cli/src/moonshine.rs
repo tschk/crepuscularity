@@ -857,18 +857,36 @@ createApp({ root: Root }).mount("#app");
     /// into further subdirectories beyond one level, which is all the
     /// generated `components/` and user `ts/` layouts need).
     fn copy_dir_flat(src: &Path, dest: &Path) -> Result<(), String> {
+        use rayon::prelude::*;
+
         std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.is_file() {
-                let file_name = path.file_name().ok_or("missing file name")?;
-                std::fs::copy(&path, dest.join(file_name)).map_err(|e| e.to_string())?;
-            } else if path.is_dir() {
-                let dir_name = path.file_name().ok_or("missing dir name")?;
-                copy_dir_flat(&path, &dest.join(dir_name))?;
-            }
+        let entries: Result<Vec<_>, _> =
+            std::fs::read_dir(src).map_err(|e| e.to_string())?.collect();
+        let entries = entries.map_err(|e| e.to_string())?;
+
+        let results: Vec<Result<(), String>> = entries
+            .into_par_iter()
+            .map(|entry| {
+                let path = entry.path();
+                if path.is_file() {
+                    let file_name = path
+                        .file_name()
+                        .ok_or_else(|| "missing file name".to_string())?;
+                    std::fs::copy(&path, dest.join(file_name)).map_err(|e| e.to_string())?;
+                } else if path.is_dir() {
+                    let dir_name = path
+                        .file_name()
+                        .ok_or_else(|| "missing dir name".to_string())?;
+                    copy_dir_flat(&path, &dest.join(dir_name))?;
+                }
+                Ok(())
+            })
+            .collect();
+
+        for res in results {
+            res?;
         }
+
         Ok(())
     }
 }
