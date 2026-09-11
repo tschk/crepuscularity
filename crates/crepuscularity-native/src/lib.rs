@@ -35,7 +35,7 @@ mod render;
 pub mod solid;
 pub mod style;
 pub mod svelte;
-pub mod utils;
+mod utils;
 pub mod vue;
 
 pub use capabilities::{
