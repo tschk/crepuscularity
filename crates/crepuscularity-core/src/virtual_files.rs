@@ -9,9 +9,15 @@ use crate::context::TemplateContext;
 /// Tries, in order: exact path key, basename-only key, then a single unambiguous
 /// virtual key whose path suffix matches the requested file name.
 pub fn lookup_virtual_file(ctx: &TemplateContext, path: &Path) -> Option<String> {
-    let key = path.to_string_lossy();
-    if let Some(content) = ctx.virtual_files.get(key.as_ref()) {
-        return Some(content.clone());
+    if let Some(key_str) = path.to_str() {
+        if let Some(content) = ctx.virtual_files.get(key_str) {
+            return Some(content.clone());
+        }
+    } else {
+        let key = path.to_string_lossy();
+        if let Some(content) = ctx.virtual_files.get(key.as_ref()) {
+            return Some(content.clone());
+        }
     }
 
     let file_name = path.file_name()?.to_str()?;
@@ -19,11 +25,22 @@ pub fn lookup_virtual_file(ctx: &TemplateContext, path: &Path) -> Option<String>
         return Some(content.clone());
     }
 
-    let suffix = format!("/{file_name}");
-    let mut matches = ctx
-        .virtual_files
-        .iter()
-        .filter(|(vkey, _)| vkey.ends_with(&suffix) || vkey.as_str() == file_name);
+    let file_name_bytes = file_name.as_bytes();
+    let file_name_len = file_name_bytes.len();
+
+    let mut matches = ctx.virtual_files.iter().filter(|(vkey, _)| {
+        let vbytes = vkey.as_bytes();
+        let vlen = vbytes.len();
+        if vlen == file_name_len {
+            vbytes == file_name_bytes
+        } else if vlen > file_name_len {
+            vbytes[vlen - file_name_len - 1] == b'/'
+                && &vbytes[vlen - file_name_len..] == file_name_bytes
+        } else {
+            false
+        }
+    });
+
     let first = matches.next()?;
     if matches.next().is_some() {
         return None;
