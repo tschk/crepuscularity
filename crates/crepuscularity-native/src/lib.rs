@@ -28,6 +28,7 @@ pub mod host;
 pub mod hot_reload;
 mod include_expand;
 pub mod ir;
+pub mod js_expr;
 pub mod moonshine;
 pub mod mutations;
 pub mod native;
