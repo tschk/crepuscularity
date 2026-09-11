@@ -4,6 +4,7 @@
 //! a real `@tschk/crepus-moonshine` app entry under `dist/`.
 
 use crate::ir::{ViewIr, ViewNode, ViewStyle};
+use crate::js_expr::scope_expr;
 use crate::utils::js_str;
 
 /// Shared preamble emitted by both entry points: the `Fragment` import used by
@@ -144,80 +145,6 @@ fn opt_attr(name: &str, value: Option<&String>) -> String {
     }
 }
 
-/// Whether `c` can start a JS identifier.
-fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_' || c == '$'
-}
-
-/// Whether `c` can continue a JS identifier.
-fn is_ident_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '$'
-}
-
-/// Rewrite a template expression string (e.g. `count > 0`, `user.name`,
-/// `items.length`) into valid JS that reads from the component's `scope`
-/// object, so `condition`/`bind` strings from the IR can be dropped straight
-/// into a JSX expression container.
-///
-/// - String literals (single/double quoted) are left untouched.
-/// - Bare identifiers are prefixed with `scope.`, except those in `locals`
-///   (real JS variables from an enclosing `ForEach`) and JS literal keywords
-///   (`true`, `false`, `null`, `undefined`).
-/// - Only the first segment of a dotted path is prefixed: `user.name` becomes
-///   `scope.user.name`, never `scope.user.scope.name`.
-/// - An empty/whitespace expression becomes `undefined`.
-fn scope_expr(expr: &str, locals: &[String]) -> String {
-    if expr.trim().is_empty() {
-        return "undefined".to_string();
-    }
-    let chars: Vec<char> = expr.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\'' || c == '"' {
-            let quote = c;
-            out.push(c);
-            i += 1;
-            while i < chars.len() {
-                let cc = chars[i];
-                out.push(cc);
-                i += 1;
-                if cc == '\\' && i < chars.len() {
-                    out.push(chars[i]);
-                    i += 1;
-                    continue;
-                }
-                if cc == quote {
-                    break;
-                }
-            }
-            continue;
-        }
-        if is_ident_start(c) {
-            let prev_is_dot = out.trim_end().ends_with('.');
-            let start = i;
-            while i < chars.len() && is_ident_continue(chars[i]) {
-                i += 1;
-            }
-            let ident: String = chars[start..i].iter().collect();
-            if prev_is_dot
-                || locals.iter().any(|l| l == &ident)
-                || matches!(ident.as_str(), "true" | "false" | "null" | "undefined")
-            {
-                out.push_str(&ident);
-            } else {
-                out.push_str("scope.");
-                out.push_str(&ident);
-            }
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
-}
-
 fn on_click_attr(name: &str) -> String {
     format!(" onClick={{() => handlers.{name}?.()}}")
 }
@@ -272,7 +199,7 @@ fn emit_if(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let cond = scope_expr(condition, locals);
+    let cond = scope_expr(condition, locals, "scope.");
     let then_jsx = format!(
         "{pad}  <>\n{}\n{pad}  </>",
         emit_children(then_children, indent + 2, locals)
@@ -301,7 +228,7 @@ fn emit_for_each(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let bind_expr = scope_expr(bind, locals);
+    let bind_expr = scope_expr(bind, locals, "scope.");
     let mut inner_locals = locals.to_vec();
     inner_locals.push(item_name.to_string());
     let inner = emit_children(item_body, indent + 2, &inner_locals);
@@ -319,7 +246,7 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             style,
         } => {
             let body = match bind {
-                Some(b) => format!("{{{}}}", scope_expr(b, locals)),
+                Some(b) => format!("{{{}}}", scope_expr(b, locals, "scope.")),
                 None => jsx_text(content),
             };
             format!("{pad}<span{}>{}</span>", class_attr(style.as_ref()), body)
@@ -717,41 +644,47 @@ mod tests {
 
     #[test]
     fn scope_expr_leaves_string_literals_untouched() {
-        assert_eq!(scope_expr(r#"x == "yes""#, &[]), r#"scope.x == "yes""#);
-        assert_eq!(scope_expr("x == 'yes'", &[]), "scope.x == 'yes'");
+        assert_eq!(
+            scope_expr(r#"x == "yes""#, &[], "scope."),
+            r#"scope.x == "yes""#
+        );
+        assert_eq!(scope_expr("x == 'yes'", &[], "scope."), "scope.x == 'yes'");
     }
 
     #[test]
     fn scope_expr_prefixes_dotted_path_once() {
-        assert_eq!(scope_expr("user.name", &[]), "scope.user.name");
-        assert_eq!(scope_expr("a.b.c", &[]), "scope.a.b.c");
+        assert_eq!(scope_expr("user.name", &[], "scope."), "scope.user.name");
+        assert_eq!(scope_expr("a.b.c", &[], "scope."), "scope.a.b.c");
     }
 
     #[test]
     fn scope_expr_does_not_prefix_locals() {
         assert_eq!(
-            scope_expr("item.active", &["item".to_string()]),
+            scope_expr("item.active", &["item".to_string()], "scope."),
             "item.active"
         );
     }
 
     #[test]
     fn scope_expr_does_not_prefix_keywords() {
-        assert_eq!(scope_expr("true", &[]), "true");
-        assert_eq!(scope_expr("x == null", &[]), "scope.x == null");
-        assert_eq!(scope_expr("x || undefined", &[]), "scope.x || undefined");
+        assert_eq!(scope_expr("true", &[], "scope."), "true");
+        assert_eq!(scope_expr("x == null", &[], "scope."), "scope.x == null");
+        assert_eq!(
+            scope_expr("x || undefined", &[], "scope."),
+            "scope.x || undefined"
+        );
     }
 
     #[test]
     fn scope_expr_empty_becomes_undefined() {
-        assert_eq!(scope_expr("", &[]), "undefined");
-        assert_eq!(scope_expr("   ", &[]), "undefined");
+        assert_eq!(scope_expr("", &[], "scope."), "undefined");
+        assert_eq!(scope_expr("   ", &[], "scope."), "undefined");
     }
 
     #[test]
     fn scope_expr_leaves_numbers_and_operators_alone() {
-        assert_eq!(scope_expr("count > 0", &[]), "scope.count > 0");
-        assert_eq!(scope_expr("a && b", &[]), "scope.a && scope.b");
+        assert_eq!(scope_expr("count > 0", &[], "scope."), "scope.count > 0");
+        assert_eq!(scope_expr("a && b", &[], "scope."), "scope.a && scope.b");
     }
 
     // ── events ──────────────────────────────────────────────────────────────
