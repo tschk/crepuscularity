@@ -3,6 +3,7 @@
 //! of React/JSX.
 
 use crate::ir::{ViewIr, ViewNode, ViewStyle};
+use crate::utils::js_str;
 
 /// Emit a complete Vue 3 `.vue` single-file component from `ir`.
 ///
@@ -58,25 +59,6 @@ fn html_attr_value(s: &str) -> String {
             c => out.push(c),
         }
     }
-    out
-}
-
-/// JSON-escape a string for use as a JS string literal inside a `v-bind` expression.
-fn js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
     out
 }
 
