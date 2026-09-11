@@ -1,26 +1,90 @@
 # Examples
 
-The examples are split into a small showcase and an `advanced/` shelf. Start with the showcase; the advanced shelf keeps hardware, integrations, benchmarks, and alternate app variants available without crowding the first view.
-
-## Showcase
-
-| Goal | Example | First command |
-| --- | --- | --- |
-| See a polished data-rich screen | [`showcase/product-dashboard.crepus`](showcase/product-dashboard.crepus) | `crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase/product-dashboard.json` |
-| Learn the full indentation DSL | [`showcase/full-range.crepus`](showcase/full-range.crepus) | `crepus render examples/showcase/full-range.crepus --ctx examples/showcase/demo-context.json` |
-| See components, props, and slots | [`showcase/ui-demo.crepus`](showcase/ui-demo.crepus) | `crepus render examples/showcase/ui-demo.crepus` |
-| See the JSX frontend | [`showcase/jsx-demo.crepus`](showcase/jsx-demo.crepus) | `crepus render examples/showcase/jsx-demo.crepus --ctx examples/showcase/jsx-demo.toml` |
-| Build a static website | [`web-site/`](web-site/) | `cd examples/web-site && crepus web build` |
-| Build a browser extension | [`quicknote/`](quicknote/) | `cd examples/quicknote && crepus webext build` |
-| Run a desktop app | [`weather/`](weather/) | `cargo run --manifest-path examples/weather/Cargo.toml` |
-| Generate native mobile views | [`native-shells/`](native-shells/) | `cd examples/native-shells/ios && swift build` |
-| Render an embedded panel on the host | [`embedded-dashboard/`](embedded-dashboard/) | `cargo run --manifest-path examples/embedded-dashboard/Cargo.toml` |
-| Use the reusable component catalog | [`ui-library/`](ui-library/) | `crepus render examples/ui-library/examples/dashboard.crepus` |
+Start with the small showcase, then reach into `advanced/` for hardware, integrations, benchmarks, and alternate app variants.
 
 Install the CLI first if `crepus` is not already on `PATH`:
 
 ```bash
 cargo install --path crates/crepuscularity-cli
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## Quick Start
+
+```bash
+# Render a template to HTML on stdout
+crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase/product-dashboard.json
+
+# Build the reference static site
+cd examples/web-site && crepus web build
+
+# Build the in-repo MV3 extension
+cd examples/quicknote && crepus webext build
+
+# Run the GPUI desktop app (macOS: prefix `SDKROOT=$(xcrun --show-sdk-path)`)
+cargo run --manifest-path examples/weather/Cargo.toml
+```
+
+## Key examples
+
+### 1. [showcase/product-dashboard.crepus](showcase/product-dashboard.crepus) — polished data-rich screen
+
+```bash
+crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase/product-dashboard.json
+```
+
+### 2. [showcase/full-range.crepus](showcase/full-range.crepus) — the full indentation DSL
+
+```bash
+crepus render examples/showcase/full-range.crepus --ctx examples/showcase/demo-context.json
+```
+
+### 3. [showcase/ui-demo.crepus](showcase/ui-demo.crepus) — components, props, and slots
+
+```bash
+crepus render examples/showcase/ui-demo.crepus
+```
+
+### 4. [showcase/jsx-demo.crepus](showcase/jsx-demo.crepus) — the JSX frontend
+
+```bash
+crepus render examples/showcase/jsx-demo.crepus --ctx examples/showcase/jsx-demo.toml
+```
+
+### 5. [web-site/](web-site/) — build a static website
+
+```bash
+cd examples/web-site && crepus web build
+```
+
+### 6. [quicknote/](quicknote/) — build a browser extension
+
+```bash
+cd examples/quicknote && crepus webext build
+```
+
+### 7. [weather/](weather/) — run a GPUI desktop app
+
+```bash
+cargo run --manifest-path examples/weather/Cargo.toml
+```
+
+### 8. [native-shells/](native-shells/) — generate native mobile views
+
+```bash
+cd examples/native-shells/ios && swift build
+```
+
+### 9. [embedded-dashboard/](embedded-dashboard/) — render an embedded panel on the host
+
+```bash
+cargo run --manifest-path examples/embedded-dashboard/Cargo.toml
+```
+
+### 10. [ui-library/](ui-library/) — use the reusable component catalog
+
+```bash
+crepus render examples/ui-library/examples/dashboard.crepus
 ```
 
 The [`showcase/`](showcase/) directory also contains focused layout, typography, controls, and component examples. They are intentionally small enough to read in one sitting and broad enough to demonstrate context, interpolation, computed values, conditionals, match arms, loops, events, includes, slots, JSX input, and common controls.
