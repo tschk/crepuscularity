@@ -307,7 +307,7 @@
         const name = attr.name.toLowerCase();
         const value = attr.value.trim().toLowerCase();
 
-        if (name.startsWith("on")) continue;
+        if (name.startsWith("on") || name === "style" || name === "srcdoc") continue;
 
         if (name === "href" || name === "src") {
           const isSafeUrl = value.startsWith("http://") ||
