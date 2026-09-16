@@ -41,6 +41,7 @@ sources = [
   { path = "../README.md", href = "https://github.com/tschk/crepuscularity/blob/main/README.md", title = "Repository README" },
   { path = "../docs/README.md", href = "https://crepuscularity.tsc.hk/docs/", title = "Documentation overview" },
   { path = "../docs/cli.md", href = "https://crepuscularity.tsc.hk/docs/cli.html", title = "CLI" },
+  { path = "../docs/changelog.md", href = "https://crepuscularity.tsc.hk/docs/changelog.html", title = "Changelog" },
   { path = "../docs/dsl.md", href = "https://crepuscularity.tsc.hk/docs/dsl.html", title = "DSL" },
   { path = "../docs/components.md", href = "https://crepuscularity.tsc.hk/docs/components.html", title = "Components" },
   { path = "../docs/gpui.md", href = "https://crepuscularity.tsc.hk/docs/gpui.html", title = "GPUI" },

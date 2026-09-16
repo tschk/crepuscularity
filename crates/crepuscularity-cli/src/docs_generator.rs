@@ -12,7 +12,10 @@ use crate::web::ThemeCss;
 
 /// Sidebar section: (group_label, list of page_stems in display order).
 const SECTIONS: &[(&str, &[&str])] = &[
-    ("Getting Started", &["index", "dsl", "components", "cli"]),
+    (
+        "Getting Started",
+        &["index", "dsl", "components", "cli", "changelog"],
+    ),
     (
         "Targets",
         &[
@@ -120,6 +123,9 @@ fn render_md(md: &str) -> (String, String) {
     }
     let mut body = String::new();
     html::push_html(&mut body, Parser::new_ext(md, opts));
+    // First-party Markdown can still embed raw HTML; strip scripts and unsafe
+    // markup the same way the web renderer sanitizes `RawHtml`.
+    let body = ammonia::clean(&body);
     if title.is_empty() {
         title = "Documentation".into();
     }
@@ -418,5 +424,27 @@ mod tests {
             html.contains("a.textContent=String(item.title||'')"),
             "search hits must use textContent so index titles cannot inject HTML"
         );
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "markdown body HTML must be sanitized"
+        );
+    }
+
+    #[test]
+    fn generate_docs_strips_raw_html_script_from_body() {
+        let src = tempfile::tempdir().expect("src");
+        let out = tempfile::tempdir().expect("out");
+        std::fs::write(
+            src.path().join("index.md"),
+            "# Safe\n\n<script>alert(1)</script>\n\nKeep **bold** and a [link](dsl.html).\n",
+        )
+        .expect("write md");
+
+        generate_docs(src.path(), out.path(), &ThemeCss::default(), "Site").expect("generate");
+
+        let html = std::fs::read_to_string(out.path().join("index.html")).expect("read html");
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("href=\"dsl.html\""));
     }
 }

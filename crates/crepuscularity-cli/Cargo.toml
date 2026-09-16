@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-cli"
-version = "0.16.0"
+version = "0.16.1"
 edition = "2021"
 license = "ISC"
 description = "crepus CLI — scaffolding and builds for Crepuscularity (UNSTABLE; in active development)."
@@ -60,7 +60,7 @@ crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.19
 crepuscularity-tui = { path = "../crepuscularity-tui", version = "0.4.24", optional = true }
 crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0", features = ["parallel", "ssr", "axum"] }
 crepuscularity-plugin-bindgen = { path = "../crepuscularity-plugin-bindgen", version = "0.1.5" }
-crepuscularity-webext  = { path = "../crepuscularity-webext", version = "0.3.5" }
+crepuscularity-webext  = { path = "../crepuscularity-webext", version = "0.3.6" }
 crepuscularity-tauri = { path = "../crepuscularity-tauri", version = "0.1.14", features = ["native"] }
 crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
 crepuscularity-components = { path = "../crepuscularity-components", version = "0.1.0" }
@@ -80,6 +80,7 @@ futures-util = { workspace = true }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
 ctrlc = "3"
 pulldown-cmark = "0.11"
+ammonia = "4.1.3"
 clap = { version = "4.5", features = ["derive"] }
 shlex = "1.3.0"
 walkdir = "2.5.0"
