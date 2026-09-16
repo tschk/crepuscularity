@@ -45,7 +45,7 @@ impl NativePlugin for InaugurationPlugin {
         match method {
             "ping" => Ok(json!({ "ok": true, "plugin": "inauguration" })),
             "whichIn" => which_in(),
-            "processRun" => process_run(payload),
+            "processRun" => process_run(payload, &self.sandbox_root),
             "readFile" => read_file(payload, &self.sandbox_root),
             "writeFile" => write_file(payload, &self.sandbox_root),
             _ => Err(BridgeError::new(
@@ -92,7 +92,7 @@ fn which_in() -> Result<Value, BridgeError> {
     }))
 }
 
-fn process_run(payload: &Value) -> Result<Value, BridgeError> {
+fn process_run(payload: &Value, sandbox_root: &std::path::Path) -> Result<Value, BridgeError> {
     let command = require_str(payload, "command")?;
     let parts = shlex::split(&command)
         .ok_or_else(|| BridgeError::new("invalid_argument", "malformed command string"))?;
@@ -100,7 +100,10 @@ fn process_run(payload: &Value) -> Result<Value, BridgeError> {
         .split_first()
         .ok_or_else(|| BridgeError::new("invalid_argument", "empty command"))?;
 
-    let is_in = program == "in" || program == "in.exe";
+    // Basename only — reject PATH-like or absolute program names (`../in`, `/tmp/in`).
+    let is_in = (program == "in" || program == "in.exe")
+        && !program.contains('/')
+        && !program.contains('\\');
 
     if !is_in {
         return Err(BridgeError::new(
@@ -111,6 +114,7 @@ fn process_run(payload: &Value) -> Result<Value, BridgeError> {
 
     let output = Command::new(program)
         .args(args)
+        .current_dir(sandbox_root)
         .output()
         .map_err(|e| BridgeError::new("spawn_failed", e.to_string()))?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -185,5 +189,10 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert_eq!(err.code, "access_denied");
+
+        let payload = json!({ "command": r"..\in build" });
+        let res = p.invoke("processRun", &payload);
+        assert!(res.is_err());
+        assert_eq!(res.err().unwrap().code, "access_denied");
     }
 }

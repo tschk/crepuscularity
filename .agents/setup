@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Fresh-orb toolchain for tschk/crepuscularity (Rust workspace + WASM CLI tests).
+set -euo pipefail
+
+step() {
+  local name="$1"
+  shift
+  local start
+  start="$(date +%s)"
+  echo "==> $name"
+  "$@"
+  echo "    ($name: $(( $(date +%s) - start ))s)"
+}
+
+need_pkg() {
+  dpkg -s "$1" >/dev/null 2>&1
+}
+
+PACKAGES=(
+  build-essential
+  pkg-config
+  curl
+  ca-certificates
+  libfontconfig1-dev
+  libxcb1-dev
+  libxcb-render0-dev
+  libxcb-shape0-dev
+  libxcb-xfixes0-dev
+  libxkbcommon-dev
+  libxkbcommon-x11-dev
+  libwayland-dev
+)
+
+missing=()
+for pkg in "${PACKAGES[@]}"; do
+  if ! need_pkg "$pkg"; then
+    missing+=("$pkg")
+  fi
+done
+if ((${#missing[@]})); then
+  step "apt-get update" sudo apt-get update -qq
+  step "apt-get install" sudo apt-get install -y -qq "${missing[@]}"
+else
+  echo "==> system packages already present"
+fi
+
+if ! command -v rustup >/dev/null 2>&1; then
+  step "install rustup" bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal'
+fi
+# shellcheck disable=SC1091
+source "${HOME}/.cargo/env"
+
+step "rustup toolchain" rustup toolchain install stable --profile minimal --component rustfmt,clippy
+step "rustup default" rustup default stable
+step "wasm32 target" rustup target add wasm32-unknown-unknown
+
+if [[ -f Cargo.lock ]]; then
+  step "cargo fetch" cargo fetch --locked
+fi
+
+echo "==> setup complete"
+rustc --version
+cargo --version

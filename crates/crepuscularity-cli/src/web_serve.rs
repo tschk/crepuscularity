@@ -687,6 +687,17 @@ fn start_docs_markdown_watcher(
     });
 }
 
+/// Resolve `rel` under `base`, rejecting `..` and symlink escapes.
+fn resolve_under_dir(base: &Path, rel: &str) -> Option<PathBuf> {
+    if rel.is_empty() || rel.contains("..") {
+        return None;
+    }
+    let base = std::fs::canonicalize(base).ok()?;
+    let candidate = base.join(rel);
+    let resolved = std::fs::canonicalize(&candidate).ok()?;
+    resolved.starts_with(&base).then_some(resolved)
+}
+
 fn serve_docs_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     let base = dev_root.join("docs");
     if !base.is_dir() {
@@ -709,15 +720,10 @@ fn serve_docs_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     if rel.is_empty() {
         rel = "index.html";
     }
-    if rel.contains("..") {
+    let Some(path) = resolve_under_dir(&base, rel) else {
         write_simple_not_found(stream);
         return;
-    }
-    let path = base.join(rel);
-    if !path.starts_with(&base) {
-        write_simple_not_found(stream);
-        return;
-    }
+    };
     serve_dev_fs_file(stream, &path);
 }
 
@@ -994,16 +1000,10 @@ fn serve_dev_fs_file(stream: &mut TcpStream, path: &Path) {
 
 fn serve_pkg_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     let rel = url_path.trim_start_matches("/pkg/").trim_start_matches('/');
-    if rel.is_empty() || rel.contains("..") {
+    let Some(path) = resolve_under_dir(&dev_root.join("pkg"), rel) else {
         write_simple_not_found(stream);
         return;
-    }
-    let base = dev_root.join("pkg");
-    let path = base.join(rel);
-    if !path.starts_with(&base) {
-        write_simple_not_found(stream);
-        return;
-    }
+    };
     serve_dev_fs_file(stream, &path);
 }
 
@@ -1011,16 +1011,10 @@ fn serve_islands_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     let rel = url_path
         .trim_start_matches("/islands/")
         .trim_start_matches('/');
-    if rel.is_empty() || rel.contains("..") {
+    let Some(path) = resolve_under_dir(&dev_root.join("islands"), rel) else {
         write_simple_not_found(stream);
         return;
-    }
-    let base = dev_root.join("islands");
-    let path = base.join(rel);
-    if !path.starts_with(&base) {
-        write_simple_not_found(stream);
-        return;
-    }
+    };
     serve_dev_fs_file(stream, &path);
 }
 
@@ -1038,18 +1032,7 @@ fn write_simple_not_found(stream: &mut TcpStream) {
 
 /// Resolve a static asset under `site_dir`, rejecting `..` and symlink escapes.
 pub(crate) fn resolve_static_file(site_dir: &Path, url_path: &str) -> Option<PathBuf> {
-    let rel = url_path.trim_start_matches('/');
-    if rel.is_empty() || rel.contains("..") {
-        return None;
-    }
-    let base = std::fs::canonicalize(site_dir).ok()?;
-    let candidate = base.join(rel);
-    let resolved = std::fs::canonicalize(&candidate).ok()?;
-    if resolved.starts_with(&base) {
-        Some(resolved)
-    } else {
-        None
-    }
+    resolve_under_dir(site_dir, url_path.trim_start_matches('/'))
 }
 
 fn serve_static_file(stream: &mut TcpStream, url_path: &str, site_dir: &Path) {
@@ -1189,6 +1172,33 @@ mod tests {
             resolved,
             std::fs::canonicalize(&asset).expect("canonicalize")
         );
+    }
+
+    #[test]
+    fn resolve_under_dir_allows_in_tree_and_rejects_parent() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let pkg = root.path().join("pkg");
+        std::fs::create_dir_all(&pkg).expect("mkdir pkg");
+        std::fs::write(pkg.join("runtime.js"), "ok").expect("write");
+
+        assert!(super::resolve_under_dir(&pkg, "runtime.js").is_some());
+        assert!(super::resolve_under_dir(&pkg, "../secret").is_none());
+        assert!(super::resolve_under_dir(&pkg, "").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_under_dir_blocks_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let pkg = root.path().join("pkg");
+        std::fs::create_dir_all(&pkg).expect("mkdir pkg");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("secret.txt"), "nope").expect("write secret");
+        symlink(outside.path(), pkg.join("escape")).expect("symlink");
+
+        assert!(super::resolve_under_dir(&pkg, "escape/secret.txt").is_none());
     }
 
     #[test]
