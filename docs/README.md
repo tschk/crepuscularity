@@ -8,6 +8,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | [Input frontends](frontends.md) | `.crepus`, JSX/TSX, `.svelte`, `.vue` → one AST; what Svelte/Vue do not support |
 | [Components](components.md) | `include`, slots, defaults, multi-component files |
 | [CLI](cli.md) | `crepus` commands for apps, web, and extensions |
+| [Changelog](changelog.md) | Security and crate releases |
 | [Production readiness](production.md) | build gates, security boundaries, and performance checks |
 | [Observability](observability.md) | timing, tracing, and flamegraph workflow |
 | [Timing profile](timing-profile.md) | SSR request breakdown, flamegraph recipes |

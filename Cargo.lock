@@ -1731,8 +1731,9 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-cli"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
+ "ammonia",
  "clap",
  "console",
  "crepuscularity-components",
@@ -1995,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-webext"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-web",
