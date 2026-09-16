@@ -9,8 +9,8 @@ name = "crepus_bench_desktop"
 path = "src/main.rs"
 
 [dependencies]
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"] }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform" }
+gpui = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }
+gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 crepuscularity-gpui = { path = "../../../../crates/crepuscularity-gpui" }
 
 [workspace]

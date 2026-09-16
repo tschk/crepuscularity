@@ -18,11 +18,12 @@ Release notes for Crepuscularity crates, the `crepus` CLI, and the documentation
 
 | Crate | Version | Notes |
 | --- | --- | --- |
-| `crepuscularity-cli` | 0.16.1 | Docs search, path sandbox, Markdown sanitization, changelog page. crates.io publish still blocked by the git `gpui-ce` desktop dep (install from git). |
+| `crepuscularity-cli` | 0.16.2 | Desktop deps are crates.io `gpui-ce` / `gpui_ce_platform` (publishable) |
+| `crepuscularity-runtime` | 0.4.20 | Same gpui-ce crates.io deps |
+| `crepuscularity-gpui` | 0.5.10 | Same gpui-ce crates.io deps |
+| `crepuscularity-lite` | 0.4.15 | Same gpui-ce crates.io deps |
 | `crepuscularity-webext` | 0.3.6 | `sanitizeHTML` attribute allowlist |
-| `crepuscularity-lite` | 0.4.14 | Inauguration spawn hardening (git `gpui-ce` dep — not republished to crates.io) |
-| `crepuscularity-wasm` | 0.1.1 | Already ahead of crates.io 0.1.0 |
-| `crepuscularity-gpui` | 0.5.9 | git `gpui-ce` — not republished to crates.io |
+| `crepuscularity-wasm` | 0.1.1 | Parser/View IR WASM bindings |
 
 ### Docs site
 

@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-gpui"
-version = "0.5.9"
+version = "0.5.10"
 edition = "2021"
 license = "ISC"
 description = "GPUI backend for Crepuscularity (view! macro re-exports) — UNSTABLE; in active development."
@@ -38,10 +38,10 @@ gpui-text-extras = [
 # which conflicts with the gpui-ce fork. Re-add once gpui-symbols publishes a gpui-ce-compatible release.
 
 [dependencies]
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform" }
+gpui = { package = "gpui-ce", version = "0.2.2", default-features = false }
+gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
-crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.19" }
+crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20" }
 # gpui-symbols = { version = "0.6", optional = true } # incompatible with gpui-ce
 pollster = "0.4"
