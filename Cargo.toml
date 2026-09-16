@@ -78,12 +78,9 @@ license = "ISC"
 [workspace.dependencies]
 # One requirement per external crate (loose semver). Run `cargo update` often;
 # Cargo.lock records the exact versions used.
-# GPUI is the community-edition fork (gpui-ce) via its git main branch, which tracks a newer
-# upstream Zed than crates.io `gpui` 0.2.2 and adds `TextTransform` / `letter_spacing` /
-# `text_transform` / `div().hidden()` (lets crepuscularity drop its `gpui_text_run_styles` gate).
-# Note: switches the dep from crates.io to git, so these crates are not directly publishable.
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"] }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform" }
+# crates.io names are `gpui-ce` / `gpui_ce_platform` (Zed's `gpui` 0.2.2 is a different crate).
+gpui = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }
+gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

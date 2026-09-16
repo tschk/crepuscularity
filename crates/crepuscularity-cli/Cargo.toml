@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-cli"
-version = "0.16.1"
+version = "0.16.2"
 edition = "2021"
 license = "ISC"
 description = "crepus CLI — scaffolding and builds for Crepuscularity (UNSTABLE; in active development)."
@@ -53,10 +53,10 @@ full = ["desktop", "tui"]
 benchmark = []
 
 [dependencies]
-gpui                   = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"], optional = true }
-gpui_platform          = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform", optional = true }
+gpui                   = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"], optional = true }
+gpui_platform          = { package = "gpui_ce_platform", version = "0.1.0", optional = true }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
-crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.19", optional = true }
+crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", optional = true }
 crepuscularity-tui = { path = "../crepuscularity-tui", version = "0.4.24", optional = true }
 crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0", features = ["parallel", "ssr", "axum"] }
 crepuscularity-plugin-bindgen = { path = "../crepuscularity-plugin-bindgen", version = "0.1.5" }
