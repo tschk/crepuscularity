@@ -43,3 +43,6 @@ node_modules/
 -tmp-moonshine-smoke/
 examples/dot/
 safari-*/
+
+# Amp orb portals (generated)
+.amp/portals/
