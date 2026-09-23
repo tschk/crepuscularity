@@ -651,4 +651,19 @@ mod tests {
             "&lt;div&gt;&quot;test&quot; &amp; &#39;test&#39;&lt;/div&gt;"
         );
     }
+
+    #[test]
+    fn test_url_scheme() {
+        assert_eq!(url_scheme("http://example.com"), "http");
+        assert_eq!(url_scheme("https://example.com"), "https");
+        assert_eq!(url_scheme("javascript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("JAVASCRIPT:alert(1)"), "javascript");
+        assert_eq!(url_scheme("  \n \t javascript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\nscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\r\nscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\tscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("data:text/html"), "data");
+        assert_eq!(url_scheme("no_colon_here"), "");
+        assert_eq!(url_scheme("\x01\x02\x03javascript:alert(1)"), "javascript");
+    }
 }
