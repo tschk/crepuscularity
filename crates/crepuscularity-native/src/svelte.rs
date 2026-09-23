@@ -163,8 +163,12 @@ fn emit_for_each(
     )
 }
 
-fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
-    let pad = "  ".repeat(indent);
+fn emit_text_and_media_node(
+    node: &ViewNode,
+    indent: usize,
+    locals: &[String],
+    pad: &str,
+) -> String {
     match node {
         ViewNode::Text {
             content,
@@ -191,6 +195,50 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             );
             element("a", &attrs, children, indent, locals)
         }
+        ViewNode::Button {
+            label,
+            on_click,
+            on_long_press,
+            style,
+        } => format!(
+            "{pad}<button type=\"button\"{}{}{}>{}</button>",
+            class_attr(style.as_ref()),
+            opt_on_click(on_click.as_ref()),
+            opt_on_long_press(on_long_press.as_ref()),
+            html_text(label)
+        ),
+        ViewNode::Badge {
+            label, tone, style, ..
+        } => format!(
+            "{pad}<span{}{}>{}</span>",
+            class_attr(style.as_ref()),
+            opt_attr("data-tone", tone.as_ref()),
+            html_text(label)
+        ),
+        ViewNode::Image {
+            src,
+            alt,
+            on_long_press,
+            style,
+            ..
+        } => format!(
+            "{pad}<img{}{}{}{} />",
+            attr("src", src),
+            attr("alt", alt.as_deref().unwrap_or("")),
+            class_attr(style.as_ref()),
+            opt_on_long_press(on_long_press.as_ref())
+        ),
+        ViewNode::WebView { src, style } => format!(
+            "{pad}<iframe{}{} />",
+            attr("src", src),
+            class_attr(style.as_ref())
+        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_layout_node(node: &ViewNode, indent: usize, locals: &[String], pad: &str) -> String {
+    match node {
         ViewNode::Stack {
             on_long_press,
             style,
@@ -204,9 +252,9 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             );
             element("div", &attrs, children, indent, locals)
         }
-        ViewNode::Scroll { style, children, .. } => {
-            element("div", &class_attr(style.as_ref()), children, indent, locals)
-        }
+        ViewNode::Scroll {
+            style, children, ..
+        } => element("div", &class_attr(style.as_ref()), children, indent, locals),
         ViewNode::Dropzone {
             on_drop,
             style,
@@ -220,6 +268,32 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             );
             element("div", &attrs, children, indent, locals)
         }
+        ViewNode::Divider { style, .. } => {
+            format!("{pad}<hr{} />", class_attr(style.as_ref()))
+        }
+        ViewNode::Spacer { style, .. } => {
+            format!(
+                "{pad}<div aria-hidden=\"true\"{}{} />",
+                class_attr(style.as_ref()),
+                ""
+            )
+        }
+        ViewNode::SlotRotate {
+            phrases,
+            interval_ms,
+            style,
+        } => format!(
+            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
+            attr("data-crepus-slot-rotate", &phrases.join("|")),
+            class_attr(style.as_ref()),
+            html_text(phrases.first().map(String::as_str).unwrap_or(""))
+        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_collection_node(node: &ViewNode, indent: usize, locals: &[String], _pad: &str) -> String {
+    match node {
         ViewNode::List {
             ordered,
             style,
@@ -243,48 +317,12 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             );
             element("li", &attrs, children, indent, locals)
         }
-        ViewNode::Button {
-            label,
-            on_click,
-            on_long_press,
-            style,
-        } => format!(
-            "{pad}<button type=\"button\"{}{}{}>{}</button>",
-            class_attr(style.as_ref()),
-            opt_on_click(on_click.as_ref()),
-            opt_on_long_press(on_long_press.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Badge { label, tone, style, .. } => format!(
-            "{pad}<span{}{}>{}</span>",
-            class_attr(style.as_ref()),
-            opt_attr("data-tone", tone.as_ref()),
-            html_text(label)
-        ),
-        ViewNode::Divider { style, .. } => {
-            format!("{pad}<hr{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Spacer { style, .. } => {
-            format!("{pad}<div aria-hidden=\"true\"{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Image {
-            src,
-            alt,
-            on_long_press,
-            style,
-            ..
-        } => format!(
-            "{pad}<img{}{}{}{} />",
-            attr("src", src),
-            attr("alt", alt.as_deref().unwrap_or("")),
-            class_attr(style.as_ref()),
-            opt_on_long_press(on_long_press.as_ref())
-        ),
-        ViewNode::WebView { src, style } => format!(
-            "{pad}<iframe{}{} />",
-            attr("src", src),
-            class_attr(style.as_ref())
-        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_input_node(node: &ViewNode, indent: usize, locals: &[String], pad: &str) -> String {
+    match node {
         ViewNode::Toggle {
             label,
             checked,
@@ -406,16 +444,6 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 html_text(label)
             )
         }
-        ViewNode::SlotRotate {
-            phrases,
-            interval_ms,
-            style,
-        } => format!(
-            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
-            attr("data-crepus-slot-rotate", &phrases.join("|")),
-            class_attr(style.as_ref()),
-            html_text(phrases.first().map(String::as_str).unwrap_or(""))
-        ),
         ViewNode::Tabs {
             tabs,
             on_change,
@@ -451,18 +479,64 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
             )
         }
+        _ => unreachable!(),
+    }
+}
+
+fn emit_control_flow_node(node: &ViewNode, indent: usize, locals: &[String], _pad: &str) -> String {
+    match node {
         ViewNode::If {
             condition,
             then_children,
             else_children,
             ..
-        } => emit_if(condition, then_children, else_children.as_ref(), indent, locals),
+        } => emit_if(
+            condition,
+            then_children,
+            else_children.as_ref(),
+            indent,
+            locals,
+        ),
         ViewNode::ForEach {
             bind,
             item_name,
             item_body,
             ..
         } => emit_for_each(bind, item_name, item_body, indent, locals),
+        _ => unreachable!(),
+    }
+}
+
+pub(crate) fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    let pad = "  ".repeat(indent);
+    match node {
+        ViewNode::Text { .. }
+        | ViewNode::Link { .. }
+        | ViewNode::Button { .. }
+        | ViewNode::Badge { .. }
+        | ViewNode::Image { .. }
+        | ViewNode::WebView { .. } => emit_text_and_media_node(node, indent, locals, &pad),
+        ViewNode::Stack { .. }
+        | ViewNode::Scroll { .. }
+        | ViewNode::Dropzone { .. }
+        | ViewNode::Divider { .. }
+        | ViewNode::Spacer { .. }
+        | ViewNode::SlotRotate { .. } => emit_layout_node(node, indent, locals, &pad),
+        ViewNode::List { .. } | ViewNode::ListItem { .. } => {
+            emit_collection_node(node, indent, locals, &pad)
+        }
+        ViewNode::Toggle { .. }
+        | ViewNode::Checkbox { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Meter { .. }
+        | ViewNode::Input { .. }
+        | ViewNode::Picker { .. }
+        | ViewNode::FilePicker { .. }
+        | ViewNode::Tabs { .. } => emit_input_node(node, indent, locals, &pad),
+        ViewNode::If { .. } | ViewNode::ForEach { .. } => {
+            emit_control_flow_node(node, indent, locals, &pad)
+        }
     }
 }
 
