@@ -27,13 +27,13 @@ export default async function init(wasmUrl) {
 
 // Reads a UTF-16 string from AS linear memory using the exported __getString.
 function __getString(ptr) {
-  if (!wasm.__getString) throw new Error("AS runtime not exported; compile with --exportRuntime");
+  if (!wasm || !wasm.__getString) throw new Error("AS runtime not exported; compile with --exportRuntime");
   return wasm.__getString(ptr);
 }
 
 // Allocates a UTF-16 string in AS linear memory using the exported __newString.
 function __newString(str) {
-  if (!wasm.__newString) throw new Error("AS runtime not exported; compile with --exportRuntime");
+  if (!wasm || !wasm.__newString) throw new Error("AS runtime not exported; compile with --exportRuntime");
   return wasm.__newString(str);
 }
 
@@ -53,7 +53,7 @@ function jsonIn(value) {
 // ------------------------------------------------------------------
 
 export function runtime_version() {
-  return wasm.runtime_version ? __getString(wasm.runtime_version()) : "unknown";
+  return (wasm && wasm.runtime_version) ? __getString(wasm.runtime_version()) : "unknown";
 }
 
 export function browser_program() {
