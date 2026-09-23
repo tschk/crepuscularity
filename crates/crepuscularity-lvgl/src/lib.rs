@@ -681,4 +681,19 @@ div #card p-2
         assert!(xml.contains(r#"<lv_label text="OK"/>"#));
         assert!(!xml.contains("fallback"));
     }
+
+    #[test]
+    fn maps_unhandled_tags_to_lv_obj() {
+        let template = r#"
+unknown_tag #custom
+  div
+    span
+      "Hello"
+"#;
+        let xml = render_template_to_lvgl_xml(template, &TemplateContext::new()).unwrap();
+        // Since tag is "unknown_tag", it should map to "lv_obj"
+        assert!(xml.contains(r#"<lv_obj id="custom">"#));
+        // The unhandled child tag should also map to "lv_obj"
+        assert!(xml.contains(r#"<lv_obj text="Hello"/>"#));
+    }
 }
