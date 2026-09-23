@@ -651,4 +651,27 @@ mod tests {
             "&lt;div&gt;&quot;test&quot; &amp; &#39;test&#39;&lt;/div&gt;"
         );
     }
+
+    #[test]
+    fn test_url_scheme() {
+        // Happy path
+        assert_eq!(url_scheme("http:"), "http");
+        assert_eq!(url_scheme("https:"), "https");
+        assert_eq!(url_scheme("ftp:"), "ftp");
+        assert_eq!(url_scheme("mailto:"), "mailto");
+        assert_eq!(url_scheme("file:"), "file");
+        assert_eq!(url_scheme("HTTP:"), "http");
+        assert_eq!(url_scheme("HtTpS:"), "https");
+
+        // Leading/embedded whitespace
+        assert_eq!(url_scheme("  http:"), "http");
+        assert_eq!(url_scheme("\thttp:"), "http");
+        assert_eq!(url_scheme("ht\ntp:"), "http");
+        assert_eq!(url_scheme("h\rt\tt\np:"), "http");
+
+        // Negative/error cases
+        assert_eq!(url_scheme(""), "");
+        assert_eq!(url_scheme("http"), "");
+        assert_eq!(url_scheme("no_colon_here"), "");
+    }
 }
