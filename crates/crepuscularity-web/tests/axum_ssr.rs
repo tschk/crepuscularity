@@ -215,11 +215,14 @@ async fn test_handler_error_hides_details() {
             path: "non_existent.crepus".to_string(),
             props: vec![],
             slot: vec![],
-        }
+        },
     )]);
 
     let state = State(std::sync::Arc::new(opts));
     let response = SsrHandler::handle(state).await;
 
-    assert_eq!(response.0, "<pre style='color:red'>Internal Server Error</pre>");
+    assert_eq!(
+        response.0,
+        "<pre style='color:red'>Internal Server Error</pre>"
+    );
 }
