@@ -50,7 +50,11 @@ impl<'a> RenderSnapshot<'a> {
     }
 
     pub fn into_owned(self) -> RenderSnapshot<'static> {
-        let fingerprints = self.fingerprints.into_iter().map(|(k, v)| (Cow::Owned(k.into_owned()), v)).collect();
+        let fingerprints = self
+            .fingerprints
+            .into_iter()
+            .map(|(k, v)| (Cow::Owned(k.into_owned()), v))
+            .collect();
         RenderSnapshot { fingerprints }
     }
 }
