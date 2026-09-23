@@ -610,7 +610,6 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
