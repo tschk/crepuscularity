@@ -1,6 +1,6 @@
 <?php
 
-require __DIR__ . '/CrepuscularityPlugin.php';
+require_once __DIR__ . '/CrepuscularityPlugin.php';
 
 $fixture = dirname(__DIR__) . '/fixtures/interactive.crepus';
 $session = new CrepusViewSession($fixture, ['count' => '1']);
