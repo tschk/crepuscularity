@@ -651,4 +651,35 @@ mod tests {
             "&lt;div&gt;&quot;test&quot; &amp; &#39;test&#39;&lt;/div&gt;"
         );
     }
+
+    #[test]
+    fn test_url_scheme() {
+        assert_eq!(url_scheme("http://example.com"), "http");
+        assert_eq!(url_scheme("https://example.com"), "https");
+        assert_eq!(url_scheme("mailto:user@example.com"), "mailto");
+
+        assert_eq!(url_scheme("HTTP://example.com"), "http");
+        assert_eq!(url_scheme("JaVaScRiPt:alert(1)"), "javascript");
+
+        assert_eq!(url_scheme(" \n http://example.com"), "http");
+        assert_eq!(url_scheme("\x00javascript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("\x1Fjavascript:alert(1)"), "javascript");
+
+        assert_eq!(url_scheme("java\nscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\rscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\tscript:alert(1)"), "javascript");
+        assert_eq!(
+            url_scheme("j\ra\nv\ta\rs\nc\tr\ni\rp\nt:alert(1)"),
+            "javascript"
+        );
+
+        assert_eq!(url_scheme("example.com"), "");
+        assert_eq!(url_scheme("javascript"), "");
+        assert_eq!(url_scheme(""), "");
+
+        assert_eq!(url_scheme("http:"), "http");
+
+        assert_eq!(url_scheme("://example.com"), "");
+        assert_eq!(url_scheme(":"), "");
+    }
 }
