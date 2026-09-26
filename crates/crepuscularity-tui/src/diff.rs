@@ -38,7 +38,7 @@ pub struct RenderSnapshot {
 
 impl RenderSnapshot {
     pub fn from_context(ctx: &TemplateContext) -> Self {
-        let mut fingerprints = HashMap::new();
+        let mut fingerprints = HashMap::with_capacity(ctx.vars.len());
         for (key, value) in &ctx.vars {
             let mut hasher = rustc_hash::FxHasher::default();
             hash_value(value, &mut hasher);
