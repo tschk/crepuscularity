@@ -31,26 +31,37 @@ fn hash_context<H: Hasher>(ctx: &TemplateContext, state: &mut H) {
     }
 }
 
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, Default)]
-pub struct RenderSnapshot {
-    fingerprints: HashMap<String, u64>,
+pub struct RenderSnapshot<'a> {
+    fingerprints: HashMap<Cow<'a, str>, u64>,
 }
 
-impl RenderSnapshot {
-    pub fn from_context(ctx: &TemplateContext) -> Self {
+impl<'a> RenderSnapshot<'a> {
+    pub fn from_context(ctx: &'a TemplateContext) -> Self {
         let mut fingerprints = HashMap::new();
         for (key, value) in &ctx.vars {
             let mut hasher = rustc_hash::FxHasher::default();
             hash_value(value, &mut hasher);
-            fingerprints.insert(key.clone(), hasher.finish());
+            fingerprints.insert(Cow::Borrowed(key.as_str()), hasher.finish());
         }
         Self { fingerprints }
+    }
+
+    pub fn into_owned(self) -> RenderSnapshot<'static> {
+        let fingerprints = self
+            .fingerprints
+            .into_iter()
+            .map(|(k, v)| (Cow::Owned(k.into_owned()), v))
+            .collect();
+        RenderSnapshot { fingerprints }
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DiffTracker {
-    last: Option<RenderSnapshot>,
+    last: Option<RenderSnapshot<'static>>,
 }
 
 impl DiffTracker {
@@ -69,7 +80,7 @@ impl DiffTracker {
                     let mut hasher = rustc_hash::FxHasher::default();
                     hash_value(value, &mut hasher);
                     let fingerprint = hasher.finish();
-                    match snapshot.fingerprints.get(key) {
+                    match snapshot.fingerprints.get(key.as_str()) {
                         Some(prev) if *prev == fingerprint => {}
                         _ => return true,
                     }
@@ -83,19 +94,19 @@ impl DiffTracker {
         if let Some(snapshot) = &mut self.last {
             snapshot
                 .fingerprints
-                .retain(|k, _| ctx.vars.contains_key(k));
+                .retain(|k, _| ctx.vars.contains_key(k.as_ref()));
             for (key, value) in &ctx.vars {
                 let mut hasher = rustc_hash::FxHasher::default();
                 hash_value(value, &mut hasher);
                 let fp = hasher.finish();
-                if let Some(v) = snapshot.fingerprints.get_mut(key) {
+                if let Some(v) = snapshot.fingerprints.get_mut(key.as_str()) {
                     *v = fp;
                 } else {
-                    snapshot.fingerprints.insert(key.clone(), fp);
+                    snapshot.fingerprints.insert(Cow::Owned(key.clone()), fp);
                 }
             }
         } else {
-            self.last = Some(RenderSnapshot::from_context(ctx));
+            self.last = Some(RenderSnapshot::from_context(ctx).into_owned());
         }
     }
 
@@ -108,14 +119,14 @@ impl DiffTracker {
                     let mut hasher = rustc_hash::FxHasher::default();
                     hash_value(value, &mut hasher);
                     let fingerprint = hasher.finish();
-                    match snapshot.fingerprints.get(key) {
+                    match snapshot.fingerprints.get(key.as_str()) {
                         Some(prev) if *prev == fingerprint => {}
                         _ => changed.push(key.clone()),
                     }
                 }
                 for key in snapshot.fingerprints.keys() {
-                    if !ctx.vars.contains_key(key) {
-                        changed.push(key.clone());
+                    if !ctx.vars.contains_key(key.as_ref()) {
+                        changed.push(key.to_string());
                     }
                 }
                 changed
