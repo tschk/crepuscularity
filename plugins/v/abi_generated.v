@@ -4,14 +4,5 @@
 #flag -I /Users/undivisible/projects/crepuscularity/crates/crepuscularity-abi/include
 #include "crepuscularity_abi.h"
 
-fn C.crepus_session_free(session voidptr)
-fn C.crepus_session_set_template_string(session voidptr, template_utf8 &char, base_dir_utf8 &char) voidptr
-fn C.crepus_session_set_component(session voidptr, component_utf8 &char) voidptr
-fn C.crepus_session_set_files_json(session voidptr, files_json_utf8 &char) voidptr
-fn C.crepus_session_set_context_json(session voidptr, context_json_utf8 &char) voidptr
-fn C.crepus_session_apply_context_patch_json(session voidptr, context_json_utf8 &char) voidptr
-fn C.*crepus_session_render_ir_json(session voidptr) voidptr
-fn C.*crepus_session_dispatch_event_json(session voidptr, event_json_utf8 &char) voidptr
-fn C.*crepus_session_take_last_error(session voidptr) voidptr
-fn C.*crepus_last_error() voidptr
+fn C.crepus_last_error() &char
 fn C.crepus_string_free(ptr &char)

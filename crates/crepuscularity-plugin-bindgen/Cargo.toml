@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-plugin-bindgen"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 repository = "https://github.com/tschk/crepuscularity"
 license = "ISC"
@@ -8,6 +8,6 @@ description = "Generate Crepuscularity ABI bindings for plugin languages (equili
 publish = true
 
 [dependencies]
-equilibrium-ffi = "0.1.3"
+equilibrium-ffi = "0.3"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

@@ -3,44 +3,8 @@
 
 #include "crepuscularity_abi.h"
 
-void eq_crepuscularity_abi_crepus_session_free(CrepusSession * session) {
-    crepus_session_free(session);
-}
-
-int32_t eq_crepuscularity_abi_crepus_session_set_template_string(CrepusSession * session, const char * template_utf8, const char * base_dir_utf8) {
-    return crepus_session_set_template_string(session, template_utf8, base_dir_utf8);
-}
-
-int32_t eq_crepuscularity_abi_crepus_session_set_component(CrepusSession * session, const char * component_utf8) {
-    return crepus_session_set_component(session, component_utf8);
-}
-
-int32_t eq_crepuscularity_abi_crepus_session_set_files_json(CrepusSession * session, const char * files_json_utf8) {
-    return crepus_session_set_files_json(session, files_json_utf8);
-}
-
-int32_t eq_crepuscularity_abi_crepus_session_set_context_json(CrepusSession * session, const char * context_json_utf8) {
-    return crepus_session_set_context_json(session, context_json_utf8);
-}
-
-int32_t eq_crepuscularity_abi_crepus_session_apply_context_patch_json(CrepusSession * session, const char * context_json_utf8) {
-    return crepus_session_apply_context_patch_json(session, context_json_utf8);
-}
-
-char eq_crepuscularity_abi_*crepus_session_render_ir_json(CrepusSession * session) {
-    return *crepus_session_render_ir_json(session);
-}
-
-char eq_crepuscularity_abi_*crepus_session_dispatch_event_json(CrepusSession * session, const char * event_json_utf8) {
-    return *crepus_session_dispatch_event_json(session, event_json_utf8);
-}
-
-char eq_crepuscularity_abi_*crepus_session_take_last_error(CrepusSession * session) {
-    return *crepus_session_take_last_error(session);
-}
-
-char eq_crepuscularity_abi_*crepus_last_error() {
-    return *crepus_last_error();
+char * eq_crepuscularity_abi_crepus_last_error() {
+    return crepus_last_error();
 }
 
 void eq_crepuscularity_abi_crepus_string_free(char * ptr) {
