@@ -122,13 +122,13 @@ async fn render_entry(routes: &HashMap<String, RouteEntry>, path: &str) -> Html<
 
     match result {
         Ok(Ok(h)) => Html(h),
-        Ok(Err(e)) => Html(format!(
-            "<pre style='color:red'>{}</pre>",
-            crate::escape_html(&e.to_string())
-        )),
-        Err(e) => Html(format!(
-            "<pre style='color:red'>render task panicked: {}</pre>",
-            crate::escape_html(&e.to_string())
-        )),
+        Ok(Err(e)) => {
+            tracing::error!("SSR render error: {}", e);
+            Html("<pre style='color:red'>Internal Server Error</pre>".to_string())
+        }
+        Err(e) => {
+            tracing::error!("SSR render task panicked: {}", e);
+            Html("<pre style='color:red'>Internal Server Error</pre>".to_string())
+        }
     }
 }

@@ -112,10 +112,10 @@ impl SsrHandler {
 
         match html {
             Ok(page) => Html(page),
-            Err(e) => Html(format!(
-                "<pre style='color:red'>{}</pre>",
-                crate::escape_html(&e)
-            )),
+            Err(e) => {
+                tracing::error!("SSR render error: {}", e);
+                Html("<pre style='color:red'>Internal Server Error</pre>".to_string())
+            }
         }
     }
 }
