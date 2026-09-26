@@ -12,7 +12,7 @@
     }
   })();
 
-  const cacheKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const cacheKey = `${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
   const runtimeUrl = `${runtimeApi.getURL("vendor/runtime.js")}?v=${cacheKey}`;
   const wasmUrl = `${runtimeApi.getURL("vendor/runtime_bg.wasm")}?v=${cacheKey}`;
 
