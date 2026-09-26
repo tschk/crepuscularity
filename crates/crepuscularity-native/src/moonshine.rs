@@ -237,8 +237,7 @@ fn emit_for_each(
     )
 }
 
-fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
-    let pad = "  ".repeat(indent);
+fn emit_basic_node(node: &ViewNode, _indent: usize, pad: &str, locals: &[String]) -> String {
     match node {
         ViewNode::Text {
             content,
@@ -251,6 +250,39 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             };
             format!("{pad}<span{}>{}</span>", class_attr(style.as_ref()), body)
         }
+        ViewNode::Badge {
+            label, tone, style, ..
+        } => format!(
+            "{pad}<span{}{}>{}</span>",
+            class_attr(style.as_ref()),
+            opt_attr("data-tone", tone.as_ref()),
+            jsx_text(label)
+        ),
+        ViewNode::Divider { style, .. } => {
+            format!("{pad}<hr{} />", class_attr(style.as_ref()))
+        }
+        ViewNode::Spacer { style, .. } => {
+            format!(
+                "{pad}<div aria-hidden=\"true\"{} />",
+                class_attr(style.as_ref())
+            )
+        }
+        ViewNode::SlotRotate {
+            phrases,
+            interval_ms,
+            style,
+        } => format!(
+            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
+            attr("data-crepus-slot-rotate", &phrases.join("|")),
+            class_attr(style.as_ref()),
+            jsx_text(phrases.first().map(String::as_str).unwrap_or(""))
+        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_layout_node(node: &ViewNode, indent: usize, _pad: &str, locals: &[String]) -> String {
+    match node {
         ViewNode::Link {
             href,
             target,
@@ -273,19 +305,27 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             children,
             ..
         } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_on_long_press(on_long_press.as_ref()));
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
             element("div", &attrs, children, indent, locals)
         }
-        ViewNode::Scroll { style, children, .. } => {
-            element("div", &class_attr(style.as_ref()), children, indent, locals)
-        }
+        ViewNode::Scroll {
+            style, children, ..
+        } => element("div", &class_attr(style.as_ref()), children, indent, locals),
         ViewNode::Dropzone {
             on_drop,
             style,
             children,
             ..
         } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_dom_event("onDrop", on_drop.as_ref()));
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_dom_event("onDrop", on_drop.as_ref())
+            );
             element("div", &attrs, children, indent, locals)
         }
         ViewNode::List {
@@ -304,33 +344,142 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             style,
             children,
         } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_on_long_press(on_long_press.as_ref()));
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
             element("li", &attrs, children, indent, locals)
         }
+        _ => unreachable!(),
+    }
+}
+
+fn emit_control_node(node: &ViewNode, _indent: usize, pad: &str, _locals: &[String]) -> String {
+    match node {
         ViewNode::Button {
-            label,
-            on_click,
-            on_long_press,
-            style,
-        } => format!(
-            "{pad}<button type=\"button\"{}{}{}>{}</button>",
-            class_attr(style.as_ref()),
-            opt_on_click(on_click.as_ref()),
-            opt_on_long_press(on_long_press.as_ref()),
-            jsx_text(label)
-        ),
-        ViewNode::Badge { label, tone, style, .. } => format!(
-            "{pad}<span{}{}>{}</span>",
-            class_attr(style.as_ref()),
-            opt_attr("data-tone", tone.as_ref()),
-            jsx_text(label)
-        ),
-        ViewNode::Divider { style, .. } => {
-            format!("{pad}<hr{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Spacer { style, .. } => {
-            format!("{pad}<div aria-hidden=\"true\"{} />", class_attr(style.as_ref()))
-        }
+                    label,
+                    on_click,
+                    on_long_press,
+                    style,
+                } => format!(
+                    "{pad}<button type=\"button\"{}{}{}>{}</button>",
+                    class_attr(style.as_ref()),
+                    opt_on_click(on_click.as_ref()),
+                    opt_on_long_press(on_long_press.as_ref()),
+                    jsx_text(label)
+                ),
+        ViewNode::Toggle {
+                    label,
+                    checked,
+                    on_change,
+                    on_long_press,
+                    style,
+                    ..
+                } => format!(
+                    "{pad}<button type=\"button\" role=\"switch\" aria-checked={{{}}}{}{}{}>{}</button>",
+                    checked,
+                    class_attr(style.as_ref()),
+                    opt_dom_event("onChange", on_change.as_ref()),
+                    opt_on_long_press(on_long_press.as_ref()),
+                    jsx_text(label)
+                ),
+        ViewNode::Checkbox {
+                    label,
+                    checked,
+                    on_change,
+                    style,
+                    ..
+                } => format!(
+                    "{pad}<label{}>\n{pad}  <input type=\"checkbox\" defaultChecked={{{}}}{} />\n{pad}  {}\n{pad}</label>",
+                    class_attr(style.as_ref()),
+                    checked,
+                    opt_dom_event("onChange", on_change.as_ref()),
+                    jsx_text(label)
+                ),
+        ViewNode::Slider {
+                    value,
+                    min,
+                    max,
+                    step,
+                    on_change,
+                    style,
+                    ..
+                } => format!(
+                    "{pad}<input type=\"range\" defaultValue={{{value}}} min={{{min}}} max={{{max}}}{}{}{} />",
+                    step.map(|s| format!(" step={{{s}}}")).unwrap_or_default(),
+                    class_attr(style.as_ref()),
+                    opt_dom_event("onChange", on_change.as_ref())
+                ),
+        ViewNode::Input {
+                    placeholder,
+                    bind,
+                    secure,
+                    multiline,
+                    on_change,
+                    style,
+                } => {
+                    let cls = class_attr(style.as_ref());
+                    let ph = attr("placeholder", placeholder);
+                    let name = attr("name", bind);
+                    let on_change_attr = opt_dom_event("onChange", on_change.as_ref());
+                    if *multiline {
+                        format!("{pad}<textarea{ph}{name}{cls}{on_change_attr} />")
+                    } else {
+                        let ty = if *secure { "password" } else { "text" };
+                        format!("{pad}<input type=\"{ty}\"{ph}{name}{cls}{on_change_attr} />")
+                    }
+                },
+        ViewNode::Picker {
+                    options,
+                    bind,
+                    on_change,
+                    style,
+                } => {
+                    let opts: String = options
+                        .iter()
+                        .map(|o| {
+                            format!(
+                                "{pad}  <option{}>{}</option>",
+                                attr("value", &o.value),
+                                jsx_text(&o.label)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!(
+                        "{pad}<select{}{}{}>\n{opts}\n{pad}</select>",
+                        attr("name", bind),
+                        class_attr(style.as_ref()),
+                        opt_dom_event("onChange", on_change.as_ref())
+                    )
+                },
+        ViewNode::FilePicker {
+                    label,
+                    accept,
+                    multiple,
+                    on_pick,
+                    style,
+                } => {
+                    let accept_attr = if accept.is_empty() {
+                        String::new()
+                    } else {
+                        attr("accept", &accept.join(","))
+                    };
+                    let multiple_attr = if *multiple { " multiple" } else { "" };
+                    format!(
+                        "{pad}<label{}>\n{pad}  <input type=\"file\"{accept_attr}{multiple_attr}{} />\n{pad}  {}\n{pad}</label>",
+                        class_attr(style.as_ref()),
+                        opt_dom_event("onChange", on_pick.as_ref()),
+                        jsx_text(label)
+                    )
+                },
+        _ => unreachable!(),
+    }
+}
+
+fn emit_media_node(node: &ViewNode, _indent: usize, pad: &str, _locals: &[String]) -> String {
+    match node {
         ViewNode::Image {
             src,
             alt,
@@ -349,48 +498,6 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             attr("src", src),
             class_attr(style.as_ref())
         ),
-        ViewNode::Toggle {
-            label,
-            checked,
-            on_change,
-            on_long_press,
-            style,
-            ..
-        } => format!(
-            "{pad}<button type=\"button\" role=\"switch\" aria-checked={{{}}}{}{}{}>{}</button>",
-            checked,
-            class_attr(style.as_ref()),
-            opt_dom_event("onChange", on_change.as_ref()),
-            opt_on_long_press(on_long_press.as_ref()),
-            jsx_text(label)
-        ),
-        ViewNode::Checkbox {
-            label,
-            checked,
-            on_change,
-            style,
-            ..
-        } => format!(
-            "{pad}<label{}>\n{pad}  <input type=\"checkbox\" defaultChecked={{{}}}{} />\n{pad}  {}\n{pad}</label>",
-            class_attr(style.as_ref()),
-            checked,
-            opt_dom_event("onChange", on_change.as_ref()),
-            jsx_text(label)
-        ),
-        ViewNode::Slider {
-            value,
-            min,
-            max,
-            step,
-            on_change,
-            style,
-            ..
-        } => format!(
-            "{pad}<input type=\"range\" defaultValue={{{value}}} min={{{min}}} max={{{max}}}{}{}{} />",
-            step.map(|s| format!(" step={{{s}}}")).unwrap_or_default(),
-            class_attr(style.as_ref()),
-            opt_dom_event("onChange", on_change.as_ref())
-        ),
         ViewNode::Progress {
             value, max, style, ..
         } => format!(
@@ -407,79 +514,12 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             "{pad}<meter value={{{value}}} min={{{min}}} max={{{max}}}{} />",
             class_attr(style.as_ref())
         ),
-        ViewNode::Input {
-            placeholder,
-            bind,
-            secure,
-            multiline,
-            on_change,
-            style,
-        } => {
-            let cls = class_attr(style.as_ref());
-            let ph = attr("placeholder", placeholder);
-            let name = attr("name", bind);
-            let on_change_attr = opt_dom_event("onChange", on_change.as_ref());
-            if *multiline {
-                format!("{pad}<textarea{ph}{name}{cls}{on_change_attr} />")
-            } else {
-                let ty = if *secure { "password" } else { "text" };
-                format!("{pad}<input type=\"{ty}\"{ph}{name}{cls}{on_change_attr} />")
-            }
-        }
-        ViewNode::Picker {
-            options,
-            bind,
-            on_change,
-            style,
-        } => {
-            let opts: String = options
-                .iter()
-                .map(|o| {
-                    format!(
-                        "{pad}  <option{}>{}</option>",
-                        attr("value", &o.value),
-                        jsx_text(&o.label)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "{pad}<select{}{}{}>\n{opts}\n{pad}</select>",
-                attr("name", bind),
-                class_attr(style.as_ref()),
-                opt_dom_event("onChange", on_change.as_ref())
-            )
-        }
-        ViewNode::FilePicker {
-            label,
-            accept,
-            multiple,
-            on_pick,
-            style,
-        } => {
-            let accept_attr = if accept.is_empty() {
-                String::new()
-            } else {
-                attr("accept", &accept.join(","))
-            };
-            let multiple_attr = if *multiple { " multiple" } else { "" };
-            format!(
-                "{pad}<label{}>\n{pad}  <input type=\"file\"{accept_attr}{multiple_attr}{} />\n{pad}  {}\n{pad}</label>",
-                class_attr(style.as_ref()),
-                opt_dom_event("onChange", on_pick.as_ref()),
-                jsx_text(label)
-            )
-        }
-        ViewNode::SlotRotate {
-            phrases,
-            interval_ms,
-            style,
-        } => format!(
-            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
-            attr("data-crepus-slot-rotate", &phrases.join("|")),
-            class_attr(style.as_ref()),
-            jsx_text(phrases.first().map(String::as_str).unwrap_or(""))
-        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_structural_node(node: &ViewNode, indent: usize, pad: &str, locals: &[String]) -> String {
+    match node {
         ViewNode::Tabs {
             tabs,
             on_change,
@@ -491,7 +531,9 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 .iter()
                 .map(|t| {
                     let onclick = match on_change {
-                        Some(name) => format!(" onClick={{() => handlers.{name}?.({})}}", js_str(&t.value)),
+                        Some(name) => {
+                            format!(" onClick={{() => handlers.{name}?.({})}}", js_str(&t.value))
+                        }
                         None => String::new(),
                     };
                     format!(
@@ -512,21 +554,59 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-                "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
-            )
+                        "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
+                    )
         }
         ViewNode::If {
             condition,
             then_children,
             else_children,
             ..
-        } => emit_if(condition, then_children, else_children.as_ref(), indent, locals),
+        } => emit_if(
+            condition,
+            then_children,
+            else_children.as_ref(),
+            indent,
+            locals,
+        ),
         ViewNode::ForEach {
             bind,
             item_name,
             item_body,
             ..
         } => emit_for_each(bind, item_name, item_body, indent, locals),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    let pad = "  ".repeat(indent);
+    match node {
+        ViewNode::Text { .. }
+        | ViewNode::Badge { .. }
+        | ViewNode::Divider { .. }
+        | ViewNode::Spacer { .. }
+        | ViewNode::SlotRotate { .. } => emit_basic_node(node, indent, &pad, locals),
+        ViewNode::Link { .. }
+        | ViewNode::Stack { .. }
+        | ViewNode::Scroll { .. }
+        | ViewNode::Dropzone { .. }
+        | ViewNode::List { .. }
+        | ViewNode::ListItem { .. } => emit_layout_node(node, indent, &pad, locals),
+        ViewNode::Button { .. }
+        | ViewNode::Toggle { .. }
+        | ViewNode::Checkbox { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Input { .. }
+        | ViewNode::Picker { .. }
+        | ViewNode::FilePicker { .. } => emit_control_node(node, indent, &pad, locals),
+        ViewNode::Image { .. }
+        | ViewNode::WebView { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Meter { .. } => emit_media_node(node, indent, &pad, locals),
+        ViewNode::Tabs { .. } | ViewNode::If { .. } | ViewNode::ForEach { .. } => {
+            emit_structural_node(node, indent, &pad, locals)
+        }
     }
 }
 
