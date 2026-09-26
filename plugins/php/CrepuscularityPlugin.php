@@ -63,15 +63,24 @@ final class CrepuscularityPlugin
             }
             return json_decode($stdout, true, 512, JSON_THROW_ON_ERROR);
         }
-        $cmd = escapeshellcmd($bin) . ' native ir ' . escapeshellarg($realPath);
-        // ponytail: path validated below for context path, bare path goes via escapeshellarg
-        $out = [];
-        $code = 0;
-        exec($cmd, $out, $code);
+        $descriptor = [
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        // ponytail: path validated below for context path, bare path goes via array arguments
+        $proc = proc_open([$bin, 'native', 'ir', $realPath], $descriptor, $pipes);
+        if (!is_resource($proc)) {
+            throw new RuntimeException('crepus native ir failed');
+        }
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        $code = proc_close($proc);
         if ($code !== 0) {
             throw new RuntimeException('crepus native ir failed');
         }
-        return json_decode(implode("\n", $out), true, 512, JSON_THROW_ON_ERROR);
+        return json_decode($stdout, true, 512, JSON_THROW_ON_ERROR);
     }
 
     public static function renderHtml(string $path, ?array $context = null): string
