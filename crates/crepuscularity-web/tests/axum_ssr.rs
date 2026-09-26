@@ -201,3 +201,28 @@ fn ssr_loop_rendering() {
     // Items should appear in the rendered HTML
     assert!(html.contains("a") || html.len() > 100);
 }
+
+#[tokio::test]
+async fn test_handler_error_hides_details() {
+    use axum::extract::State;
+    use crepuscularity_web::{SsrHandler, SsrOptions};
+
+    // We can simulate an error by using an IncludeNode pointing to a missing file
+    // which causes render_ssr_document_with_nodes to return an error.
+    let mut opts = SsrOptions::new(r#"div"#, "Title");
+    opts.nodes = std::sync::Arc::new(vec![crepuscularity_core::ast::Node::Include(
+        crepuscularity_core::ast::IncludeNode {
+            path: "non_existent.crepus".to_string(),
+            props: vec![],
+            slot: vec![],
+        },
+    )]);
+
+    let state = State(std::sync::Arc::new(opts));
+    let response = SsrHandler::handle(state).await;
+
+    assert_eq!(
+        response.0,
+        "<pre style='color:red'>Internal Server Error</pre>"
+    );
+}
