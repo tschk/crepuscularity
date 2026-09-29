@@ -555,6 +555,17 @@ mod tests {
     }
 
     #[test]
+    fn component_emitter_emits_scope_and_handlers_props_contract() {
+        let body = emit_svelte_component(&sample_ir());
+        assert!(
+            body.contains("let { scope = {}, handlers = {} }: { scope?: Record<string, any>; handlers?: Record<string, any> } = $props();"),
+            "{body}"
+        );
+        assert!(body.contains("<script lang=\"ts\">"), "{body}");
+        assert!(body.contains("</script>"), "{body}");
+    }
+
+    #[test]
     fn emits_basic_element_with_classes() {
         let body = emit_svelte_component(&sample_ir());
         assert!(body.contains("<script lang=\"ts\">"), "{body}");
