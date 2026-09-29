@@ -560,4 +560,68 @@ mod tests {
         let snap = host.snapshot();
         assert_eq!(snap.last_event, Some(event));
     }
+
+    #[test]
+    fn test_apply_host_class_display() {
+        let mut style = HostStyle::default();
+        apply_host_class("flex", &mut style);
+        assert_eq!(style.display.as_deref(), Some("flex"));
+    }
+
+    #[test]
+    fn test_apply_host_class_direction() {
+        let mut style = HostStyle::default();
+        apply_host_class("flex-row", &mut style);
+        assert_eq!(style.direction.as_deref(), Some("row"));
+
+        let mut style = HostStyle::default();
+        apply_host_class("flex-col", &mut style);
+        assert_eq!(style.direction.as_deref(), Some("column"));
+    }
+
+    #[test]
+    fn test_apply_host_class_align_items() {
+        let mut style = HostStyle::default();
+        apply_host_class("items-start", &mut style);
+        assert_eq!(style.align_items.as_deref(), Some("start"));
+    }
+
+    #[test]
+    fn test_apply_host_class_justify_content() {
+        let mut style = HostStyle::default();
+        apply_host_class("justify-start", &mut style);
+        assert_eq!(style.justify_content.as_deref(), Some("start"));
+    }
+
+    #[test]
+    fn test_apply_host_class_dimensions() {
+        let mut style = HostStyle::default();
+        apply_host_class("w-full", &mut style);
+        assert_eq!(style.width, Some(100.0));
+
+        let mut style = HostStyle::default();
+        apply_host_class("h-full", &mut style);
+        assert_eq!(style.height, Some(100.0));
+    }
+
+    #[test]
+    fn test_apply_host_class_border() {
+        let mut style = HostStyle::default();
+        apply_host_class("border", &mut style);
+        assert_eq!(style.border_width, Some(1.0));
+    }
+
+    #[test]
+    fn test_apply_host_class_font_weight() {
+        let mut style = HostStyle::default();
+        apply_host_class("font-bold", &mut style);
+        assert_eq!(style.font_weight.as_deref(), Some("bold"));
+    }
+
+    #[test]
+    fn test_apply_host_class_parametric_fallback() {
+        let mut style = HostStyle::default();
+        apply_host_class("p-4", &mut style);
+        assert_eq!(style.padding, Some(16.0));
+    }
 }

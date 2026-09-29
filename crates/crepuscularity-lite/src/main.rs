@@ -13,8 +13,8 @@ use crepuscularity_lite::{parse_hex_color, prepare_guest_source, Bridge, V8Threa
 use gpui::AnyElement;
 use gpui::ClickEvent;
 use gpui::{
-    bounds, div, point, prelude::*, px, rgb, size, AnyWindowHandle, App, Application, Context,
-    Entity, FontWeight, KeyDownEvent, Render, Window, WindowBounds, WindowOptions,
+    bounds, div, point, prelude::*, px, rgb, size, AnyWindowHandle, App, Context, Entity,
+    FontWeight, KeyDownEvent, Render, Window, WindowBounds, WindowOptions,
 };
 use serde_json::{json, Value};
 
@@ -381,7 +381,7 @@ impl LiteRoot {
 
         cx.spawn(async move |weak_root, async_cx| {
             let result = reply_rx.recv();
-            let _ = async_cx.update(|app| {
+            async_cx.update(|app| {
                 let _ = app.update_window(any_wh, |_root_view, window, app| {
                     if let Some(entity) = weak_root.upgrade() {
                         entity.update(app, |root, cx| {
@@ -540,7 +540,7 @@ fn main() {
 
         let wh = handle;
         cx.spawn(async move |async_cx| {
-            let _ = async_cx.update(|app| {
+            async_cx.update(|app| {
                 let _ = wh.update(app, |root: &mut LiteRoot, window, ctxt| {
                     root.run_guest(window, ctxt);
                 });
