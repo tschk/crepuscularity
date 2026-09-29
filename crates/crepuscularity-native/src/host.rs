@@ -322,6 +322,9 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_java_version_at_least_command_fails() {
-        assert!(!java_version_at_least(Path::new("/does/not/exist/java"), 17));
+        assert!(!java_version_at_least(
+            Path::new("/does/not/exist/java"),
+            17
+        ));
     }
 }
