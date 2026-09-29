@@ -860,33 +860,93 @@ mod tests {
     #[test]
     fn test_swiftui_frame_alignment() {
         // Test Column axis
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("center")), ".center");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("end")), ".trailing");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("start")), ".leading");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("center"), None), ".leading");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("center")),
+            ".center"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("end")),
+            ".trailing"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("center"), Some("start")),
+            ".leading"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("center"), None),
+            ".leading"
+        );
 
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("center")), ".bottom");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("end")), ".bottomTrailing");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("start")), ".bottomLeading");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("end"), None), ".bottomLeading");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("center")),
+            ".bottom"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("end")),
+            ".bottomTrailing"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("end"), Some("start")),
+            ".bottomLeading"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("end"), None),
+            ".bottomLeading"
+        );
 
         // Fallback cases for Column (start, other)
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, Some("start"), Some("center")), ".topLeading"); // Matches fallback _
-        assert_eq!(swiftui_frame_alignment(StackAxis::Column, None, None), ".topLeading");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, Some("start"), Some("center")),
+            ".topLeading"
+        ); // Matches fallback _
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Column, None, None),
+            ".topLeading"
+        );
 
         // Test Row axis
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("center")), ".center");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("end")), ".bottom");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("start")), ".top");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("center"), None), ".top");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("center")),
+            ".center"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("end")),
+            ".bottom"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("center"), Some("start")),
+            ".top"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("center"), None),
+            ".top"
+        );
 
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("center")), ".trailing");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("end")), ".bottomTrailing");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("start")), ".topTrailing");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("end"), None), ".topTrailing");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("center")),
+            ".trailing"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("end")),
+            ".bottomTrailing"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("end"), Some("start")),
+            ".topTrailing"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("end"), None),
+            ".topTrailing"
+        );
 
         // Fallback cases for Row (start, other)
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, Some("start"), Some("center")), ".topLeading");
-        assert_eq!(swiftui_frame_alignment(StackAxis::Row, None, None), ".topLeading");
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, Some("start"), Some("center")),
+            ".topLeading"
+        );
+        assert_eq!(
+            swiftui_frame_alignment(StackAxis::Row, None, None),
+            ".topLeading"
+        );
     }
 }
