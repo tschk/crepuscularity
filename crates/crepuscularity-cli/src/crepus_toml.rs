@@ -632,7 +632,7 @@ mod tests {
         );
 
         // 1 target, no id
-        let res = resolve_pick(&[t1.clone()], None).unwrap();
+        let res = resolve_pick(std::slice::from_ref(&t1), None).unwrap();
         assert_eq!(res.id, "foo");
 
         // 2 targets, no id
