@@ -530,13 +530,25 @@ mod tests {
         assert_eq!(parse_css_hex_color("0x123456").as_deref(), Some("#123456"));
 
         // Valid 8-digit hex
-        assert_eq!(parse_css_hex_color("#12345678").as_deref(), Some("#12345678"));
-        assert_eq!(parse_css_hex_color("12345678").as_deref(), Some("#12345678"));
-        assert_eq!(parse_css_hex_color("0x12345678").as_deref(), Some("#12345678"));
+        assert_eq!(
+            parse_css_hex_color("#12345678").as_deref(),
+            Some("#12345678")
+        );
+        assert_eq!(
+            parse_css_hex_color("12345678").as_deref(),
+            Some("#12345678")
+        );
+        assert_eq!(
+            parse_css_hex_color("0x12345678").as_deref(),
+            Some("#12345678")
+        );
 
         // Spaces
         assert_eq!(parse_css_hex_color(" #abcdef ").as_deref(), Some("#abcdef"));
-        assert_eq!(parse_css_hex_color("  0xabcdef  ").as_deref(), Some("#abcdef"));
+        assert_eq!(
+            parse_css_hex_color("  0xabcdef  ").as_deref(),
+            Some("#abcdef")
+        );
 
         // Invalid length
         assert_eq!(parse_css_hex_color("#123"), None);
