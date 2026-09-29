@@ -96,8 +96,21 @@
 
   function stripOuterCodeFence(text) {
     const trimmed = text.trim();
-    const match = /^```[\w-]*\s*\n([\s\S]*?)\n```\s*$/i.exec(trimmed);
-    return match ? match[1].trim() : trimmed;
+    if (!trimmed.startsWith("```")) return trimmed;
+
+    const firstNewline = trimmed.indexOf("\n");
+    if (firstNewline === -1) return trimmed;
+
+    const langLine = trimmed.slice(3, firstNewline);
+    if (!/^[\w-]*\s*$/.test(langLine)) return trimmed;
+
+    const lastNewline = trimmed.lastIndexOf("\n");
+    if (lastNewline === -1 || lastNewline === firstNewline) return trimmed;
+
+    const endFence = trimmed.slice(lastNewline + 1);
+    if (!/^```\s*$/.test(endFence)) return trimmed;
+
+    return trimmed.slice(firstNewline + 1, lastNewline).trim();
   }
 
   function collectWidgetPres() {
