@@ -1726,15 +1726,7 @@ mod buffer_renderer_api {
             })
             .unwrap();
         let buf = terminal.backend().buffer();
-        let w = buf.area.width as usize;
-        let h = buf.area.height as usize;
-        let mut out = Vec::with_capacity(w * h);
-        for y in 0..h {
-            for x in 0..w {
-                out.push(buf[(x as u16, y as u16)].clone());
-            }
-        }
-        out
+        buf.content.clone()
     }
 
     /// Render `nodes` into a fresh `Buffer` of `width x height` via the new
