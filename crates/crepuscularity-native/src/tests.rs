@@ -279,9 +279,8 @@ fn codegen_preserves_control_change_bindings() {
     ));
     assert!(compose
         .contains("CrepusActions.performChange(\"sync_enabled\", \"enabled\", JsonPrimitive(it))"));
-    assert!(compose.contains(
-        "CrepusActions.performChange(\"sync_volume\", \"volume\", JsonPrimitive(it.toDouble()))"
-    ));
+    assert!(compose
+        .contains("CrepusActions.performChange(\"sync_volume\", \"volume\", JsonPrimitive(it))"));
     assert!(
         compose.contains("CrepusActions.performChange(\"sync_name\", \"name\", JsonPrimitive(it))")
     );
