@@ -120,14 +120,13 @@ impl ComponentRegistry {
             .ok_or_else(|| CrepusError::render(format!("component not found: {name}")))?;
 
         let mut child_ctx = ctx.clone();
-        for (key, value) in &component.defaults {
-            child_ctx
-                .vars
-                .entry(key.clone())
-                .or_insert_with(|| value.clone());
-        }
         for (key, value) in props {
             child_ctx.vars.insert(key.clone(), value.clone());
+        }
+        for (key, value) in &component.defaults {
+            if !child_ctx.vars.contains_key(key) {
+                child_ctx.vars.insert(key.clone(), value.clone());
+            }
         }
 
         let nodes = parse_template(&component.source)?;
