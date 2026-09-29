@@ -314,7 +314,7 @@
                             value.startsWith("https://") ||
                             value.startsWith("mailto:") ||
                             value.startsWith("#") ||
-                            value.startsWith("/") && !value.startsWith("//");
+                            value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\");
           if (!isSafeUrl) continue;
         }
         clone.setAttribute(attr.name, attr.value);
