@@ -177,8 +177,12 @@ fn emit_for_each(
     )
 }
 
-fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
-    let pad = "  ".repeat(indent);
+fn emit_text_and_media_node(
+    node: &ViewNode,
+    indent: usize,
+    locals: &[String],
+    pad: &str,
+) -> String {
     match node {
         ViewNode::Text {
             content,
@@ -205,58 +209,6 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             );
             element("a", &attrs, children, indent, locals)
         }
-        ViewNode::Stack {
-            on_long_press,
-            style,
-            children,
-            ..
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_on_long_press(on_long_press.as_ref())
-            );
-            element("div", &attrs, children, indent, locals)
-        }
-        ViewNode::Scroll { style, children, .. } => {
-            element("div", &class_attr(style.as_ref()), children, indent, locals)
-        }
-        ViewNode::Dropzone {
-            on_drop,
-            style,
-            children,
-            ..
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_dom_event("drop", on_drop.as_ref())
-            );
-            element("div", &attrs, children, indent, locals)
-        }
-        ViewNode::List {
-            ordered,
-            style,
-            children,
-        } => element(
-            if *ordered { "ol" } else { "ul" },
-            &class_attr(style.as_ref()),
-            children,
-            indent,
-            locals,
-        ),
-        ViewNode::ListItem {
-            on_long_press,
-            style,
-            children,
-        } => {
-            let attrs = format!(
-                "{}{}",
-                class_attr(style.as_ref()),
-                opt_on_long_press(on_long_press.as_ref())
-            );
-            element("li", &attrs, children, indent, locals)
-        }
         ViewNode::Button {
             label,
             on_click,
@@ -269,18 +221,14 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             opt_on_long_press(on_long_press.as_ref()),
             html_text(label)
         ),
-        ViewNode::Badge { label, tone, style, .. } => format!(
+        ViewNode::Badge {
+            label, tone, style, ..
+        } => format!(
             "{pad}<span{}{}>{}</span>",
             class_attr(style.as_ref()),
             opt_attr("data-tone", tone.as_ref()),
             html_text(label)
         ),
-        ViewNode::Divider { style, .. } => {
-            format!("{pad}<hr{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Spacer { style, .. } => {
-            format!("{pad}<div aria-hidden=\"true\"{} />", class_attr(style.as_ref()))
-        }
         ViewNode::Image {
             src,
             alt,
@@ -299,6 +247,66 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             bound_attr("src", src),
             class_attr(style.as_ref())
         ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_layout_node(node: &ViewNode, indent: usize, locals: &[String], pad: &str) -> String {
+    match node {
+        ViewNode::Stack {
+            on_long_press,
+            style,
+            children,
+            ..
+        } => {
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
+            element("div", &attrs, children, indent, locals)
+        }
+        ViewNode::Scroll {
+            style, children, ..
+        } => element("div", &class_attr(style.as_ref()), children, indent, locals),
+        ViewNode::Dropzone {
+            on_drop,
+            style,
+            children,
+            ..
+        } => {
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_dom_event("drop", on_drop.as_ref())
+            );
+            element("div", &attrs, children, indent, locals)
+        }
+        ViewNode::Divider { style, .. } => {
+            format!("{pad}<hr{} />", class_attr(style.as_ref()))
+        }
+        ViewNode::Spacer { style, .. } => {
+            format!(
+                "{pad}<div aria-hidden=\"true\"{} />",
+                class_attr(style.as_ref())
+            )
+        }
+        ViewNode::SlotRotate {
+            phrases,
+            interval_ms,
+            style,
+        } => format!(
+            "{pad}<span{} :data-interval-ms=\"{interval_ms}\"{}>{}</span>",
+            attr("data-crepus-slot-rotate", &phrases.join("|")),
+            class_attr(style.as_ref()),
+            html_text(phrases.first().map(String::as_str).unwrap_or(""))
+        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_input_node(node: &ViewNode, _indent: usize, _locals: &[String], pad: &str) -> String {
+    match node {
         ViewNode::Toggle {
             label,
             checked,
@@ -337,7 +345,7 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             ..
         } => format!(
             "{pad}<input type=\"range\" :value=\"{value}\" :min=\"{min}\" :max=\"{max}\"{}{}{} />",
-            step.map(|s| format!(" :step=\"{s}\"")).unwrap_or_default(),
+            step.as_ref().map(|s| format!(" :step=\"{s}\"")).unwrap_or_default(),
             class_attr(style.as_ref()),
             opt_dom_event("change", on_change.as_ref())
         ),
@@ -420,16 +428,35 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 html_text(label)
             )
         }
-        ViewNode::SlotRotate {
-            phrases,
-            interval_ms,
+        _ => unreachable!(),
+    }
+}
+
+fn emit_collection_node(node: &ViewNode, indent: usize, locals: &[String], pad: &str) -> String {
+    match node {
+        ViewNode::List {
+            ordered,
             style,
-        } => format!(
-            "{pad}<span{} :data-interval-ms=\"{interval_ms}\"{}>{}</span>",
-            attr("data-crepus-slot-rotate", &phrases.join("|")),
-            class_attr(style.as_ref()),
-            html_text(phrases.first().map(String::as_str).unwrap_or(""))
+            children,
+        } => element(
+            if *ordered { "ol" } else { "ul" },
+            &class_attr(style.as_ref()),
+            children,
+            indent,
+            locals,
         ),
+        ViewNode::ListItem {
+            on_long_press,
+            style,
+            children,
+        } => {
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
+            element("li", &attrs, children, indent, locals)
+        }
         ViewNode::Tabs {
             tabs,
             on_change,
@@ -465,18 +492,63 @@ fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
             )
         }
+        _ => unreachable!(),
+    }
+}
+
+fn emit_control_flow_node(node: &ViewNode, indent: usize, locals: &[String], _pad: &str) -> String {
+    match node {
         ViewNode::If {
             condition,
             then_children,
             else_children,
             ..
-        } => emit_if(condition, then_children, else_children.as_ref(), indent, locals),
+        } => emit_if(
+            condition,
+            then_children,
+            else_children.as_ref(),
+            indent,
+            locals,
+        ),
         ViewNode::ForEach {
             bind,
             item_name,
             item_body,
             ..
         } => emit_for_each(bind, item_name, item_body, indent, locals),
+        _ => unreachable!(),
+    }
+}
+
+pub(crate) fn emit_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    let pad = "  ".repeat(indent);
+    match node {
+        ViewNode::Text { .. }
+        | ViewNode::Link { .. }
+        | ViewNode::Button { .. }
+        | ViewNode::Badge { .. }
+        | ViewNode::Image { .. }
+        | ViewNode::WebView { .. } => emit_text_and_media_node(node, indent, locals, &pad),
+        ViewNode::Stack { .. }
+        | ViewNode::Scroll { .. }
+        | ViewNode::Dropzone { .. }
+        | ViewNode::Divider { .. }
+        | ViewNode::Spacer { .. }
+        | ViewNode::SlotRotate { .. } => emit_layout_node(node, indent, locals, &pad),
+        ViewNode::Toggle { .. }
+        | ViewNode::Checkbox { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Meter { .. }
+        | ViewNode::Input { .. }
+        | ViewNode::Picker { .. }
+        | ViewNode::FilePicker { .. } => emit_input_node(node, indent, locals, &pad),
+        ViewNode::List { .. } | ViewNode::ListItem { .. } | ViewNode::Tabs { .. } => {
+            emit_collection_node(node, indent, locals, &pad)
+        }
+        ViewNode::If { .. } | ViewNode::ForEach { .. } => {
+            emit_control_flow_node(node, indent, locals, &pad)
+        }
     }
 }
 
