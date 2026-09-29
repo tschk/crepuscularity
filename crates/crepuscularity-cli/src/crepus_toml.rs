@@ -626,7 +626,10 @@ mod tests {
 
         // 0 targets, no id
         let err = resolve_pick(&[], None).unwrap_err();
-        assert_eq!(err, "crepus.toml defines 0 web targets []; pass --target ID");
+        assert_eq!(
+            err,
+            "crepus.toml defines 0 web targets []; pass --target ID"
+        );
 
         // 1 target, no id
         let res = resolve_pick(&[t1.clone()], None).unwrap();
@@ -634,7 +637,10 @@ mod tests {
 
         // 2 targets, no id
         let err = resolve_pick(&[t1.clone(), t2.clone()], None).unwrap_err();
-        assert_eq!(err, r#"crepus.toml defines 2 web targets ["foo", "bar"]; pass --target ID"#);
+        assert_eq!(
+            err,
+            r#"crepus.toml defines 2 web targets ["foo", "bar"]; pass --target ID"#
+        );
 
         // id matches
         let res = resolve_pick(&[t1.clone(), t2.clone()], Some("bar")).unwrap();
@@ -642,7 +648,10 @@ mod tests {
 
         // id doesn't match
         let err = resolve_pick(&[t1.clone(), t2.clone()], Some("baz")).unwrap_err();
-        assert_eq!(err, r#"no web target with id "baz" (available: ["foo", "bar"])"#);
+        assert_eq!(
+            err,
+            r#"no web target with id "baz" (available: ["foo", "bar"])"#
+        );
     }
 
     #[test]
