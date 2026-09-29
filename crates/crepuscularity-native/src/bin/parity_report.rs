@@ -400,3 +400,29 @@ fn is_class_literal(s: &str) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_fn_body_brace() {
+        let src = "fn apply_static() { hello { } }";
+        assert_eq!(extract_fn_body_brace(src, "apply_static"), Some("{ hello { } }"));
+
+        let src_unbalanced = "fn unbalanced() { hello { } ";
+        assert_eq!(extract_fn_body_brace(src_unbalanced, "unbalanced"), None);
+
+        let src_nested = "fn nested() { { { } } }";
+        assert_eq!(extract_fn_body_brace(src_nested, "nested"), Some("{ { { } } }"));
+
+        let src_empty = "fn empty() {}";
+        assert_eq!(extract_fn_body_brace(src_empty, "empty"), Some("{}"));
+
+        let src_no_fn = "pub const X: i32 = 42;";
+        assert_eq!(extract_fn_body_brace(src_no_fn, "missing"), None);
+
+        let src_no_brace = "fn no_brace()";
+        assert_eq!(extract_fn_body_brace(src_no_brace, "no_brace"), None);
+    }
+}
