@@ -255,6 +255,14 @@ impl Template {
         self.diff.update(&self.ctx);
     }
 
+    /// Invalidate the cached render output.
+    ///
+    /// Call this after changing rendering inputs that are not tracked in the
+    /// template context, such as an included file on disk.
+    pub fn invalidate(&mut self) {
+        self.invalidate_render_cache();
+    }
+
     fn invalidate_render_cache(&mut self) {
         self.diff = DiffTracker::new();
         self.rendered = None;

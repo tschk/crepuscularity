@@ -1367,9 +1367,10 @@ mod focus_events {
 // ─── Diff tracking ────────────────────────────────────────────────────────────
 
 mod diff_tracking {
-    use crate::tests::{all_text, buffer_rows};
+    use crate::tests::{all_text, buffer_rows, temp_case};
     use crate::{DiffTracker, Template, TemplateContext};
     use ratatui::{backend::TestBackend, Terminal};
+    use std::fs;
 
     #[test]
     fn diff_tracker_detects_new_variables() {
@@ -1462,6 +1463,68 @@ mod diff_tracking {
         assert!(
             buffer_rows(&terminal).join("\n").contains("Hello"),
             "skipping an unchanged render must preserve the visible frame"
+        );
+    }
+
+    #[test]
+    fn template_draw_if_changed_renders_external_include_after_invalidate() {
+        let dir = temp_case("draw-if-changed-external-include");
+        let template_path = dir.join("ui.crepus");
+        let include_path = dir.join("child.crepus");
+        fs::write(&template_path, "div\n include child.crepus").unwrap();
+        fs::write(&include_path, "div\n  \"Include before\"").unwrap();
+
+        let mut tpl = Template::from_path(&template_path).unwrap();
+        let backend = TestBackend::new(32, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+        assert!(all_text(&buffer_rows(&terminal)).contains("Include before"));
+
+        fs::write(&include_path, "div\n  \"Include after\"").unwrap();
+        tpl.reload().expect("unchanged root template reloads");
+
+        let mut drew = true;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(
+            !drew,
+            "unchanged context and root source skip the cached render"
+        );
+        assert!(
+            text.contains("Include before"),
+            "stale cached text missing: {text}"
+        );
+        assert!(
+            !text.contains("Include after"),
+            "include changed without cache invalidation: {text}"
+        );
+
+        tpl.invalidate();
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(drew, "explicit invalidation must force a fresh render");
+        assert!(
+            text.contains("Include after"),
+            "updated include missing: {text}"
+        );
+        assert!(
+            !text.contains("Include before"),
+            "stale include remained: {text}"
         );
     }
 
