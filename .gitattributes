@@ -1,0 +1,4 @@
+
+# Exclude Shell from GitHub language statistics.
+*.sh linguist-detectable=false
+/examples/native-shells/android/gradlew linguist-detectable=false
