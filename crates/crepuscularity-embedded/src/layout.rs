@@ -272,4 +272,54 @@ mod tests {
         assert!(doc.by_id.contains_key("node1"));
         assert!(doc.by_id.contains_key("node2"));
     }
+    #[test]
+    fn test_layout_bounding_box_math_sanity() {
+        let child1 = EmbeddedNode {
+            id: None,
+            tag: String::from("div"),
+            text: None,
+            on_click: None,
+            style: EmbeddedStyle {
+                width: crate::document::SizeHint::Fixed(100),
+                height: crate::document::SizeHint::Fixed(50),
+                ..Default::default()
+            },
+            bounds: Rect::default(),
+            children: vec![],
+        };
+        let child2 = EmbeddedNode {
+            id: None,
+            tag: String::from("div"),
+            text: None,
+            on_click: None,
+            style: EmbeddedStyle {
+                width: crate::document::SizeHint::Fixed(200),
+                height: crate::document::SizeHint::Fixed(100),
+                ..Default::default()
+            },
+            bounds: Rect::default(),
+            children: vec![],
+        };
+        let mut root = EmbeddedNode {
+            id: None,
+            tag: String::from("div"),
+            text: None,
+            on_click: None,
+            style: EmbeddedStyle {
+                flex_dir: crate::document::FlexDir::Column,
+                gap: 10,
+                padding_x: 20,
+                padding_y: 20,
+                ..Default::default()
+            },
+            bounds: Rect::default(),
+            children: vec![child1, child2],
+        };
+        let screen = ScreenSize::new(800, 600);
+        layout_tree(&mut root, screen);
+
+        assert_eq!(root.bounds, Rect::new(0, 0, 800, 600));
+        assert_eq!(root.children[0].bounds, Rect::new(20, 20, 100, 50));
+        assert_eq!(root.children[1].bounds, Rect::new(20, 80, 200, 100));
+    }
 }
