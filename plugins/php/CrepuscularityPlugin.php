@@ -20,6 +20,11 @@ final class CrepuscularityPlugin
         if (str_contains($bin, '/') || str_contains($bin, '\\')) {
             throw new RuntimeException('CREPUS_BIN must be a binary name, not a path');
         }
+
+        if ($bin !== 'crepus' && $bin !== 'crepus.exe') {
+            throw new RuntimeException("Invalid CREPUS_BIN: binary name must be 'crepus' or 'crepus.exe', got '$bin'");
+        }
+
         return $bin;
     }
 
