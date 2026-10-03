@@ -325,3 +325,41 @@ fn split_top_level_semicolons(src: &str) -> Vec<&str> {
     parts.push(&src[start..]);
     parts
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::jsx::{JsxAttr, JsxAttrValue};
+
+    #[test]
+    fn test_directive_expr() {
+        assert_eq!(
+            directive_expr(&JsxAttr {
+                key: "k".into(),
+                value: JsxAttrValue::Str("   value   ".into()),
+            }),
+            "value"
+        );
+        assert_eq!(
+            directive_expr(&JsxAttr {
+                key: "k".into(),
+                value: JsxAttrValue::Expr("   x + 1   ".into()),
+            }),
+            "x + 1"
+        );
+        assert_eq!(
+            directive_expr(&JsxAttr {
+                key: "k".into(),
+                value: JsxAttrValue::Bool(true),
+            }),
+            ""
+        );
+        assert_eq!(
+            directive_expr(&JsxAttr {
+                key: "k".into(),
+                value: JsxAttrValue::Bool(false),
+            }),
+            ""
+        );
+    }
+}
