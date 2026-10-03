@@ -1737,7 +1737,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-cli"
-version = "0.16.3"
+version = "0.16.4"
 dependencies = [
  "ammonia",
  "clap",
@@ -1897,6 +1897,7 @@ version = "0.1.6"
 dependencies = [
  "equilibrium-ffi",
  "serde",
+ "tempfile",
  "toml 0.8.23",
 ]
 
