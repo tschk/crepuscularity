@@ -64,3 +64,14 @@ pub fn opacity(
 pub fn div() -> Div {
     gpui::div()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_div_factory() {
+        // Ensure the factory function can be called and returns a Div
+        let _ = div();
+    }
+}
