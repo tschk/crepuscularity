@@ -268,4 +268,63 @@ mod tests {
         assert_eq!(parse_java_major("abc.def"), None);
         assert_eq!(parse_java_major("  "), None);
     }
+
+    // Workaround for 'ExecutableFileBusy': instead of returning the `NamedTempFile` (which holds a write handle),
+    // we return the path and use a guard to clean it up. Or we can just persist the file in a temp dir.
+    #[cfg(unix)]
+    struct FakeJavaGuard {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl FakeJavaGuard {
+        fn new(output: &str) -> Self {
+            use std::io::Write;
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::Builder::new().tempdir().unwrap();
+            let path = dir.path().join("fake_java");
+            let mut file = std::fs::File::create(&path).unwrap();
+            writeln!(file, "#!/bin/sh\ncat << 'EOF'\n{output}\nEOF").unwrap();
+            file.sync_all().unwrap();
+            drop(file);
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+            Self { _dir: dir, path }
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_success() {
+        let fake_java = FakeJavaGuard::new("openjdk version \"17.0.2\" 2022-01-18");
+        assert!(java_version_at_least(fake_java.path(), 17));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_failure() {
+        let fake_java = FakeJavaGuard::new("openjdk version \"11.0.12\" 2021-07-20");
+        assert!(!java_version_at_least(fake_java.path(), 17));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_invalid_output() {
+        let fake_java = FakeJavaGuard::new("not a java version string");
+        assert!(!java_version_at_least(fake_java.path(), 17));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_command_fails() {
+        assert!(!java_version_at_least(
+            Path::new("/does/not/exist/java"),
+            17
+        ));
+    }
 }
