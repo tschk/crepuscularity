@@ -64,15 +64,20 @@ _BIND_BLOCKLIST = frozenset({"baseDir", "_"})  # ponytail: block security-sensit
 
 
 def render_ir(path: str | Path, context: dict[str, Any] | None = None, allowed_dir: str | Path | None = None) -> ViewIr:
-    args = [_crepus_bin(), "native", "ir", str(path)]
+    template_path = Path(path)
+    command_path = str(path)
+    if context is not None or allowed_dir is not None:
+        template_path = template_path.resolve()
+        resolved_allowed = Path(allowed_dir).resolve() if allowed_dir is not None else Path.cwd().resolve()
+        if not template_path.is_relative_to(resolved_allowed):
+            raise ValueError("Path traversal detected")
+        command_path = str(template_path)
+
+    args = [_crepus_bin(), "native", "ir", command_path]
     input_data = None
     if context is not None:
-        resolved_path = Path(path).resolve()
-        resolved_allowed = Path(allowed_dir).resolve() if allowed_dir is not None else Path.cwd().resolve()
-        if not resolved_path.is_relative_to(resolved_allowed):
-            raise ValueError("Path traversal detected")
-        source = resolved_path.read_text()
-        payload = {"template": source, "context": context, "baseDir": str(Path(path).parent)}
+        source = template_path.read_text()
+        payload = {"template": source, "context": context, "baseDir": str(template_path.parent)}
         args = [_crepus_bin(), "native", "ir", "--stdin-json"]
         input_data = json.dumps(payload)
     proc = subprocess.run(args, input=input_data, text=True, capture_output=True, check=False)
