@@ -1,0 +1,7 @@
+div w-full h-full flex flex-col gap-4 p-4
+  "GPUI Kit counter"
+  {input}
+  {increment}
+  {status}
+  if {self.count > 0}
+    {reset}
