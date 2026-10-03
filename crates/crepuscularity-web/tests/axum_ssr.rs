@@ -4,6 +4,118 @@ use crepuscularity_core::TemplateContext;
 use crepuscularity_web::{render_ssr_document_with_nodes, SsrDocument};
 
 #[tokio::test]
+async fn stream_ssr_body_class_is_a_complete_attribute() {
+    let nodes = crepuscularity_core::ast_cache::parse_content(r#"div "body content""#).unwrap();
+    let doc = SsrDocument {
+        body_class: Some("dark"),
+        ..Default::default()
+    };
+    let response =
+        crepuscularity_web::stream_ssr_response_with_nodes(nodes, TemplateContext::new(), doc)
+            .await;
+    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(html.contains("<body class=\"dark\">\n"), "{html}");
+    assert!(html.contains("body content"), "{html}");
+    assert!(html.ends_with("</body>\n</html>\n"), "{html}");
+}
+
+fn decode_stream_hydration(html: &str) -> serde_json::Value {
+    use base64::Engine;
+    let start = html
+        .find("id=\"__crepus_hydration__\"")
+        .expect("hydration script");
+    let after = &html[start..];
+    let payload_start = after.find('>').unwrap() + 1;
+    let payload_end = after[payload_start..].find("</script>").unwrap() + payload_start;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(after[payload_start..payload_end].trim())
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn stream_ssr_preserves_buffered_hydration_context_and_bindings() {
+    let nodes = crepuscularity_core::ast_cache::parse_content(
+        "div\n  \"Hello {name}\"\n  \"Count {count}\"",
+    )
+    .unwrap();
+    let mut ctx = TemplateContext::new();
+    ctx.set("name", "</script><div>synthetic</div>");
+    ctx.set("count", 42);
+    let doc = SsrDocument::default();
+    let buffered = render_ssr_document_with_nodes(
+        &nodes,
+        &Cell::new(0),
+        &mut crepuscularity_web::BindMap::new(),
+        &ctx,
+        &doc,
+        true,
+    )
+    .unwrap();
+    let response = crepuscularity_web::stream_ssr_response_with_nodes(nodes, ctx, doc).await;
+    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let streamed = String::from_utf8(body.to_vec()).unwrap();
+    let payload = decode_stream_hydration(&streamed);
+    assert_eq!(payload, decode_stream_hydration(&buffered));
+    assert_eq!(payload["ctx"]["count"], 42);
+    assert_eq!(payload["ctx"]["name"], "</script><div>synthetic</div>");
+    assert!(!payload["bind"].as_object().unwrap().is_empty());
+    for id in payload["bind"].as_object().unwrap().keys() {
+        assert!(
+            streamed.contains(&format!("data-crepus-id=\"c{id}\"")),
+            "{streamed}"
+        );
+    }
+    assert!(
+        streamed.contains("Hello &lt;/script&gt;&lt;div&gt;synthetic&lt;/div&gt;"),
+        "{streamed}"
+    );
+    assert!(streamed.contains("Count 42"), "{streamed}");
+    assert!(
+        !streamed.contains("</script><div>synthetic</div>"),
+        "{streamed}"
+    );
+    assert!(streamed.find("__crepus_hydration__").unwrap() < streamed.rfind("</body>").unwrap());
+}
+
+#[tokio::test]
+async fn document_language_is_escaped_in_buffered_and_streaming_shells() {
+    let nodes = crepuscularity_core::ast_cache::parse_content(r#"div "ok""#).unwrap();
+    let doc = SsrDocument {
+        lang: r#"en" data-probe="synthetic"#,
+        ..Default::default()
+    };
+    let buffered = render_ssr_document_with_nodes(
+        &nodes,
+        &Cell::new(0),
+        &mut crepuscularity_web::BindMap::new(),
+        &TemplateContext::new(),
+        &doc,
+        true,
+    )
+    .unwrap();
+    let response =
+        crepuscularity_web::stream_ssr_response_with_nodes(nodes, TemplateContext::new(), doc)
+            .await;
+    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let streamed = String::from_utf8(body.to_vec()).unwrap();
+    for html in [&buffered, &streamed] {
+        assert!(
+            html.contains("<html lang=\"en&quot; data-probe=&quot;synthetic\">"),
+            "{html}"
+        );
+        assert!(!html.contains(" data-probe=\"synthetic"), "{html}");
+    }
+}
+
+#[tokio::test]
 async fn stream_ssr_escapes_body_class() {
     use axum::body::to_bytes;
     use crepuscularity_web::stream_ssr_response_with_nodes;
