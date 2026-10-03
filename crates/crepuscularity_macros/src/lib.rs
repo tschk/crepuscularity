@@ -67,10 +67,14 @@ static ELEM_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// `@keydown|ctrl+s=handler` — ctrl+s combination
 ///
 /// ## Events
-/// `@click`, `@input`, `@change`, `@keydown`, `@keyup`, `@hover`, `@mousedown`, `@mouseup`
+/// `@click`, `@keydown`, `@keyup`, `@hover`, `@mousedown`, `@mouseup`,
+/// `@mousemove`, `@mouseexit`, `@scroll`, `@pinch`, `@modifierschanged`, `@auxclick`.
+/// Retained text input uses native entities/components, including their input events.
 ///
 /// ## Bindings
-/// `bind:value={field}` — two-way value binding
+/// `bind:native={|element| element.on_action(... )}` — typed GPUI escape hatch.
+/// `bind:role={gpui::accesskit::Role::Button}` — native accessibility semantics.
+/// Bindings do not establish two-way ownership of host state.
 ///
 /// ## State prefixes
 /// `hover:`, `focus:`, `active:`
@@ -591,6 +595,9 @@ struct LetDecl {
 fn core_node_to_macro(node: &crepuscularity_core::ast::Node) -> Result<Node, String> {
     use crepuscularity_core::ast;
     match node {
+        ast::Node::Element(el) if !el.animations.is_empty() => Err(
+            "GPUI compiled animate attributes are not implemented; use a native animated element expression".into()
+        ),
         ast::Node::Element(el) => Ok(Node::Element(Element {
             tag: el.tag.clone(),
             id: el.id.clone(),
@@ -799,67 +806,181 @@ fn generate_child_call(node: &Node) -> Result<TokenStream2, String> {
 }
 
 fn generate_element(element: &Element) -> Result<TokenStream2, String> {
+    if matches!(element.tag.as_str(), "input" | "textarea") {
+        return Err("GPUI input requires a retained native input entity; insert that entity as a Rust expression or use a custom component".into());
+    }
     let tag_expr = element_tag_to_tokens(&element.tag);
-
-    let class_methods: Vec<TokenStream2> = element
-        .classes
-        .iter()
-        .filter_map(|class| map_class(class))
-        .collect();
-
-    let conditional_class_calls: Vec<TokenStream2> = element
-        .conditional_classes
-        .iter()
-        .map(generate_conditional_class)
-        .collect::<Result<_, _>>()?;
-
-    let handler_calls: Vec<TokenStream2> = element
+    let class_calls = generate_element_classes(element)?;
+    let mut seen_events = BTreeSet::new();
+    for h in &element.event_handlers {
+        if !seen_events.insert(&h.event) {
+            return Err(format!("Duplicate GPUI event `@{}`", h.event));
+        }
+    }
+    let handlers = element
         .event_handlers
         .iter()
         .map(generate_event_handler)
-        .collect::<Result<_, _>>()?;
-
-    let binding_calls: Vec<TokenStream2> = element
-        .bindings
-        .iter()
-        .map(generate_binding)
-        .collect::<Result<_, _>>()?;
-
-    let child_calls: Vec<TokenStream2> = element
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut bindings = Vec::new();
+    let mut native = Vec::new();
+    let mut id = element.id.as_ref().map(|id| quote! { .id(#id) });
+    let mut disabled = quote! { false };
+    let has_disabled = element.bindings.iter().any(|b| b.prop == "disabled");
+    let mut image = None;
+    for binding in &element.bindings {
+        let value: syn::Expr = syn::parse_str(&binding.value)
+            .map_err(|e| format!("Invalid binding `{}`: {e}", binding.prop))?;
+        match binding.prop.as_str() {
+            "id" => id = Some(quote! { .id(#value) }),
+            "key" => {} // Used by the enclosing for loop.
+            "disabled" => {
+                disabled = if binding.value == "\"\"" {
+                    quote! { true }
+                } else {
+                    quote! { #value }
+                }
+            }
+            "native" => native.push(quote! { .map(#value) }),
+            "src" if matches!(element.tag.as_str(), "img" | "image") => {
+                image = Some(quote! { ::gpui::img(#value) })
+            }
+            "path" if matches!(element.tag.as_str(), "img" | "image") => {
+                image = Some(quote! { ::gpui::img(::std::path::PathBuf::from(#value)) })
+            }
+            "src" if element.tag == "svg" => image = Some(quote! { ::gpui::svg().path(#value) }),
+            _ => bindings.push(generate_binding(binding)?),
+        }
+    }
+    let builtin = !element.tag.chars().next().is_some_and(char::is_uppercase);
+    if id.is_none() && (builtin || !handlers.is_empty()) {
+        let generated = ELEM_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as usize;
+        id = Some(quote! { .id(#generated) });
+    }
+    let semantics = match element.tag.as_str() {
+        "button" => quote! { .role(::gpui::accesskit::Role::Button) },
+        "img" | "image" | "svg" => quote! { .role(::gpui::accesskit::Role::Image) },
+        _ => quote! {},
+    };
+    let children = element
         .children
         .iter()
         .map(generate_child_call)
-        .collect::<Result<_, _>>()?;
-
-    // on_click (and other StatefulInteractiveElement methods) require an ElementId.
-    let id_call = if let Some(id) = &element.id {
-        quote! { .id(#id) }
-    } else if element.event_handlers.iter().any(|h| h.event == "click") {
-        let generated_id = ELEM_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as usize;
-        quote! { .id(#generated_id as usize) }
+        .collect::<Result<Vec<_>, _>>()?;
+    let image_child = if matches!(element.tag.as_str(), "img" | "image" | "svg") {
+        let image =
+            image.ok_or("GPUI image/svg requires src={...}; filesystem images use path={...}")?;
+        let default_svg = if element.tag == "svg" {
+            quote! {
+                if __image.style().size.width.is_none() { __image = __image.w(::gpui::rems(1.)); }
+                if __image.style().size.height.is_none() { __image = __image.h(::gpui::rems(1.)); }
+            }
+        } else {
+            quote! {}
+        };
+        Some(quote! { .map(|mut __wrapper| {
+            let mut __image = #image.id("image");
+            __image.style().size = ::std::mem::take(&mut __wrapper.style().size);
+            __image.style().min_size = ::std::mem::take(&mut __wrapper.style().min_size);
+            __image.style().max_size = ::std::mem::take(&mut __wrapper.style().max_size);
+            #default_svg
+            __wrapper.child(__image)
+        }) })
     } else {
-        quote! {}
+        None
     };
-
-    Ok(quote! {
-        #tag_expr
-        #id_call
-        #(#class_methods)*
-        #(#conditional_class_calls)*
-        #(#handler_calls)*
-        #(#binding_calls)*
-        #(#child_calls)*
-    })
+    let event_calls = if has_disabled {
+        quote! { .when(__crepus_disabled, |__el| __el.cursor_not_allowed().opacity(0.5))
+        .when(!__crepus_disabled, |__el| __el #(#handlers)*) }
+    } else {
+        quote! { #(#handlers)* }
+    };
+    Ok(quote! {{
+        let __crepus_disabled: bool = #disabled;
+        #tag_expr #id #semantics #class_calls
+            #event_calls #(#bindings)* #image_child #(#children)* #(#native)*
+    }})
 }
 
-fn generate_conditional_class(cc: &ConditionalClass) -> Result<TokenStream2, String> {
-    let condition: syn::Expr = syn::parse_str(&cc.condition)
-        .map_err(|e| format!("Invalid condition in class:{}: {e}", cc.class))?;
-    let style = map_class_to_style(&cc.class)
-        .ok_or_else(|| format!("Unknown class `{}` in conditional class", cc.class))?;
-    Ok(quote! {
-        .when(#condition, |__el| __el #style)
-    })
+// A GPUI state setter replaces the whole refinement (hover also debug-asserts
+// when called twice). Aggregate static and conditional classes per state.
+fn generate_element_classes(element: &Element) -> Result<TokenStream2, String> {
+    let mut base = Vec::new();
+    let mut states: [Vec<TokenStream2>; 3] = Default::default();
+    for (class, condition) in element.classes.iter().map(|c| (c.as_str(), None)).chain(
+        element
+            .conditional_classes
+            .iter()
+            .map(|c| (c.class.as_str(), Some(c.condition.as_str()))),
+    ) {
+        let class = class
+            .strip_prefix("gpui:")
+            .or_else(|| class.strip_prefix("gui:"))
+            .unwrap_or(class);
+        let (state, plain) = if let Some(c) = class.strip_prefix("hover:") {
+            (Some(0), c)
+        } else if let Some(c) = class.strip_prefix("focus:") {
+            (Some(1), c)
+        } else if let Some(c) = class.strip_prefix("active:") {
+            (Some(2), c)
+        } else {
+            (None, class)
+        };
+        let style = if state.is_some() {
+            map_class_to_style(plain)
+        } else {
+            map_class(plain)
+        };
+        let Some(style) = style else {
+            if condition.is_some() || state.is_some() {
+                return Err(format!("Unsupported GPUI class `{class}`"));
+            }
+            continue;
+        };
+        let condition = condition
+            .map(syn::parse_str::<syn::Expr>)
+            .transpose()
+            .map_err(|e| format!("Invalid class condition: {e}"))?;
+        if let Some(index) = state {
+            if plain == "self-auto" {
+                return Err(
+                    "GPUI state refinements cannot reset align-self to auto; use a native element"
+                        .into(),
+                );
+            }
+            if plain.starts_with("overflow-")
+                && (plain.ends_with("auto") || plain.ends_with("scroll"))
+            {
+                return Err(
+                    "GPUI scroll behavior cannot be changed by a state style; use native={...}"
+                        .into(),
+                );
+            }
+            states[index].push(if let Some(condition) = condition {
+                quote! { if #condition { __style = __style #style; } }
+            } else {
+                quote! { __style = __style #style; }
+            });
+        } else {
+            base.push(if let Some(condition) = condition {
+                quote! { .when(#condition, |__el| __el #style) }
+            } else {
+                style
+            });
+        }
+    }
+    let state_calls = states
+        .into_iter()
+        .enumerate()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(index, items)| {
+            let method = syn::Ident::new(
+                ["hover", "focus", "active"][index],
+                proc_macro2::Span::call_site(),
+            );
+            quote! { .#method(|mut __style| { #(#items)* __style }) }
+        });
+    Ok(quote! { #(#base)* #(#state_calls)* })
 }
 
 fn generate_text(parts: &[TextPart]) -> Result<TokenStream2, String> {
@@ -969,17 +1090,51 @@ fn generate_for_child_call(for_block: &ForBlock) -> Result<TokenStream2, String>
     let iterator: syn::Expr = syn::parse_str(&for_block.iterator)
         .map_err(|error| format!("Invalid for iterator `{}`: {error}", for_block.iterator))?;
 
-    let body_expr = match for_block.body.len() {
-        0 => quote! { ::gpui::div() },
-        1 => generate_node(&for_block.body[0])?,
-        _ => {
-            let child_calls = generate_child_calls(&for_block.body)?;
-            quote! { ::gpui::div() #(#child_calls)* }
+    let loop_id = format!(
+        "crepus-loop-{}",
+        ELEM_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let mut row_identity = quote! { ::gpui::ElementId::from(__crepus_index) };
+    let body_expr = if let [Node::Element(root)] = for_block.body.as_slice() {
+        let mut root = root.clone();
+        let key = root.bindings.iter().find(|b| b.prop == "key");
+        let custom = root.tag.chars().next().is_some_and(char::is_uppercase);
+        let bound_id = if custom {
+            None
+        } else {
+            root.bindings.iter().find(|b| b.prop == "id")
+        };
+        if let Some(binding) = key.or(bound_id) {
+            let expr: syn::Expr =
+                syn::parse_str(&binding.value).map_err(|e| format!("Invalid row identity: {e}"))?;
+            row_identity = if key.is_some() {
+                quote! { ::gpui::ElementId::from(format!("{}", #expr)) }
+            } else {
+                quote! { ::gpui::ElementId::from(#expr) }
+            };
         }
+        if custom {
+            root.bindings.retain(|b| b.prop != "key");
+            let body = generate_element(&root)?;
+            quote! { ::gpui::div().id(__crepus_row_id.clone()).child(#body) }
+        } else {
+            root.bindings.retain(|b| b.prop != "id" && b.prop != "key");
+            root.id = None;
+            root.bindings.push(Binding {
+                prop: "id".into(),
+                value: "__crepus_row_id".into(),
+            });
+            generate_element(&root)?
+        }
+    } else {
+        let child_calls = generate_child_calls(&for_block.body)?;
+        quote! { ::gpui::div().id(__crepus_row_id) #(#child_calls)* }
     };
-
     Ok(quote! {
-        .children((#iterator).map(|#pattern| #body_expr))
+        .children((#iterator).enumerate().map(|(__crepus_index, #pattern)| {
+            let __crepus_row_id: ::gpui::ElementId = (#row_identity, ::gpui::SharedString::from(#loop_id)).into();
+            #body_expr
+        }))
     })
 }
 
@@ -1046,6 +1201,12 @@ fn generate_match_arm(arm: &MatchArm) -> Result<TokenStream2, String> {
 }
 
 fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String> {
+    if !handler.modifiers.is_empty() && !matches!(handler.event.as_str(), "keydown" | "keyup") {
+        return Err(format!(
+            "GPUI event modifiers are only supported on keydown/keyup, not {}",
+            handler.event
+        ));
+    }
     let handler_expr = &handler.handler;
     let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
 
@@ -1067,10 +1228,7 @@ fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String
             let listener = make_listener("click")?;
             Ok(quote! { .on_click(#listener) })
         }
-        "input" | "change" => {
-            let listener = make_listener("input")?;
-            Ok(quote! { .on_input(#listener) })
-        }
+        "input" | "change" => Err("GPUI input/change requires a native input component".into()),
         "keydown" => {
             if handler.modifiers.is_empty() {
                 let listener = make_listener("keydown")?;
@@ -1107,135 +1265,147 @@ fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String
             let listener = make_listener("scroll")?;
             Ok(quote! { .on_scroll_wheel(#listener) })
         }
-        _ => Ok(quote! {}),
+        "mouseexit" | "pinch" | "modifierschanged" | "auxclick" => {
+            let method = syn::Ident::new(
+                match handler.event.as_str() {
+                    "mouseexit" => "on_mouse_exit",
+                    "pinch" => "on_pinch",
+                    "modifierschanged" => "on_modifiers_changed",
+                    _ => "on_aux_click",
+                },
+                proc_macro2::Span::call_site(),
+            );
+            let listener = make_listener(&handler.event)?;
+            Ok(quote! { .#method(#listener) })
+        }
+        _ => Err(format!(
+            "Unsupported GPUI event `@{}`; use native={{...}} for typed native APIs",
+            handler.event
+        )),
     }
 }
 
 fn generate_keydown_with_modifiers(handler: &EventHandler) -> Result<TokenStream2, String> {
-    let handler_expr = &handler.handler;
-    let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
-
-    // Build key filter from modifiers
-    // Modifiers can be: "Enter", "Escape", "ctrl+s", "shift+Tab", etc.
-    let key_conditions: Vec<TokenStream2> = handler
-        .modifiers
-        .iter()
-        .map(|modifier| {
-            let lower = modifier.to_lowercase();
-            if lower.contains('+') {
-                // ctrl+s, shift+tab, etc.
-                let parts: Vec<&str> = lower.split('+').collect();
-                let key = parts.last().unwrap_or(&"");
-                let mut conds = vec![quote! { __ev.keystroke.key == #key }];
-                for part in &parts[..parts.len() - 1] {
-                    match *part {
-                        "ctrl" | "cmd" => conds.push(quote! { __ev.keystroke.modifiers.command }),
-                        "shift" => conds.push(quote! { __ev.keystroke.modifiers.shift }),
-                        "alt" | "opt" => conds.push(quote! { __ev.keystroke.modifiers.alt }),
-                        _ => {}
-                    }
-                }
-                quote! { (#(#conds)&&*) }
-            } else {
-                // Simple key: Enter, Escape, Tab, etc.
-                let key = match lower.as_str() {
-                    "enter" => "enter",
-                    "escape" | "esc" => "escape",
-                    "tab" => "tab",
-                    "backspace" => "backspace",
-                    "delete" => "delete",
-                    "space" => "space",
-                    "arrowup" | "up" => "up",
-                    "arrowdown" | "down" => "down",
-                    "arrowleft" | "left" => "left",
-                    "arrowright" | "right" => "right",
-                    other => other,
-                };
-                quote! { __ev.keystroke.key == #key }
-            }
-        })
-        .collect();
-
-    let call_body = if is_closure {
-        let closure: syn::Expr = syn::parse_str(&handler_expr[1..handler_expr.len() - 1])
-            .map_err(|e| format!("Invalid keydown closure: {e}"))?;
-        quote! { (#closure)(__ev, __window, __cx) }
-    } else {
-        let method: syn::Ident = syn::parse_str(handler_expr)
-            .map_err(|e| format!("Invalid method name `{handler_expr}`: {e}"))?;
-        quote! { Self::#method(this, __ev, __window, __cx) }
-    };
-
-    let condition = if key_conditions.is_empty() {
-        quote! { true }
-    } else {
-        quote! { #(#key_conditions)||* }
-    };
-
-    Ok(quote! {
-        .on_key_down(cx.listener(|this, __ev: &::gpui::KeyDownEvent, __window, __cx| {
-            if #condition {
-                #call_body
-            }
-        }))
-    })
+    generate_key_handler(handler, "on_key_down", quote! { ::gpui::KeyDownEvent })
 }
 
 fn generate_keyup_with_modifiers(handler: &EventHandler) -> Result<TokenStream2, String> {
-    let handler_expr = &handler.handler;
-    let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
+    generate_key_handler(handler, "on_key_up", quote! { ::gpui::KeyUpEvent })
+}
 
-    let key_conditions: Vec<TokenStream2> = handler
+fn key_condition(chord: &str) -> Result<TokenStream2, String> {
+    let lower = chord.to_lowercase();
+    let mut parts: Vec<_> = lower.split('+').collect();
+    let key = parts.pop().unwrap_or("");
+    if key.is_empty() {
+        return Err(format!("Empty key in GPUI chord `{chord}`"));
+    }
+    let key = match key {
+        "esc" => "escape",
+        "arrowup" => "up",
+        "arrowdown" => "down",
+        "arrowleft" => "left",
+        "arrowright" => "right",
+        other => other,
+    };
+    let (mut control, mut command, mut alt, mut shift) = (false, false, false, false);
+    for part in parts {
+        match part {
+            "ctrl" | "control" => control = true,
+            "cmd" | "command" | "meta" => command = true,
+            "alt" | "opt" => alt = true,
+            "shift" => shift = true,
+            _ => return Err(format!("Unknown modifier `{part}` in GPUI chord `{chord}`")),
+        }
+    }
+    Ok(quote! { (__ev.keystroke.key == #key
+    && __ev.keystroke.modifiers.control == #control
+    && __ev.keystroke.modifiers.platform == #command
+    && __ev.keystroke.modifiers.alt == #alt
+    && __ev.keystroke.modifiers.shift == #shift
+    && !__ev.keystroke.modifiers.function) })
+}
+
+fn generate_key_handler(
+    handler: &EventHandler,
+    method: &str,
+    event_type: TokenStream2,
+) -> Result<TokenStream2, String> {
+    let conditions = handler
         .modifiers
         .iter()
-        .map(|modifier| {
-            let lower = modifier.to_lowercase();
-            let key = match lower.as_str() {
-                "enter" => "enter",
-                "escape" | "esc" => "escape",
-                "tab" => "tab",
-                other => other,
-            };
-            quote! { __ev.keystroke.key == #key }
-        })
-        .collect();
-
-    let call_body = if is_closure {
-        let closure: syn::Expr = syn::parse_str(&handler_expr[1..handler_expr.len() - 1])
-            .map_err(|e| format!("Invalid keyup closure: {e}"))?;
-        quote! { (#closure)(__ev, __window, __cx) }
-    } else {
-        let method: syn::Ident = syn::parse_str(handler_expr)
-            .map_err(|e| format!("Invalid method name `{handler_expr}`: {e}"))?;
-        quote! { Self::#method(this, __ev, __window, __cx) }
-    };
-
-    let condition = if key_conditions.is_empty() {
-        quote! { true }
-    } else {
-        quote! { #(#key_conditions)||* }
-    };
-
-    Ok(quote! {
-        .on_key_up(cx.listener(|this, __ev: &::gpui::KeyUpEvent, __window, __cx| {
-            if #condition {
-                #call_body
+        .map(|m| key_condition(m))
+        .collect::<Result<Vec<_>, _>>()?;
+    let method = syn::Ident::new(method, proc_macro2::Span::call_site());
+    let expr = &handler.handler;
+    let listener = if expr.starts_with('{') && expr.ends_with('}') {
+        let closure: syn::Expr =
+            syn::parse_str(&expr[1..expr.len() - 1]).map_err(|e| e.to_string())?;
+        quote! {{
+            fn __typed_handler<F>(handler: F) -> F
+            where F: Fn(&#event_type, &mut ::gpui::Window, &mut ::gpui::App) + 'static {
+                handler
             }
-        }))
-    })
+            let __handler = __typed_handler(#closure);
+            move |__ev: &#event_type, __window: &mut ::gpui::Window, __cx: &mut ::gpui::App| {
+                if #(#conditions)||* { __handler(__ev, __window, __cx) }
+            }
+        }}
+    } else {
+        let callback: syn::Ident = syn::parse_str(expr).map_err(|e| e.to_string())?;
+        quote! { cx.listener(|this, __ev: &#event_type, __window, __cx| {
+            if #(#conditions)||* { Self::#callback(this, __ev, __window, __cx) }
+        }) }
+    };
+    Ok(quote! { .#method(#listener) })
 }
 
 fn generate_binding(binding: &Binding) -> Result<TokenStream2, String> {
     let value: syn::Expr = syn::parse_str(&binding.value)
         .map_err(|e| format!("Invalid binding value `{}`: {e}", binding.value))?;
-
-    match binding.prop.as_str() {
-        "id" => Ok(quote! { .id(#value) }),
-        "value" => Ok(quote! { .value(#value) }),
-        "checked" => Ok(quote! { .checked(#value) }),
-        "disabled" => Ok(quote! { .when(#value, |el| el.cursor_not_allowed().opacity(0.5)) }),
-        _ => Ok(quote! {}),
-    }
+    let method = match binding.prop.as_str() {
+        "role" => "role",
+        "aria-label" | "alt" => "aria_label",
+        "aria-description" => "aria_description",
+        "aria-keyshortcuts" => "aria_keyshortcuts",
+        "aria-value" => "aria_value",
+        "aria-placeholder" => "aria_placeholder",
+        "aria-selected" => "aria_selected",
+        "aria-expanded" => "aria_expanded",
+        "aria-toggled" => "aria_toggled",
+        "aria-numeric-value" => "aria_numeric_value",
+        "aria-min-numeric-value" => "aria_min_numeric_value",
+        "aria-max-numeric-value" => "aria_max_numeric_value",
+        "aria-numeric-value-step" => "aria_numeric_value_step",
+        "aria-orientation" => "aria_orientation",
+        "aria-level" => "aria_level",
+        "aria-position-in-set" => "aria_position_in_set",
+        "aria-size-of-set" => "aria_size_of_set",
+        "aria-row-index" => "aria_row_index",
+        "aria-column-index" => "aria_column_index",
+        "aria-row-count" => "aria_row_count",
+        "aria-column-count" => "aria_column_count",
+        "focusable" => {
+            return Ok(quote! { .when(#value && !__crepus_disabled, |el| el.focusable()) })
+        }
+        "checked" => {
+            let value = if binding.value == "\"\"" {
+                quote! { true }
+            } else {
+                quote! { #value }
+            };
+            return Ok(
+                quote! { .aria_toggled(if #value { ::gpui::accesskit::Toggled::True } else { ::gpui::accesskit::Toggled::False }) },
+            );
+        }
+        prop => {
+            return Err(format!(
+                "Unsupported GPUI binding `{prop}`; use native={{...}} for typed native APIs"
+            ))
+        }
+    };
+    let method = syn::Ident::new(method, proc_macro2::Span::call_site());
+    Ok(quote! { .#method(#value) })
 }
 
 fn element_tag_to_tokens(tag: &str) -> TokenStream2 {
@@ -1353,12 +1523,13 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "fixed" => Some(quote! { .fixed() }),
         "sticky" => Some(quote! { .sticky() }),
         "overflow-hidden" => Some(quote! { .overflow_hidden() }),
-        "overflow-auto" => Some(quote! { .overflow_y_auto().overflow_x_auto() }),
-        "overflow-x-auto" => Some(quote! { .overflow_x_auto() }),
-        "overflow-y-auto" => Some(quote! { .overflow_y_auto() }),
+        "overflow-auto" => Some(quote! { .overflow_scroll() }),
+        "overflow-x-auto" => Some(quote! { .overflow_x_scroll() }),
+        "overflow-y-auto" => Some(quote! { .overflow_y_scroll() }),
         "overflow-x-hidden" => Some(quote! { .overflow_x_hidden() }),
         "overflow-y-hidden" => Some(quote! { .overflow_y_hidden() }),
-        "overflow-scroll" => Some(quote! { .overflow_y_scroll() }),
+        "overflow-scroll" => Some(quote! { .overflow_scroll() }),
+        "overflow-x-scroll" => Some(quote! { .overflow_x_scroll() }),
         "overflow-y-scroll" => Some(quote! { .overflow_y_scroll() }),
 
         // Sizing shortcuts
@@ -1384,10 +1555,14 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "items-center" => Some(quote! { .items_center() }),
         "items-start" => Some(quote! { .items_start() }),
         "items-end" => Some(quote! { .items_end() }),
-        "items-stretch" => None, // no items_stretch() in GPUI 0.2.x
+        "items-stretch" => Some(quote! { .items_stretch() }),
         "items-baseline" => Some(quote! { .items_baseline() }),
-        // self-* (align-self) not available as methods in GPUI 0.2.x
-        "self-stretch" | "self-center" | "self-start" | "self-end" | "self-auto" => None,
+        "self-stretch" => Some(quote! { .self_stretch() }),
+        "self-center" => Some(quote! { .self_center() }),
+        "self-start" => Some(quote! { .self_start() }),
+        "self-end" => Some(quote! { .self_end() }),
+        "self-baseline" => Some(quote! { .self_baseline() }),
+        "self-auto" => Some(quote! { .map(|mut el| { el.style().align_self = None; el }) }),
         "content-center" => Some(quote! { .content_center() }),
         "content-start" => Some(quote! { .content_start() }),
         "content-end" => Some(quote! { .content_end() }),
@@ -1683,4 +1858,66 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #path_value))
     }}
     .into()
+}
+
+#[cfg(test)]
+mod gpui_coverage_tests {
+    use super::*;
+
+    fn output(template: &str) -> String {
+        generate_view(template, Span::call_site()).to_string()
+    }
+
+    #[test]
+    fn state_classes_are_aggregated_and_conditionals_stay_in_the_state() {
+        let tokens = output("div hover:bg-red-500 hover:text-white class:hover:p-4={enabled} focus:bg-blue-500 active:bg-black");
+        assert!(!tokens.contains("compile_error"), "{tokens}");
+        assert_eq!(tokens.matches(". hover (").count(), 1, "{tokens}");
+        assert!(tokens.contains("if enabled"), "{tokens}");
+        assert!(tokens.contains(". focus ("));
+        assert!(tokens.contains(". active ("));
+    }
+
+    #[test]
+    fn key_filters_use_distinct_control_and_platform_fields_for_both_edges() {
+        let down = output("div @keydown|ctrl+s=save");
+        let up = output("div @keyup|cmd+s=save");
+        assert!(down.contains("modifiers . control == true"), "{down}");
+        assert!(down.contains("modifiers . platform == false"), "{down}");
+        assert!(up.contains("modifiers . control == false"), "{up}");
+        assert!(up.contains("modifiers . platform == true"), "{up}");
+        assert!(output("div @keydown|contrl+s=save").contains("compile_error"));
+    }
+
+    #[test]
+    fn unknown_behavior_and_placeholder_inputs_are_errors() {
+        for template in [
+            "div @mystery=save",
+            "div bind:mystery={value}",
+            "input bind:value={value}",
+            "div @hover=a @hover=b",
+        ] {
+            assert!(output(template).contains("compile_error"), "{template}");
+        }
+    }
+
+    #[test]
+    fn native_hook_and_identified_image_use_the_consumers_gpui_alias() {
+        let tokens = output("img src={source} alt={label} bind:native={|el| el.occlude()}");
+        assert!(!tokens.contains("compile_error"), "{tokens}");
+        assert!(tokens.contains(":: gpui :: img"), "{tokens}");
+        assert!(tokens.contains("Role :: Image"), "{tokens}");
+        assert!(tokens.contains(". id (\"image\")"), "{tokens}");
+        assert!(tokens.contains(". map ("), "{tokens}");
+        assert!(!tokens.contains("crepuscularity_runtime"));
+    }
+
+    #[test]
+    fn keyed_rows_scope_state_and_disabled_gates_callback_registration() {
+        let tokens = output("div\n    for item in {items.iter()}\n        button key={item.id} disabled={blocked} @click=save\n            \"Save\"");
+        assert!(!tokens.contains("compile_error"), "{tokens}");
+        assert!(tokens.contains("__crepus_row_id"), "{tokens}");
+        assert!(tokens.contains("item . id"), "{tokens}");
+        assert!(tokens.contains(". when (! __crepus_disabled"), "{tokens}");
+    }
 }

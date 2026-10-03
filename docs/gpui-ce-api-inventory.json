@@ -1,0 +1,2514 @@
+{
+  "schema_version": 1,
+  "scope": "Lexical explicit trait methods, helper invocations and manifest features; not a whole-crate resolved API denominator",
+  "core": {
+    "name": "gpui-ce",
+    "version": "0.2.2",
+    "vcs": {
+      "git": {
+        "sha1": "99109e3a77ddadbcb46cba8567e779a651600608",
+        "dirty": true
+      },
+      "path_in_vcs": "crates/gpui"
+    },
+    "features": {
+      "bench": [
+        "test-support",
+        "dep:criterion",
+        "dep:hdrhistogram"
+      ],
+      "default": [
+        "font-kit",
+        "wayland",
+        "x11",
+        "windows-manifest"
+      ],
+      "input-latency-histogram": [
+        "dep:hdrhistogram"
+      ],
+      "inspector": [
+        "gpui_macros/inspector"
+      ],
+      "leak-detection": [
+        "backtrace"
+      ],
+      "profiler": [],
+      "screen-capture": [
+        "scap"
+      ],
+      "test-support": [
+        "leak-detection",
+        "collections/test-support",
+        "wayland",
+        "x11",
+        "proptest"
+      ],
+      "wayland": [],
+      "windows-manifest": [
+        "dep:embed-resource"
+      ],
+      "x11": [
+        "scap?/x11"
+      ]
+    }
+  },
+  "platform": {
+    "name": "gpui_ce_platform",
+    "version": "0.1.0",
+    "vcs": {
+      "git": {
+        "sha1": "99109e3a77ddadbcb46cba8567e779a651600608",
+        "dirty": true
+      },
+      "path_in_vcs": "crates/gpui_platform"
+    },
+    "features": {
+      "default": [],
+      "font-kit": [
+        "gpui_macos/font-kit"
+      ],
+      "runtime_shaders": [
+        "gpui_macos/runtime_shaders"
+      ],
+      "screen-capture": [
+        "gpui/screen-capture",
+        "gpui_macos/screen-capture",
+        "gpui_windows/screen-capture",
+        "gpui_linux/screen-capture"
+      ],
+      "test-support": [
+        "gpui/test-support",
+        "gpui_macos/test-support"
+      ],
+      "wayland": [
+        "gpui_linux/wayland"
+      ],
+      "wgpu": [
+        "gpui_windows/wgpu"
+      ],
+      "x11": [
+        "gpui_linux/x11"
+      ]
+    }
+  },
+  "native_access": "crepuscularity_gpui::gpui and ::gpui_platform preserve the original crate namespaces; availability follows dependency features and cfg",
+  "validation": "Source inventory only; compilation and platform behavior not established by this file",
+  "traits": {
+    "InteractiveElement": {
+      "source": "elements/div.rs",
+      "source_sha256": "2ce32103b7b677d37203f65ab6276223787427a3648c6c4509a08c240c833a78",
+      "declarations": 47,
+      "unique_methods": [
+        "block_mouse_except_scroll",
+        "can_drop",
+        "capture_action",
+        "capture_any_mouse_down",
+        "capture_any_mouse_up",
+        "capture_key_down",
+        "capture_key_up",
+        "capture_mouse_pressure",
+        "capture_pinch",
+        "debug_selector",
+        "drag_over",
+        "focus",
+        "focus_visible",
+        "group",
+        "group_drag_over",
+        "group_hover",
+        "hover",
+        "id",
+        "in_focus",
+        "interactivity",
+        "key_context",
+        "occlude",
+        "on_action",
+        "on_any_mouse_down",
+        "on_boxed_action",
+        "on_drag_move",
+        "on_drop",
+        "on_key_down",
+        "on_key_up",
+        "on_modifiers_changed",
+        "on_mouse_down",
+        "on_mouse_down_all",
+        "on_mouse_down_out",
+        "on_mouse_exit",
+        "on_mouse_move",
+        "on_mouse_pressure",
+        "on_mouse_up",
+        "on_mouse_up_all",
+        "on_mouse_up_out",
+        "on_pinch",
+        "on_scroll_wheel",
+        "tab_group",
+        "tab_index",
+        "tab_stop",
+        "track_focus",
+        "window_control_area"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "StatefulInteractiveElement": {
+      "source": "elements/div.rs",
+      "source_sha256": "2ce32103b7b677d37203f65ab6276223787427a3648c6c4509a08c240c833a78",
+      "declarations": 41,
+      "unique_methods": [
+        "a11y_synthetic_children",
+        "active",
+        "anchor_scroll",
+        "aria_active_descendant",
+        "aria_column_count",
+        "aria_column_index",
+        "aria_description",
+        "aria_expanded",
+        "aria_keyshortcuts",
+        "aria_label",
+        "aria_level",
+        "aria_max_numeric_value",
+        "aria_min_numeric_value",
+        "aria_numeric_value",
+        "aria_numeric_value_step",
+        "aria_orientation",
+        "aria_placeholder",
+        "aria_position_in_set",
+        "aria_row_count",
+        "aria_row_index",
+        "aria_selected",
+        "aria_size_of_set",
+        "aria_toggled",
+        "aria_value",
+        "external_drag_payload",
+        "focusable",
+        "group_active",
+        "hoverable_tooltip",
+        "on_a11y_action",
+        "on_aux_click",
+        "on_click",
+        "on_drag",
+        "on_hover",
+        "overflow_scroll",
+        "overflow_x_scroll",
+        "overflow_y_scroll",
+        "restrict_scroll_to_axis",
+        "role",
+        "tooltip",
+        "tooltip_show_delay",
+        "track_scroll"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "Styled": {
+      "source": "styled.rs",
+      "source_sha256": "9df430061cd3284728019c7d8ad86c7c85345c8afc6d4a01539cc2727d16712b",
+      "declarations": 123,
+      "unique_methods": [
+        "aspect_ratio",
+        "aspect_square",
+        "backdrop_blur",
+        "backdrop_filter",
+        "bg",
+        "block",
+        "blur",
+        "border_dashed",
+        "col_end",
+        "col_end_auto",
+        "col_span",
+        "col_span_full",
+        "col_start",
+        "col_start_auto",
+        "content_around",
+        "content_between",
+        "content_center",
+        "content_end",
+        "content_evenly",
+        "content_normal",
+        "content_start",
+        "content_stretch",
+        "debug",
+        "debug_below",
+        "filter",
+        "flex",
+        "flex_1",
+        "flex_auto",
+        "flex_basis",
+        "flex_col",
+        "flex_col_reverse",
+        "flex_direction",
+        "flex_grow",
+        "flex_grow_0",
+        "flex_grow_1",
+        "flex_initial",
+        "flex_none",
+        "flex_nowrap",
+        "flex_row",
+        "flex_row_reverse",
+        "flex_shrink",
+        "flex_shrink_0",
+        "flex_shrink_1",
+        "flex_wrap",
+        "flex_wrap_reverse",
+        "font",
+        "font_family",
+        "font_features",
+        "font_weight",
+        "grid",
+        "grid_cols",
+        "grid_cols_max_content",
+        "grid_cols_min_content",
+        "grid_rows",
+        "grid_rows_max_content",
+        "grid_rows_min_content",
+        "hidden",
+        "italic",
+        "items_baseline",
+        "items_center",
+        "items_end",
+        "items_start",
+        "items_stretch",
+        "justify_around",
+        "justify_between",
+        "justify_center",
+        "justify_end",
+        "justify_evenly",
+        "justify_start",
+        "letter_spacing",
+        "line_clamp",
+        "line_height",
+        "line_through",
+        "not_italic",
+        "opacity",
+        "row_end",
+        "row_end_auto",
+        "row_span",
+        "row_span_full",
+        "row_start",
+        "row_start_auto",
+        "scrollbar_width",
+        "self_baseline",
+        "self_center",
+        "self_end",
+        "self_flex_end",
+        "self_flex_start",
+        "self_start",
+        "self_stretch",
+        "style",
+        "text_2xl",
+        "text_3xl",
+        "text_align",
+        "text_base",
+        "text_bg",
+        "text_center",
+        "text_color",
+        "text_decoration_0",
+        "text_decoration_1",
+        "text_decoration_2",
+        "text_decoration_4",
+        "text_decoration_8",
+        "text_decoration_color",
+        "text_decoration_none",
+        "text_decoration_solid",
+        "text_decoration_wavy",
+        "text_ellipsis",
+        "text_ellipsis_middle",
+        "text_ellipsis_start",
+        "text_left",
+        "text_lg",
+        "text_overflow",
+        "text_right",
+        "text_size",
+        "text_sm",
+        "text_style",
+        "text_transform",
+        "text_xl",
+        "text_xs",
+        "truncate",
+        "underline",
+        "whitespace_normal",
+        "whitespace_nowrap"
+      ],
+      "generated_helper_invocations": [
+        "gpui_macros::style_helpers",
+        "gpui_macros::visibility_style_methods",
+        "gpui_macros::margin_style_methods",
+        "gpui_macros::padding_style_methods",
+        "gpui_macros::position_style_methods",
+        "gpui_macros::overflow_style_methods",
+        "gpui_macros::cursor_style_methods",
+        "gpui_macros::border_style_methods",
+        "gpui_macros::box_shadow_style_methods"
+      ],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "StyledImage": {
+      "source": "elements/img.rs",
+      "source_sha256": "69f7d670a863016237e25af5c0a798cdb075748ed1c904255a6f558b14cb56aa",
+      "declarations": 5,
+      "unique_methods": [
+        "grayscale",
+        "image_style",
+        "object_fit",
+        "with_fallback",
+        "with_loading"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "EntityInputHandler": {
+      "source": "input.rs",
+      "source_sha256": "dfa0c61e1a10d435679bd1f76a6ab0c376c1b28117a7481573d9c1c2ee091ed9",
+      "declarations": 11,
+      "unique_methods": [
+        "accepts_text_input",
+        "bounds_for_range",
+        "character_index_for_point",
+        "marked_text_range",
+        "replace_and_mark_text_in_range",
+        "replace_text_in_range",
+        "selected_text_range",
+        "set_selected_text_range",
+        "text_for_range",
+        "text_length_utf16",
+        "unmark_text"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "InputHandler": {
+      "source": "platform.rs",
+      "source_sha256": "49fc08ad47889110551e768c6498ca82f937e2837bd9e54a597e6f092b787064",
+      "declarations": 14,
+      "unique_methods": [
+        "accepts_text_input",
+        "apple_press_and_hold_enabled",
+        "bounds_for_range",
+        "character_index_for_point",
+        "element_bounds",
+        "marked_text_range",
+        "prefers_ime_for_printable_keys",
+        "replace_and_mark_text_in_range",
+        "replace_text_in_range",
+        "selected_text_range",
+        "set_selected_text_range",
+        "text_for_range",
+        "text_length_utf16",
+        "unmark_text"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "Element": {
+      "source": "element.rs",
+      "source_sha256": "567fd8909b7337d79406c834dd84c567c72760641eba1afa19a85c3a6dee747f",
+      "declarations": 9,
+      "unique_methods": [
+        "a11y_role",
+        "a11y_synthetic_children",
+        "id",
+        "into_any",
+        "paint",
+        "prepaint",
+        "request_layout",
+        "source_location",
+        "write_a11y_info"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "IntoElement": {
+      "source": "element.rs",
+      "source_sha256": "567fd8909b7337d79406c834dd84c567c72760641eba1afa19a85c3a6dee747f",
+      "declarations": 2,
+      "unique_methods": [
+        "into_any_element",
+        "into_element"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "ParentElement": {
+      "source": "element.rs",
+      "source_sha256": "567fd8909b7337d79406c834dd84c567c72760641eba1afa19a85c3a6dee747f",
+      "declarations": 3,
+      "unique_methods": [
+        "child",
+        "children",
+        "extend"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    },
+    "AnimationExt": {
+      "source": "elements/animation.rs",
+      "source_sha256": "0b53bdd8b05165e439549cd0708d49de1389adff019240925ebe88d7209a8975",
+      "declarations": 2,
+      "unique_methods": [
+        "with_animation",
+        "with_animations"
+      ],
+      "generated_helper_invocations": [],
+      "native_access": "Original trait via gpui namespace; runtime factories may use typed APIs",
+      "template_mapping": "See docs/gpui-ce-coverage.md; absence of shorthand is not implemented parity"
+    }
+  },
+  "method_mappings": [
+    {
+      "trait": "InteractiveElement",
+      "method": "block_mouse_except_scroll",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "can_drop",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_action",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_any_mouse_down",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_any_mouse_up",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_key_down",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_key_up",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_mouse_pressure",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "capture_pinch",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "debug_selector",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "drag_over",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "focus",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "focus_visible",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "group",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "group_drag_over",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "group_hover",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "hover",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "id",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "in_focus",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "interactivity",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "key_context",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "occlude",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_action",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_any_mouse_down",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_boxed_action",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_drag_move",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_drop",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "external file paths only; arbitrary typed drops require native code",
+      "syntax": "@drop",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_key_down",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@keydown",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_key_up",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@keyup",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_modifiers_changed",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@modifierschanged",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_down",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@mousedown (left button)",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_down_all",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_down_out",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_exit",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@mouseexit",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_move",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@mousemove",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_pressure",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_up",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@mouseup (left button)",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_up_all",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_mouse_up_out",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_pinch",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@pinch",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "on_scroll_wheel",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@scroll",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "tab_group",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "tab_index",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "tab_stop",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "track_focus",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InteractiveElement",
+      "method": "window_control_area",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "a11y_synthetic_children",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "active",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "anchor_scroll",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_active_descendant",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_column_count",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_column_index",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_description",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_expanded",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_keyshortcuts",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_label",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_level",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_max_numeric_value",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_min_numeric_value",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_numeric_value",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_numeric_value_step",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_orientation",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_placeholder",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_position_in_set",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_row_count",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_row_index",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_selected",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_size_of_set",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_toggled",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "aria_value",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "external_drag_payload",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "focusable",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "group_active",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "hoverable_tooltip",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "on_a11y_action",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "on_aux_click",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": "@auxclick",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "on_click",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@click",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "on_drag",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "on_hover",
+      "compiled": "declared event shorthand; dispatch tests pending",
+      "runtime": "declared event shorthand; dispatch tests pending",
+      "syntax": "@hover",
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "overflow_scroll",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "overflow_x_scroll",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "overflow_y_scroll",
+      "compiled": "declared binding/style subset; source-only validation",
+      "runtime": "declared binding/style subset; source-only validation",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "restrict_scroll_to_axis",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "role",
+      "compiled": "typed metadata binding; see generate_binding",
+      "runtime": "metadata binding (named role subset; checked maps toggled); see runtime_element",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "tooltip",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "tooltip_show_delay",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StatefulInteractiveElement",
+      "method": "track_scroll",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "aspect_ratio",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "aspect_square",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "backdrop_blur",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "backdrop_filter",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "bg",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "block",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "blur",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "border_dashed",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_end",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_end_auto",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_span",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_span_full",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_start",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "col_start_auto",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_around",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_between",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_center",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_end",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_evenly",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_normal",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_start",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "content_stretch",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "debug",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "debug_below",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "filter",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_1",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_auto",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_basis",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_col",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_col_reverse",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_direction",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_grow",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_grow_0",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_grow_1",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_initial",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_none",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_nowrap",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_row",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_row_reverse",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_shrink",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_shrink_0",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_shrink_1",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_wrap",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "flex_wrap_reverse",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "font",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "font_family",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "font_features",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "font_weight",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_cols",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_cols_max_content",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_cols_min_content",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_rows",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_rows_max_content",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "grid_rows_min_content",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "hidden",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "italic",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "items_baseline",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "items_center",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "items_end",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "items_start",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "items_stretch",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_around",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_between",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_center",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_end",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_evenly",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "justify_start",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "letter_spacing",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "line_clamp",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "line_height",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "line_through",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "not_italic",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "opacity",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_end",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_end_auto",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_span",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_span_full",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_start",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "row_start_auto",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "scrollbar_width",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_baseline",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_center",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_end",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_flex_end",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_flex_start",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_start",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "self_stretch",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "style",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_2xl",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_3xl",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_align",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_base",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_bg",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_center",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_color",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_0",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_1",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_2",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_4",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_8",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_color",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_none",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_solid",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_decoration_wavy",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_ellipsis",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_ellipsis_middle",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_ellipsis_start",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_left",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_lg",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_overflow",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_right",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_size",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_sm",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_style",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_transform",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_xl",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "text_xs",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "truncate",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "underline",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "whitespace_normal",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Styled",
+      "method": "whitespace_nowrap",
+      "compiled": "referenced by utility mapper; utility subset only, not general argument parity",
+      "runtime": "referenced by utility mapper; utility subset only, not general argument parity",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StyledImage",
+      "method": "grayscale",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StyledImage",
+      "method": "image_style",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StyledImage",
+      "method": "object_fit",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StyledImage",
+      "method": "with_fallback",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "StyledImage",
+      "method": "with_loading",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "accepts_text_input",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "bounds_for_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "character_index_for_point",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "marked_text_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "replace_and_mark_text_in_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "replace_text_in_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "selected_text_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "set_selected_text_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "text_for_range",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "text_length_utf16",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "EntityInputHandler",
+      "method": "unmark_text",
+      "compiled": "no built-in input lowering; retained entity/native expression required",
+      "runtime": "implemented for built-in single-line input; behavior unvalidated",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "accepts_text_input",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "apple_press_and_hold_enabled",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "inherits upstream true default; no template control or platform acceptance",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "bounds_for_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "character_index_for_point",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "element_bounds",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler returns registered InputText bounds; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "marked_text_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "prefers_ime_for_printable_keys",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to accepts_text_input",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "replace_and_mark_text_in_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "replace_text_in_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "selected_text_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "set_selected_text_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "text_for_range",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "text_length_utf16",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "InputHandler",
+      "method": "unmark_text",
+      "compiled": "native input entity and upstream bridge required; no built-in input lowering",
+      "runtime": "upstream ElementInputHandler delegates to built-in TextInput; platform delivery unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "a11y_role",
+      "compiled": "semantic wrapper/identity lowering for supported built-ins; custom implementation remains native",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "a11y_synthetic_children",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "id",
+      "compiled": "semantic wrapper/identity lowering for supported built-ins; custom implementation remains native",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "into_any",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "paint",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "prepaint",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "request_layout",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "source_location",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "Element",
+      "method": "write_a11y_info",
+      "compiled": "semantic wrapper/identity lowering for supported built-ins; custom implementation remains native",
+      "runtime": "built-in TextInput implements this lifecycle/semantics method; custom behavior remains native and unverified",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "IntoElement",
+      "method": "into_any_element",
+      "compiled": "renderer/native-expression infrastructure; not a separately configurable template API",
+      "runtime": "renderer/native-expression infrastructure; not a separately configurable template API",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "IntoElement",
+      "method": "into_element",
+      "compiled": "renderer/native-expression infrastructure; not a separately configurable template API",
+      "runtime": "renderer/native-expression infrastructure; not a separately configurable template API",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "ParentElement",
+      "method": "child",
+      "compiled": "template node hierarchy lowered through this infrastructure; not arbitrary builder arguments",
+      "runtime": "template node hierarchy lowered through this infrastructure; not arbitrary builder arguments",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "ParentElement",
+      "method": "children",
+      "compiled": "template node hierarchy lowered through this infrastructure; not arbitrary builder arguments",
+      "runtime": "template node hierarchy lowered through this infrastructure; not arbitrary builder arguments",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "ParentElement",
+      "method": "extend",
+      "compiled": "no declarative mapping identified; native implementation required",
+      "runtime": "no declarative mapping identified; native implementation required",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "AnimationExt",
+      "method": "with_animation",
+      "compiled": "animate attributes rejected; native builder/expression required",
+      "runtime": "runtime animate subset uses this method; scale rejected and easing/duration validation incomplete",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    },
+    {
+      "trait": "AnimationExt",
+      "method": "with_animations",
+      "compiled": "animate attributes rejected; native builder/expression required",
+      "runtime": "runtime animate subset uses this method; scale rejected and easing/duration validation incomplete",
+      "syntax": null,
+      "acceptance": "not executed; native access is not declarative parity"
+    }
+  ]
+}

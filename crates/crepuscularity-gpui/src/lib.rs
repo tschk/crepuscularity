@@ -5,6 +5,9 @@
 pub use crepuscularity_core::build;
 pub use crepuscularity_macros::{view, view_file};
 pub use crepuscularity_runtime;
+/// Lossless access to the pinned GPUI-CE API, including names shadowed by this crate's
+/// compatibility helpers (for example `Anchor` and `WindowButton`).
+pub use gpui;
 pub use gpui::*;
 pub use gpui_platform;
 pub use pollster::block_on;

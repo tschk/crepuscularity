@@ -12,10 +12,11 @@ readme = "../../README.md"
 path = "src/lib.rs"
 
 [features]
-# Default enables font-kit (cross-platform) but NO platform backend.
-# You must enable at least one of: wayland, x11, macos, or windows.
+# Default enables font-kit. macOS/Windows backends are selected by target;
+# Linux/FreeBSD consumers choose wayland and/or x11.
 default = ["font-kit"]
-font-kit = ["gpui/font-kit"]
+font-kit = ["gpui/font-kit", "gpui_platform/font-kit"]
+# Historical name: this forwards CE's default feature set, not every optional feature.
 full-gpui = ["gpui/default"]
 # Platform backends (choose at least one for your target). With gpui-ce the backend crates are
 # selected automatically per-target by `gpui_platform`; these features propagate the backend
@@ -30,6 +31,12 @@ leak-detection = ["gpui/leak-detection"]
 screen-capture = ["gpui_platform/screen-capture"]
 runtime-shaders = ["gpui_platform/runtime_shaders"]
 test-support = ["gpui_platform/test-support"]
+input-latency-histogram = ["gpui/input-latency-histogram"]
+profiler = ["gpui/profiler"]
+bench = ["gpui/bench"]
+windows-manifest = ["gpui/windows-manifest"]
+# The pinned platform release routes this to the Windows WGPU backend only.
+wgpu = ["gpui_platform/wgpu"]
 gpui-text-extras = [
     "crepuscularity_macros/gpui_text_run_styles",
     "crepuscularity-runtime/gpui_text_run_styles",
