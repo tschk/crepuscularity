@@ -907,6 +907,18 @@ mod tests {
     }
 
     #[test]
+    fn emit_all_payload_passing() {
+        let app = Builder::default().build();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let observed = seen.clone();
+        let _listener = app.listen("test_event", move |event| {
+            observed.lock().unwrap().push(event.payload.clone())
+        });
+        app.emit_all("test_event", serde_json::json!(42)).unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![serde_json::json!(42)]);
+    }
+
+    #[test]
     fn commands_events_and_plugin_requests_use_native_contracts() {
         let app = Builder::default()
             .command("greet", |payload| {
