@@ -828,3 +828,63 @@ fn render_match(block: &MatchBlock, ctx: &TemplateContext) -> Result<ViewNode, C
     }
     Ok(stack_column_raw(vec![]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crepuscularity_core::ast::TextPart;
+    use crepuscularity_core::context::TemplateContext;
+
+
+    #[test]
+    fn test_render_text_inline_literal_only() {
+        let parts = vec![TextPart::Literal("Hello world".to_string())];
+        let ctx = TemplateContext::new();
+        let result = render_text_inline(&parts, &ctx).unwrap();
+        assert_eq!(result, "Hello world");
+    }
+
+    #[test]
+    fn test_render_text_inline_expr_only() {
+        let parts = vec![TextPart::Expr("name".to_string())];
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "Alice");
+        let result = render_text_inline(&parts, &ctx).unwrap();
+        assert_eq!(result, "Alice");
+    }
+
+    #[test]
+    fn test_render_text_inline_mixed() {
+        let parts = vec![
+            TextPart::Literal("Hello ".to_string()),
+            TextPart::Expr("name".to_string()),
+            TextPart::Literal("!".to_string()),
+        ];
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "Bob");
+        let result = render_text_inline(&parts, &ctx).unwrap();
+        assert_eq!(result, "Hello Bob!");
+    }
+
+    #[test]
+    fn test_render_text_inline_missing_var_error() {
+        let parts = vec![TextPart::Expr("missing".to_string())];
+        let ctx = TemplateContext::new();
+        let result = render_text_inline(&parts, &ctx);
+        // By default TemplateContext returns an empty string for missing variables in crepuscularity_core
+        // So we just expect the output to be empty.
+        assert_eq!(result.unwrap(), "");
+    }
+
+    #[test]
+    fn test_render_text_inline_number_eval() {
+        let parts = vec![
+            TextPart::Literal("Score: ".to_string()),
+            TextPart::Expr("score".to_string()),
+        ];
+        let mut ctx = TemplateContext::new();
+        ctx.set("score", 42);
+        let result = render_text_inline(&parts, &ctx).unwrap();
+        assert_eq!(result, "Score: 42");
+    }
+}
