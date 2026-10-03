@@ -521,4 +521,44 @@ mod tests {
         assert_eq!(parse_color_rgb("0xzzzzzz"), None);
         assert_eq!(parse_color_rgb("0x123"), None);
     }
+
+    #[test]
+    fn test_parse_css_hex_color() {
+        // Valid 6-digit hex
+        assert_eq!(parse_css_hex_color("#123456").as_deref(), Some("#123456"));
+        assert_eq!(parse_css_hex_color("123456").as_deref(), Some("#123456"));
+        assert_eq!(parse_css_hex_color("0x123456").as_deref(), Some("#123456"));
+
+        // Valid 8-digit hex
+        assert_eq!(
+            parse_css_hex_color("#12345678").as_deref(),
+            Some("#12345678")
+        );
+        assert_eq!(
+            parse_css_hex_color("12345678").as_deref(),
+            Some("#12345678")
+        );
+        assert_eq!(
+            parse_css_hex_color("0x12345678").as_deref(),
+            Some("#12345678")
+        );
+
+        // Spaces
+        assert_eq!(parse_css_hex_color(" #abcdef ").as_deref(), Some("#abcdef"));
+        assert_eq!(
+            parse_css_hex_color("  0xabcdef  ").as_deref(),
+            Some("#abcdef")
+        );
+
+        // Invalid length
+        assert_eq!(parse_css_hex_color("#123"), None);
+        assert_eq!(parse_css_hex_color("12345"), None);
+        assert_eq!(parse_css_hex_color("#1234567"), None);
+        assert_eq!(parse_css_hex_color("123456789"), None);
+
+        // Invalid characters
+        assert_eq!(parse_css_hex_color("#12345g"), None);
+        assert_eq!(parse_css_hex_color("12 456"), None);
+        assert_eq!(parse_css_hex_color("0x-12345"), None);
+    }
 }
