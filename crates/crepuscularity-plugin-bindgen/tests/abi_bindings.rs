@@ -232,16 +232,14 @@ const _: CrepusEventCallback = None;
     );
     let source = dir.path().join("signatures.rs");
     fs::write(&source, code).unwrap();
-    run(Command::new("rustc")
-        .args([
-            "--edition=2021",
-            "--crate-type=lib",
-            "--emit=metadata",
-            "-Dwarnings",
-        ])
-        .arg(source)
-        .arg("-o")
-        .arg(dir.path().join("signatures.rmeta")));
+    for edition in ["2021", "2024"] {
+        run(Command::new("rustc")
+            .arg(format!("--edition={edition}"))
+            .args(["--crate-type=lib", "--emit=metadata", "-Dwarnings"])
+            .arg(&source)
+            .arg("-o")
+            .arg(dir.path().join(format!("signatures-{edition}.rmeta"))));
+    }
 }
 
 #[cfg(unix)]

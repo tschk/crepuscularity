@@ -367,7 +367,7 @@ pub(crate) fn generate(header: &Path, language: Language) -> Result<String, Stri
         Language::C => format!("#include \"{include}\"\n\n"),
         Language::Cpp => format!("#include \"{include}\"\n\nextern \"C\" {{\n"),
         Language::Zig => format!("const c = @cImport({{ @cInclude(\"{include}\"); }});\npub const CrepusSession = c.CrepusSession;\npub const CrepusEventCallback = c.CrepusEventCallback;\n"),
-        Language::Rust => "use std::os::raw::{c_char, c_void};\n\n#[repr(C)]\npub struct CrepusSession { _private: [u8; 0] }\npub type CrepusEventCallback = Option<unsafe extern \"C\" fn(*const c_char, *mut c_void)>;\n\nextern \"C\" {\n".into(),
+        Language::Rust => "use std::os::raw::{c_char, c_void};\n\n#[repr(C)]\npub struct CrepusSession { _private: [u8; 0] }\npub type CrepusEventCallback = Option<unsafe extern \"C\" fn(*const c_char, *mut c_void)>;\n\nunsafe extern \"C\" {\n".into(),
         Language::CSharp => "#nullable enable\nusing System;\nusing System.Runtime.InteropServices;\n\n// Keep callbacks rooted until replaced or the session is freed.\n// Returned string pointers must be released with crepus_string_free.\n[UnmanagedFunctionPointer(CallingConvention.Cdecl)]\npublic delegate void CrepusEventCallback(IntPtr event_json, IntPtr userdata);\n\npublic static class EquilibriumImports\n{\n".into(),
         Language::V => format!("#include \"{}\"\n\n@[typedef]\nstruct C.CrepusSession {{}}\ntype CrepusEventCallback = fn (&char, voidptr)\n\n", v_header.unwrap()),
         _ => return Err(format!("complete Crepus ABI bindings are not supported for {language:?}; no bindings written")),
