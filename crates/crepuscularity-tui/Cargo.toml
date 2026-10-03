@@ -23,3 +23,7 @@ tempfile = { workspace = true }
 [[bench]]
 name = "render_bench"
 harness = false
+
+[[bench]]
+name = "diff_bench"
+harness = false

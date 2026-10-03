@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crepuscularity_core::{TemplateContext, TemplateValue};
 
@@ -33,7 +34,7 @@ fn hash_context<H: Hasher>(ctx: &TemplateContext, state: &mut H) {
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderSnapshot {
-    fingerprints: HashMap<String, u64>,
+    fingerprints: HashMap<Arc<str>, u64>,
 }
 
 impl RenderSnapshot {
@@ -42,7 +43,7 @@ impl RenderSnapshot {
         for (key, value) in &ctx.vars {
             let mut hasher = rustc_hash::FxHasher::default();
             hash_value(value, &mut hasher);
-            fingerprints.insert(key.clone(), hasher.finish());
+            fingerprints.insert(Arc::from(key.as_str()), hasher.finish());
         }
         Self { fingerprints }
     }
@@ -69,7 +70,7 @@ impl DiffTracker {
                     let mut hasher = rustc_hash::FxHasher::default();
                     hash_value(value, &mut hasher);
                     let fingerprint = hasher.finish();
-                    match snapshot.fingerprints.get(key) {
+                    match snapshot.fingerprints.get(key.as_str()) {
                         Some(prev) if *prev == fingerprint => {}
                         _ => return true,
                     }
@@ -83,15 +84,15 @@ impl DiffTracker {
         if let Some(snapshot) = &mut self.last {
             snapshot
                 .fingerprints
-                .retain(|k, _| ctx.vars.contains_key(k));
+                .retain(|k, _| ctx.vars.contains_key(k.as_ref()));
             for (key, value) in &ctx.vars {
                 let mut hasher = rustc_hash::FxHasher::default();
                 hash_value(value, &mut hasher);
                 let fp = hasher.finish();
-                if let Some(v) = snapshot.fingerprints.get_mut(key) {
+                if let Some(v) = snapshot.fingerprints.get_mut(key.as_str()) {
                     *v = fp;
                 } else {
-                    snapshot.fingerprints.insert(key.clone(), fp);
+                    snapshot.fingerprints.insert(Arc::from(key.as_str()), fp);
                 }
             }
         } else {
@@ -108,14 +109,14 @@ impl DiffTracker {
                     let mut hasher = rustc_hash::FxHasher::default();
                     hash_value(value, &mut hasher);
                     let fingerprint = hasher.finish();
-                    match snapshot.fingerprints.get(key) {
+                    match snapshot.fingerprints.get(key.as_str()) {
                         Some(prev) if *prev == fingerprint => {}
                         _ => changed.push(key.clone()),
                     }
                 }
                 for key in snapshot.fingerprints.keys() {
-                    if !ctx.vars.contains_key(key) {
-                        changed.push(key.clone());
+                    if !ctx.vars.contains_key(key.as_ref()) {
+                        changed.push(key.to_string());
                     }
                 }
                 changed
