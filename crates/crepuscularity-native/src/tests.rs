@@ -160,7 +160,11 @@ fn codegen_compose_keeps_context_strings_literal() {
     let mut ctx = TemplateContext::new();
     ctx.set("message", "Price $amount ${run { 7 }}");
     ctx.set("url", "https://example.invalid/${run { 7 }}");
-    let ir = render_template_to_ir("button \"{message}\"\niframe src=url", &ctx).unwrap();
+    let ir = render_template_to_ir("button \"{message}\"\niframe src={url}", &ctx).unwrap();
+    assert!(matches!(
+        &ir.root[1],
+        crate::ViewNode::WebView { src, .. } if src == "https://example.invalid/${run { 7 }}"
+    ));
     let compose = generate_native_source(&ir, NativeCodegenTarget::Compose, "LiteralView");
     assert!(compose.contains(r#"Text("Price \$amount \${run { 7 }}")"#));
     let url = r#""https://example.invalid/\${run { 7 }}""#;

@@ -117,6 +117,25 @@ impl LangSyntax {
     }
 }
 
+pub(super) fn bool_literal(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+pub(super) fn indent_str(level: usize) -> std::borrow::Cow<'static, str> {
+    /// 64 levels of four-space indent, sliced instead of rebuilt per call.
+    const SPACES: &str = "                                                                                                                                                                                                                                                                ";
+    let width = level * 4;
+    if width <= SPACES.len() {
+        std::borrow::Cow::Borrowed(&SPACES[..width])
+    } else {
+        std::borrow::Cow::Owned("    ".repeat(level))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{KOTLIN, SWIFT};
@@ -143,24 +162,5 @@ mod tests {
             SWIFT.escape(r#"$name ${value} \"quoted\""#),
             r#"$name ${value} \\\"quoted\\\""#
         );
-    }
-}
-
-pub(super) fn bool_literal(value: bool) -> &'static str {
-    if value {
-        "true"
-    } else {
-        "false"
-    }
-}
-
-pub(super) fn indent_str(level: usize) -> std::borrow::Cow<'static, str> {
-    /// 64 levels of four-space indent, sliced instead of rebuilt per call.
-    const SPACES: &str = "                                                                                                                                                                                                                                                                ";
-    let width = level * 4;
-    if width <= SPACES.len() {
-        std::borrow::Cow::Borrowed(&SPACES[..width])
-    } else {
-        std::borrow::Cow::Owned("    ".repeat(level))
     }
 }
