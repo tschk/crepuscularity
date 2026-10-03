@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag whose GitHub release has not been published
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -12,11 +22,53 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  source:
+    name: Resolve immutable release source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4 # v4.3.1
+      - name: Validate existing tag and unpublished release
+        id: resolve
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import tomllib
+          from urllib.parse import quote
+
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v"):
+              raise SystemExit("release tag must start with v")
+          subprocess.run(["git", "check-ref-format", f"refs/tags/{tag}"], check=True)
+          subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", f"refs/tags/{tag}"], check=True)
+          sha = subprocess.check_output(["git", "rev-parse", "FETCH_HEAD^{commit}"], text=True).strip()
+          manifest = subprocess.check_output(["git", "show", f"{sha}:crates/crepuscularity-cli/Cargo.toml"], text=True)
+          if tag != "v" + tomllib.loads(manifest)["package"]["version"]:
+              raise SystemExit("release tag does not match the CLI version")
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{quote(tag, safe='')}"
+          existing = subprocess.run(["gh", "api", endpoint], capture_output=True, text=True)
+          if existing.returncode == 0:
+              raise SystemExit("release already exists; refusing to overwrite its assets")
+          if str(json.loads(existing.stdout).get("status")) != "404":
+              raise SystemExit(existing.stderr or "cannot establish that release is unpublished")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"tag={tag}\nsha={sha}\n")
+          PY
+
   # ── Build binaries for each platform ──────────────────────────────────────
   build:
     name: Build ${{ matrix.target }}
+    needs: source
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +89,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4 # v4.3.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -54,7 +108,13 @@ jobs:
 
       - name: Set SDKROOT (macOS)
         if: runner.os == 'macOS'
-        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux' && !matrix.cross
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev
 
       - name: Install cross (Linux aarch64)
         if: matrix.cross
@@ -66,7 +126,17 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --locked --release --target ${{ matrix.target }} --features full -p crepuscularity-cli
+        env:
+          CROSS_CONFIG: ${{ runner.temp }}/crepus-release-cross.toml
+        run: |
+          cat > "$CROSS_CONFIG" <<'TOML'
+          [target.aarch64-unknown-linux-gnu]
+          pre-build = [
+            "dpkg --add-architecture $CROSS_DEB_ARCH",
+            "apt-get update && apt-get --assume-yes install libxcb1-dev:$CROSS_DEB_ARCH libxcb-render0-dev:$CROSS_DEB_ARCH libxcb-shape0-dev:$CROSS_DEB_ARCH libxcb-xfixes0-dev:$CROSS_DEB_ARCH libxkbcommon-dev:$CROSS_DEB_ARCH libxkbcommon-x11-dev:$CROSS_DEB_ARCH libwayland-dev:$CROSS_DEB_ARCH libfontconfig1-dev:$CROSS_DEB_ARCH"
+          ]
+          TOML
+          cross build --locked --release --target ${{ matrix.target }} --features full -p crepuscularity-cli
 
       - name: Rename binary (unix)
         if: runner.os != 'Windows'
@@ -88,9 +158,12 @@ jobs:
 
   vscode-extension:
     name: Build VS Code extension
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # v4.3.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -120,11 +193,14 @@ jobs:
   release:
     name: Create Release
     needs:
+      - source
       - build
       - vscode-extension
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # v4.3.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -132,16 +208,55 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate checksums
+      - name: Verify complete asset set and generate checksums
         run: |
           cd artifacts
-          sha256sum * > SHA256SUMS.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = {
+              "crepus-x86_64-linux", "crepus-aarch64-linux",
+              "crepus-aarch64-macos", "crepus-x86_64-windows.exe",
+              "crepuscularity-vscode.vsix",
+          }
+          if {path.name for path in Path(".").iterdir()} != expected:
+              raise SystemExit("release assets do not match the complete expected set")
+          if any(not Path(name).is_file() or Path(name).stat().st_size == 0 for name in expected):
+              raise SystemExit("release assets must be nonempty files")
+          PY
+          sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      - name: Verify tag and unpublished release again before publishing
+        env:
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          RELEASE_SHA: ${{ needs.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags --depth=1 origin "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$RELEASE_SHA"
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from urllib.parse import quote
+
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{quote(os.environ['RELEASE_TAG'], safe='')}"
+          existing = subprocess.run(["gh", "api", endpoint], capture_output=True, text=True)
+          if existing.returncode == 0:
+              raise SystemExit("release already exists; refusing to overwrite its assets")
+          if str(json.loads(existing.stdout).get("status")) != "404":
+              raise SystemExit(existing.stderr or "cannot establish that release is unpublished")
+          PY
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          tag_name: ${{ needs.source.outputs.tag }}
+          target_commitish: ${{ needs.source.outputs.sha }}
           generate_release_notes: true
+          overwrite_files: false
+          fail_on_unmatched_files: true
           files: |
             artifacts/crepus-*
             artifacts/*.vsix
