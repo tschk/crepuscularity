@@ -16,6 +16,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | [Browser extensions](webext.md) | Manifest V3 apps with `crepus webext` |
 | [Extension policy (MV3)](webext-policy.md) | CSP safety, store submission, permissions checklist |
 | [GPUI integration](gpui.md) | Desktop apps with GPUI |
+| [ZPUI integration](zpui.md) | Experimental Zig adapter over View IR v7 |
 | [Lite shell](lite.md) | GPUI + V8 desktop shell and Rust plugin bridge |
 | [Native shells](native.md) | iOS/Android apps via native UI frameworks |
 | [Tauri native compatibility](tauri-compatibility.md) | Tauri replacement contract and audit matrix |
