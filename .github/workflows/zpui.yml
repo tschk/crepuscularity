@@ -1,0 +1,55 @@
+name: ZPUI adapter
+
+on:
+  pull_request:
+    paths:
+      - "plugins/zpui/**"
+      - "crates/crepuscularity-core/**"
+      - "crates/crepuscularity-native/**"
+      - "Cargo.toml"
+      - ".github/workflows/zpui.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/zpui/**"
+      - "crates/crepuscularity-core/**"
+      - "crates/crepuscularity-native/**"
+      - "Cargo.toml"
+      - ".github/workflows/zpui.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zpui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.17.0
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: stable
+      - name: Decode and format checks
+        working-directory: plugins/zpui
+        run: |
+          zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
+          zig build test -j1 --summary all
+      - name: Verify current compiler fixture
+        run: |
+          cargo run --locked -j1 --manifest-path plugins/zpui/tools/fixture-exporter/Cargo.toml -- plugins/zpui/examples/counter.crepus > "$RUNNER_TEMP/counter.json"
+          cmp "$RUNNER_TEMP/counter.json" plugins/zpui/tests/fixtures/counter.json
+      - name: Fetch exact ZPUI source
+        run: |
+          git init "$RUNNER_TEMP/zpui"
+          git -C "$RUNNER_TEMP/zpui" remote add origin https://github.com/plyght/zpui.git
+          git -C "$RUNNER_TEMP/zpui" fetch --depth=1 origin cca22983e7e8124bb8e650616e3803f217e52b95
+          git -C "$RUNNER_TEMP/zpui" checkout --detach FETCH_HEAD
+      - name: Native headless acceptance
+        run: python3 plugins/zpui/tools/test-native.py --zpui-source "$RUNNER_TEMP/zpui"
