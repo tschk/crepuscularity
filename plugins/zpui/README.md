@@ -7,10 +7,12 @@ ZPUI elements. Compile `.crepus` templates with the existing Rust compiler:
 crepus native ir examples/counter.crepus > counter.json
 ```
 
-The adapter neither parses templates nor executes expressions. Hosts pass the
-returned JSON to `Document.parse`, retain the document, and call `render` inside
-a ZPUI view's render method. Named button handlers reach the host through
-`onCrepusClick`; the host owns state changes and calls `cx.notify()`.
+The adapter consumes View IR; the Rust compiler owns template parsing and
+expression evaluation. Hosts pass JSON to `Document.parse`, retain the document,
+and call the fallible `render` inside a ZPUI view. Named button handlers reach
+`onCrepusClick`. Controlled widgets read typed values through `crepusValue` and
+report changes through `onCrepusChange`; the host commits state and calls
+`cx.notify()`. Links and image resolution also stay under host control.
 
 Use a compiler that emits IR version 7. The installed `crepus 0.11.0` emitted
 version 5 during this work; its output is retained as a rejection fixture rather
@@ -83,29 +85,89 @@ state when a document reorders nodes. The example retains its document for the
 whole view lifetime.
 The namespace string must also remain alive while its frame is active.
 
-## Initial coverage
+## Coverage
 
-| Area | Mapping |
+The adapter implements **18 of the 25 View IR v7 node kinds**. The compiler-generated
+form fixture contains every supported kind; the remaining kinds stay explicit
+`UnsupportedNode` errors.
+
+| Node kinds | Mapping |
 | --- | --- |
-| Document | Version 7, array of roots, bounded size/depth, owned decoded storage |
-| `stack` | Row/column flex layout, spacing, recursive children |
-| `text` | Resolved content, including escaped Unicode |
-| `button` | Label, accessibility role/name, named `onClick` host callback and focusability |
-| `scroll` | Identified horizontal or vertical scrolling container |
-| Style | Padding and per-edge padding, margin, width/height, font size/weight, opacity, colors, corner radius, border, hidden/overflow-hidden, flex direction |
+| `stack`, `scroll` | Row/column layout, spacing, alignment, justification, recursive children, horizontal/vertical scrolling |
+| `text`, `button` | Resolved/bound text; accessible button with named click dispatch and keyboard focus |
+| `toggle`, `checkbox`, `slider` | Native or ZPUI-drawn controls, typed boolean/numeric bindings and change events, slider range/step |
+| `picker`, `tabs` | Native popup/segmented selection by option value; tabs render only the selected panel |
+| `progress`, `meter` | Painted proportional track and accessible value/minimum/maximum |
+| `badge`, `divider`, `spacer` | Tone colors, separator orientation, fixed-size or flexible space |
+| `list`, `listItem` | Ordered/unordered markers and accessible list structure |
+| `link` | Visible-text accessible name, mouse/keyboard dispatch, preserved `href`/`target`/`rel` |
+| `image` | Host asset/decoded source, image fitting, alt name, loading placeholder and atlas output |
 
-Widths and heights accept nonnegative points, `-1` for fill, and `-2` for auto
-content sizing. Colors currently accept `#RRGGBB`. Original `classes` are
-validated metadata; resolved style hints drive rendering, and this module does
-not reinterpret Tailwind tokens.
+Styles include padding and all margin edges, sizing/minimum/maximum constraints,
+aspect ratio, font size/weight/family, text alignment and line height, italic and
+text decorations, clipping/line clamp, colors, borders/radius, opacity, visibility,
+flex grow/shrink/wrap/direction/self alignment, relative/absolute positioning and
+insets, shadows, supported cursors, and image fit. `classes` remain validated
+metadata; the adapter uses the compiler's resolved hints.
 
-Other non-null node fields and style hints produce errors. Unsupported node
-kinds—including input, image, links, conditional IR, and collection IR—also
-produce errors. Nullable inactive fields are accepted. This is an evaluated
-snapshot adapter: binding ownership, expression evaluation, template hot reload,
-IME/editing, drag/drop, full accessibility, and platform parity are outside the
-initial acceptance scope. A successful decode does not prove GPU rendering or
-native event dispatch.
+Widths/heights/maxima accept nonnegative points, `-1` for parent fill and `-2`
+for auto sizing. Minimum sizes are nonnegative. Colors accept `#RRGGBB`.
+Image positioning is centered; other positions fail. `position` accepts only
+`relative` and `absolute`. Supported cursors are `auto`, `default`, `pointer`,
+`text`, and `move`. Font families map to the platform system font, `serif`, or
+`monospace`. Styling native controls affects their container and requested width;
+the platform owns their intrinsic control height. Segmented tabs retain ZPUI's
+native radio-group selection semantics and expose a selected tab-panel role.
+
+The seven remaining node kinds are `if`, `forEach`, `input`, `slotRotate`,
+`webView`, `dropzone`, and `filePicker`. Tab icons, long-press handlers,
+transforms, gradients, text transforms, letter spacing, z-index, selection hints,
+and other unsupported active fields fail explicitly. This adapter adds no
+expression VM, retained text editor, timer runtime or web browser. The pinned
+upstream provides low-level input/IME APIs but no ready-made text editor.
+
+## Host contract
+
+`render` now returns `!AnyElement`. Call `validateHost(View, &view, &document)`
+after initializing host state to catch missing methods, unknown bindings, wrong
+value types or invalid selections before opening a window. Rendering repeats
+validation so later invalid host state also returns an error. A host can handle
+that error in its normal UI error path. The examples validate during `init`.
+
+| Method | Required when |
+| --- | --- |
+| `onCrepusClick(handler, event, window, cx)` | A button has `onClick` |
+| `crepusValue(bind) ?Value` | Text or a control has a binding; picker/tabs always have one |
+| `onCrepusChange(change: Change, window, cx)` | A control has a binding or `onChange` |
+| `onCrepusLink(link: Link, event, window, cx)` | A link appears |
+| `crepusImage(src) ?ImageSource` | Custom/remote image resolution; otherwise configure ZPUI's asset source |
+
+`Value` is `text`, `boolean`, or `number`. Text and selections require text,
+toggles/checkboxes require booleans, and sliders require finite numbers within
+the declared range. Readers must be pure and stable during one render.
+Selection values must match an option. `Change` includes
+the optional binding name, optional handler name, and typed new value. Controls
+without a binding or handler are displayed disabled. An unbound handler receives
+the event; the host must replace its snapshot to change the displayed value.
+
+On a platform without native controls, opt into ZPUI's drawn controls with
+`window.setDesktopControls(true)` and configure a supported desktop theme
+(e.g. `.adwaita` or `.breeze`). A missing native/drawn backend returns
+`MissingControlBackend` rather than creating an empty widget.
+
+Image storage and strings returned by the host must outlive the frame. The pinned
+ZPUI loader reads configured assets and encoded/decoded images; it does not fetch
+URI sources. A remote-image resolver must return encoded data, a decoded image,
+or a configured asset, not another URI. Linked image resources remain under the
+host's ownership. Link dispatch does not open external destinations itself.
+Encoded bytes must also survive any in-flight background decode; retain them
+in host asset storage for the image cache's lifetime.
+`Change` and `Link` strings borrow document/host storage; copy them if retaining
+them beyond that storage's lifetime.
+
+[`examples/form.zig`](examples/form.zig) demonstrates typed controlled state,
+selection, link dispatch and a borrowed decoded image alongside the existing
+[counter](examples/counter.zig). Both views require normal host window setup.
 
 ## Validation
 
@@ -115,31 +177,30 @@ zig build test -j1 --summary all
 python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/to/zpui
 ```
 
-Tests consume a byte-for-byte copy of the canonical Rust golden fixture at
-`crates/crepuscularity-native/tests/fixtures/hello.json`. They cover multiple
-roots, Unicode, input-buffer independence, cleanup on invalid documents, scroll
-axis, sizing sentinels, version rejection, and unsupported behavior.
-They also reject the installed compiler's actual v5 output, trees beyond 128
-node levels, and oversized documents.
+The nine original decoder tests cover the canonical Rust golden fixture,
+Unicode/storage ownership, version rejection, unsupported behavior, size limits,
+and the exact 128/129 node-depth boundary. Seven additional decoder tests exercise
+a compiler-generated fixture containing all 18 supported kinds, option ownership,
+invalid controls/options, typed style contracts and the remaining unsupported kinds.
 
-The nine decoder tests passed on Zig 0.17.0, including the exact depth boundary
-for both text leaves and empty containers. Four native headless
-tests also compile the adapter and actual counter view against the exact pinned
-ZPUI module. They exercise mouse clicks, Space/Enter activation and focus,
-physical sizing/background/borders, scrolling on both axes, and document
-replacement with retirement after the old frame. The test allocator checks for
-leaks. The native harness checks the toolchain version and source revision, uses
-one build job, and opens no desktop windows.
+Fifteen native headless tests compile the renderer and both example views against
+the exact pinned ZPUI module. They exercise mouse/Space/Enter activation and focus,
+toggle/checkbox host changes, slider range/step, popup and tab selection, bound-text
+redraw, link metadata, layout constraints/alignment/margins, colors/borders/shadows,
+scrolling on both axes, decoded image atlas output, accessibility roles/ranges,
+text decoration overrides, extreme numeric ranges, document retirement, and missing-host/backend errors.
+The test allocator checks leaks. The harness verifies toolchain/source pins, uses
+one build job and opens no desktop windows.
+
 On case-insensitive macOS filesystems, two upstream `SOURCE` provenance files
 collide with their libraries' `source/` directories. The harness permits only
 those metadata deletions; changes to compiler inputs are rejected.
 
-The checked counter fixture was generated by the current Rust parser and native
-lowering crate, not the installed older CLI. The ZPUI workflow regenerates and
-compares it, runs the decoder tests, and repeats native acceptance on macOS.
-These tests establish headless layout/event behavior; real GPU output and other
-platforms remain outside this acceptance scope. No release or deployment
-workflow is added.
+The counter and form fixtures come from the current Rust parser/native lowering
+crate. The macOS workflow regenerates both and runs decoder/native acceptance.
+These checks establish headless layout/event/atlas behavior; actual GPU output,
+native OS widget integration and other platforms still need separate acceptance.
+No release or deployment workflow is added.
 
 ## Licensing
 

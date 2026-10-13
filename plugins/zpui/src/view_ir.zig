@@ -1,43 +1,44 @@
-//! Owned, validated subset of Crepuscularity View IR v7.
-//! The compiler resolves templates/context; this decoder executes no expressions.
+//! Owned, validated Crepuscularity View IR v7 nodes.
+//! The compiler resolves templates; dynamic values come from explicit host bindings.
 const std = @import("std");
+const json = @import("json.zig");
+pub const styles = @import("style_ir.zig");
+pub const Style = styles.Style;
+pub const Axis = styles.Axis;
+const string = json.string;
+const number = json.number;
+const oneOf = json.oneOf;
 
 pub const ir_version: u32 = 7;
 pub const zpui_revision = "cca22983e7e8124bb8e650616e3803f217e52b95";
-pub const Axis = enum { row, column };
-pub const Kind = enum { stack, text, button, scroll };
-
-pub const Style = struct {
-    id: ?[]const u8 = null,
-    padding: ?f32 = null,
-    paddingHorizontal: ?f32 = null,
-    paddingVertical: ?f32 = null,
-    paddingTop: ?f32 = null,
-    paddingRight: ?f32 = null,
-    paddingBottom: ?f32 = null,
-    paddingLeft: ?f32 = null,
-    margin: ?f32 = null,
-    width: ?f32 = null,
-    height: ?f32 = null,
-    fontSize: ?f32 = null,
-    fontWeight: ?f32 = null,
-    cornerRadius: ?f32 = null,
-    borderWidth: ?f32 = null,
-    opacity: ?f32 = null,
-    foregroundColor: ?u32 = null,
-    backgroundColor: ?u32 = null,
-    borderColor: ?u32 = null,
-    hidden: ?bool = null,
-    overflowHidden: ?bool = null,
-    flexDirection: ?Axis = null,
-};
+pub const Kind = enum { stack, text, button, scroll, toggle, checkbox, slider, picker, tabs, progress, meter, badge, divider, spacer, image, link, list, listItem };
+pub const Tone = enum { neutral, info, success, warning, @"error" };
+pub const Option = struct { value: []const u8, label: []const u8, children: []const Node = &.{} };
 
 pub const Node = struct {
     kind: Kind,
     text: []const u8 = "",
     axis: Axis = .column,
     spacing: ?f32 = null,
+    align_items: ?styles.Align = null,
+    justify_content: ?styles.Justify = null,
     on_click: ?[]const u8 = null,
+    on_change: ?[]const u8 = null,
+    bind: ?[]const u8 = null,
+    checked: bool = false,
+    value: f32 = 0,
+    min: f32 = 0,
+    max: f32 = 1,
+    step: ?f32 = null,
+    size: ?f32 = null,
+    tone: Tone = .neutral,
+    src: []const u8 = "",
+    placeholder: ?[]const u8 = null,
+    href: []const u8 = "",
+    target: ?[]const u8 = null,
+    rel: ?[]const u8 = null,
+    ordered: bool = false,
+    options: []const Option = &.{},
     style: Style = .{},
     children: []const Node = &.{},
 };
@@ -47,9 +48,9 @@ pub const Document = struct {
     root: []const Node,
 
     /// Strings and nodes belong to this document, independent of the JSON input.
-    pub fn parse(parent: std.mem.Allocator, json: []const u8) !Document {
-        if (json.len > 1024 * 1024) return error.DocumentTooLarge;
-        const parsed = try std.json.parseFromSlice(std.json.Value, parent, json, .{});
+    pub fn parse(parent: std.mem.Allocator, source: []const u8) !Document {
+        if (source.len > 1024 * 1024) return error.DocumentTooLarge;
+        const parsed = try std.json.parseFromSlice(std.json.Value, parent, source, .{});
         defer parsed.deinit();
         const value = parsed.value;
         if (value != .object) return error.InvalidDocument;
@@ -78,6 +79,28 @@ fn decodeNodes(a: std.mem.Allocator, value: std.json.Value, depth: usize) anyerr
     return nodes;
 }
 
+fn allowedFields(kind: Kind) []const []const u8 {
+    return switch (kind) {
+        .stack => &.{ "axis", "children", "spacing", "alignItems", "justifyContent" },
+        .scroll => &.{ "axis", "children" },
+        .text => &.{ "content", "bind" },
+        .button => &.{ "label", "onClick" },
+        .toggle, .checkbox => &.{ "label", "bind", "checked", "onChange" },
+        .slider => &.{ "label", "bind", "value", "min", "max", "step", "onChange" },
+        .picker => &.{ "bind", "options", "onChange" },
+        .tabs => &.{ "bind", "tabs", "onChange" },
+        .progress => &.{ "label", "value", "max" },
+        .meter => &.{ "label", "value", "min", "max" },
+        .badge => &.{ "label", "tone" },
+        .divider => &.{"axis"},
+        .spacer => &.{"size"},
+        .image => &.{ "src", "alt", "placeholder" },
+        .link => &.{ "href", "target", "rel", "children" },
+        .list => &.{ "ordered", "children" },
+        .listItem => &.{"children"},
+    };
+}
+
 fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     if (depth > 128) return error.TreeTooDeep;
     if (value != .object) return error.InvalidNode;
@@ -87,121 +110,97 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     var fields = value.object.iterator();
     while (fields.next()) |field| {
         const key = field.key_ptr.*;
-        if (oneOf(key, &.{ "kind", "style" })) continue;
-        if ((kind == .stack or kind == .scroll) and oneOf(key, &.{ "axis", "children" })) continue;
-        if (kind == .stack and std.mem.eql(u8, key, "spacing")) continue;
-        if (kind == .text and std.mem.eql(u8, key, "content")) continue;
-        if (kind == .button and oneOf(key, &.{ "label", "onClick" })) continue;
-        // Nullable optional metadata has no active behavior in a snapshot.
+        if (oneOf(key, &.{ "kind", "style" }) or oneOf(key, allowedFields(kind))) continue;
         if (field.value_ptr.* != .null) return error.UnsupportedNodeField;
     }
     switch (kind) {
-        .text, .button => {
-            const key: []const u8 = if (kind == .text) "content" else "label";
-            node.text = try a.dupe(u8, try string(value.object.get(key) orelse return error.MissingText));
-            if (value.object.get("onClick")) |event| {
-                if (event != .null) {
-                    const handler = try string(event);
-                    if (handler.len == 0) return error.EmptyHandler;
-                    node.on_click = try a.dupe(u8, handler);
-                }
-            }
+        .text => node.text = try json.requiredString(a, value, "content"),
+        .button, .toggle, .checkbox, .badge => node.text = try json.requiredString(a, value, "label"),
+        .slider, .progress, .meter => node.text = try json.ownedString(a, value, "label") orelse "",
+        .image => {
+            node.src = try json.requiredString(a, value, "src");
+            if (node.src.len == 0) return error.EmptyImageSource;
+            node.text = try json.ownedString(a, value, "alt") orelse "";
+            node.placeholder = try json.ownedString(a, value, "placeholder");
         },
-        .stack, .scroll => {
-            const axis = try string(value.object.get("axis") orelse return error.MissingAxis);
-            node.axis = std.meta.stringToEnum(Axis, axis) orelse return error.UnsupportedAxis;
-            node.children = try decodeNodes(a, value.object.get("children") orelse return error.MissingChildren, depth + 1);
-            if (value.object.get("spacing")) |spacing| {
-                if (spacing != .null) {
-                    node.spacing = try number(spacing);
-                    if (node.spacing.? < 0) return error.InvalidSpacing;
-                }
-            }
+        .link => {
+            node.href = try json.requiredString(a, value, "href");
+            if (node.href.len == 0) return error.EmptyLink;
+            node.target = try json.ownedString(a, value, "target");
+            node.rel = try json.ownedString(a, value, "rel");
         },
+        else => {},
     }
-    if (value.object.get("style")) |style| {
-        if (style != .null) node.style = try decodeStyle(a, style);
+    if (oneOf(tag, &.{ "stack", "scroll", "divider" })) {
+        node.axis = try json.enumValue(Axis, value.object.get("axis") orelse return error.MissingAxis);
     }
+    if (oneOf(tag, &.{ "stack", "scroll", "link", "list", "listItem" })) {
+        node.children = try decodeNodes(a, value.object.get("children") orelse return error.MissingChildren, depth + 1);
+    }
+    if (kind == .stack) {
+        if (json.optional(value, "spacing")) |v| {
+            node.spacing = try number(v);
+            if (node.spacing.? < 0) return error.InvalidSpacing;
+        }
+        if (json.optional(value, "alignItems")) |v| node.align_items = try json.enumValue(styles.Align, v);
+        if (json.optional(value, "justifyContent")) |v| node.justify_content = try json.enumValue(styles.Justify, v);
+    }
+    node.on_click = try handler(a, value, "onClick");
+    node.on_change = try handler(a, value, "onChange");
+    node.bind = try handler(a, value, "bind");
+    if ((kind == .picker or kind == .tabs) and node.bind == null) return error.MissingBinding;
+    if (kind == .toggle or kind == .checkbox) node.checked = try json.boolean(value.object.get("checked") orelse return error.MissingChecked);
+    if (kind == .slider or kind == .progress or kind == .meter) {
+        node.value = try number(value.object.get("value") orelse return error.MissingValue);
+        node.max = try number(value.object.get("max") orelse return error.MissingMaximum);
+        if (kind != .progress) node.min = try number(value.object.get("min") orelse return error.MissingMinimum);
+        if (node.max <= node.min or node.value < node.min or node.value > node.max) return error.InvalidRange;
+        if (json.optional(value, "step")) |v| {
+            node.step = try number(v);
+            if (node.step.? <= 0) return error.InvalidStep;
+        }
+    }
+    if (kind == .badge) {
+        if (json.optional(value, "tone")) |v| node.tone = try json.enumValue(Tone, v);
+    }
+    if (kind == .spacer) {
+        if (json.optional(value, "size")) |v| {
+            node.size = try number(v);
+            if (node.size.? < 0) return error.InvalidSize;
+        }
+    }
+    if (kind == .list) node.ordered = try json.boolean(value.object.get("ordered") orelse return error.MissingOrdered);
+    if (kind == .picker or kind == .tabs) {
+        const key: []const u8 = if (kind == .picker) "options" else "tabs";
+        node.options = try decodeOptions(a, value.object.get(key) orelse return error.MissingOptions, kind == .tabs, depth);
+    }
+    if (json.optional(value, "style")) |v| node.style = try styles.decode(a, v);
+    if (node.style.objectFit != null and kind != .image) return error.ObjectFitRequiresImage;
     return node;
 }
 
-fn decodeStyle(a: std.mem.Allocator, value: std.json.Value) !Style {
-    if (value != .object) return error.InvalidStyle;
-    var result: Style = .{};
-    var fields = value.object.iterator();
-    while (fields.next()) |field| {
-        const key = field.key_ptr.*;
-        const val = field.value_ptr.*;
-        if (val == .null) continue;
-        if (std.mem.eql(u8, key, "classes")) {
-            // Original class tokens are metadata; resolved ViewStyle hints drive layout.
-            if (val != .array) return error.InvalidClasses;
-            for (val.array.items) |item| _ = try string(item);
-            continue;
+fn handler(a: std.mem.Allocator, object: std.json.Value, key: []const u8) !?[]const u8 {
+    const name = try json.ownedString(a, object, key) orelse return null;
+    if (name.len == 0) return error.EmptyHandler;
+    return name;
+}
+
+fn decodeOptions(a: std.mem.Allocator, value: std.json.Value, tabs: bool, depth: usize) ![]const Option {
+    if (value != .array or value.array.items.len == 0 or value.array.items.len > std.math.maxInt(u32)) return error.InvalidOptions;
+    const options = try a.alloc(Option, value.array.items.len);
+    for (value.array.items, options, 0..) |item, *option, index| {
+        if (item != .object) return error.InvalidOption;
+        var fields = item.object.iterator();
+        while (fields.next()) |field| {
+            if (oneOf(field.key_ptr.*, &.{ "value", "label" })) continue;
+            if (tabs and std.mem.eql(u8, field.key_ptr.*, "children")) continue;
+            if (field.value_ptr.* != .null) return error.UnsupportedOptionField;
         }
-        if (std.mem.eql(u8, key, "id")) {
-            result.id = try a.dupe(u8, try string(val));
-            continue;
-        }
-        if (std.mem.eql(u8, key, "flexDirection")) {
-            result.flexDirection = std.meta.stringToEnum(Axis, try string(val)) orelse return error.UnsupportedAxis;
-            continue;
-        }
-        var found = false;
-        inline for (.{ "hidden", "overflowHidden" }) |name| {
-            if (std.mem.eql(u8, key, name)) {
-                if (val != .bool) return error.InvalidBoolean;
-                @field(result, name) = val.bool;
-                found = true;
-            }
-        }
-        inline for (.{ "foregroundColor", "backgroundColor", "borderColor" }) |name| {
-            if (std.mem.eql(u8, key, name)) {
-                const color = try string(val);
-                if (color.len != 7 or color[0] != '#') return error.UnsupportedColor;
-                @field(result, name) = std.fmt.parseInt(u32, color[1..], 16) catch return error.UnsupportedColor;
-                found = true;
-            }
-        }
-        inline for (.{ "padding", "paddingHorizontal", "paddingVertical", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "margin", "width", "height", "fontSize", "fontWeight", "cornerRadius", "borderWidth", "opacity" }) |name| {
-            if (std.mem.eql(u8, key, name)) {
-                const n = try number(val);
-                if (comptime oneOf(name, &.{ "width", "height" })) {
-                    if (n < 0 and n != -1 and n != -2) return error.InvalidSize;
-                } else if (comptime std.mem.eql(u8, name, "opacity")) {
-                    if (n < 0 or n > 1) return error.InvalidOpacity;
-                } else if (comptime std.mem.eql(u8, name, "fontWeight")) {
-                    if (n < 1 or n > 1000) return error.InvalidFontWeight;
-                } else if (comptime !std.mem.eql(u8, name, "margin")) {
-                    if (n < 0) return error.InvalidStyleNumber;
-                }
-                @field(result, name) = n;
-                found = true;
-            }
-        }
-        if (!found) return error.UnsupportedStyle;
+        option.* = .{ .value = try json.requiredString(a, item, "value"), .label = try json.requiredString(a, item, "label") };
+        for (options[0..index]) |previous| if (std.mem.eql(u8, previous.value, option.value)) return error.DuplicateOption;
+        if (tabs) option.children = try decodeNodes(a, item.object.get("children") orelse return error.MissingChildren, depth + 1);
     }
-    return result;
-}
-
-fn string(value: std.json.Value) ![]const u8 {
-    if (value != .string) return error.InvalidString;
-    return value.string;
-}
-
-fn number(value: std.json.Value) !f32 {
-    const n: f32 = switch (value) {
-        .integer => |v| @floatFromInt(v),
-        .float => |v| @floatCast(v),
-        else => return error.InvalidNumber,
-    };
-    if (!std.math.isFinite(n)) return error.InvalidNumber;
-    return n;
-}
-
-fn oneOf(value: []const u8, choices: []const []const u8) bool {
-    for (choices) |choice| if (std.mem.eql(u8, value, choice)) return true;
-    return false;
+    return options;
 }
 
 test "canonical Rust golden fixture has an array of roots and resolved style hints" {

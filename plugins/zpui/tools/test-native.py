@@ -51,10 +51,15 @@ pub fn build(b: *std.Build) void {
         .target = target, .optimize = optimize,
         .imports = &.{ .{ .name = "zpui", .module = zpui }, .{ .name = "crepuscularity_zpui", .module = bridge } },
     });
+    const form = b.createModule(.{
+        .root_source_file = bridge_dep.path("examples/form.zig"),
+        .target = target, .optimize = optimize,
+        .imports = &.{ .{ .name = "zpui", .module = zpui }, .{ .name = "crepuscularity_zpui", .module = bridge } },
+    });
     const root = b.createModule(.{
         .root_source_file = bridge_dep.path("tests/native.zig"),
         .target = target, .optimize = optimize,
-        .imports = &.{ .{ .name = "zpui", .module = zpui }, .{ .name = "crepuscularity_zpui", .module = bridge }, .{ .name = "counter", .module = counter } },
+        .imports = &.{ .{ .name = "zpui", .module = zpui }, .{ .name = "crepuscularity_zpui", .module = bridge }, .{ .name = "counter", .module = counter }, .{ .name = "form", .module = form } },
     });
     const tests = b.addTest(.{ .root_module = root, .filters = &.{"crepus-zpui"} });
     b.step("test", "Run adapter acceptance on the real headless ZPUI platform")

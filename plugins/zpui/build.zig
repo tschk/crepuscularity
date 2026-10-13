@@ -16,7 +16,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "view_ir", .module = ir }},
     });
-    const tests = b.addTest(.{ .root_module = ir });
+    const decoder_tests = b.createModule(.{
+        .root_source_file = b.path("tests/decoder.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "view_ir", .module = ir }},
+    });
+    const tests = b.addTest(.{ .root_module = decoder_tests });
     const run = b.addRunArtifact(tests);
-    b.step("test", "Test the View IR boundary without a ZPUI backend").dependOn(&run.step);
+    const original_tests = b.addTest(.{ .root_module = ir });
+    const original_run = b.addRunArtifact(original_tests);
+    const step = b.step("test", "Test the View IR boundary without a ZPUI backend");
+    step.dependOn(&original_run.step);
+    step.dependOn(&run.step);
 }

@@ -147,3 +147,7 @@ test "crepus-zpui replaces a document and retires it after the old frame" {
     fixture.settle();
     try testing.expectEqual(@as(usize, 2), fixture.count());
 }
+
+comptime {
+    _ = @import("coverage_native.zig");
+}

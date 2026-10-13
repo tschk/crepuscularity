@@ -9,7 +9,10 @@ pub const Counter = struct {
 
     // Generate this snapshot with `crepus native ir counter.crepus`.
     pub fn init(allocator: std.mem.Allocator, json: []const u8) !Counter {
-        return .{ .document = try crepus.Document.parse(allocator, json) };
+        var counter = Counter{ .document = try crepus.Document.parse(allocator, json) };
+        errdefer counter.document.deinit();
+        try crepus.validateHost(Counter, &counter, &counter.document);
+        return counter;
     }
 
     pub fn deinit(self: *Counter, _: *zpui.App) void {
@@ -18,7 +21,7 @@ pub const Counter = struct {
 
     pub fn render(self: *Counter, window: *zpui.Window, cx: *zpui.Context(Counter)) zpui.Div {
         return zpui.div().flex().flexCol()
-            .child(crepus.render(Counter, self, window, cx, &self.document, "counter"))
+            .child(crepus.render(Counter, self, window, cx, &self.document, "counter") catch @panic("invalid counter host"))
             .child(zpui.fmt("Count: {d}", .{self.count}));
     }
 

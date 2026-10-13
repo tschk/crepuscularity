@@ -43,10 +43,12 @@ jobs:
         run: |
           zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
           zig build test -j1 --summary all
-      - name: Verify current compiler fixture
+      - name: Verify current compiler fixtures
         run: |
-          cargo run --locked -j1 --manifest-path plugins/zpui/tools/fixture-exporter/Cargo.toml -- plugins/zpui/examples/counter.crepus > "$RUNNER_TEMP/counter.json"
-          cmp "$RUNNER_TEMP/counter.json" plugins/zpui/tests/fixtures/counter.json
+          for example in counter form; do
+            cargo run --locked -j1 --manifest-path plugins/zpui/tools/fixture-exporter/Cargo.toml -- "plugins/zpui/examples/$example.crepus" > "$RUNNER_TEMP/$example.json"
+            cmp "$RUNNER_TEMP/$example.json" "plugins/zpui/tests/fixtures/$example.json"
+          done
       - name: Fetch exact ZPUI source
         run: |
           git init "$RUNNER_TEMP/zpui"
