@@ -9,6 +9,7 @@ import tempfile
 
 
 def main():
+    """Validate the pinned inputs and run native acceptance in a temporary build."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--zig", default="zig")
     parser.add_argument("--zpui-source", required=True, type=Path)

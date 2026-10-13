@@ -110,7 +110,7 @@ native event dispatch.
 ## Validation
 
 ```sh
-zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig
+zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
 zig build test -j1 --summary all
 python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/to/zpui
 ```
