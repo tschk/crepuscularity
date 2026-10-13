@@ -138,5 +138,6 @@ fn positiveInteger(value: std.json.Value) !u32 {
 fn color(value: std.json.Value) !u32 {
     const text = try json.string(value);
     if (text.len != 7 or text[0] != '#') return error.UnsupportedColor;
+    for (text[1..]) |digit| if (!std.ascii.isHex(digit)) return error.UnsupportedColor;
     return std.fmt.parseInt(u32, text[1..], 16) catch error.UnsupportedColor;
 }

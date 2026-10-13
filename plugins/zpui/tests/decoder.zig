@@ -82,6 +82,9 @@ test "invalid style values fail instead of mapping to an approximation" {
         .{ error.InvalidFontWeight, "\"fontWeight\":400.5" },
         .{ error.InvalidLineClamp, "\"lineClamp\":1.5" },
         .{ error.InvalidNumber, "\"width\":1e39" },
+        .{ error.UnsupportedColor, "\"backgroundColor\":\"#+12345\"" },
+        .{ error.UnsupportedColor, "\"foregroundColor\":\"#12_345\"" },
+        .{ error.UnsupportedColor, "\"borderColor\":\"#12345G\"" },
     };
     inline for (cases) |case| {
         const source = "{\"version\":7,\"root\":[{\"kind\":\"text\",\"content\":\"X\",\"style\":{" ++ case[1] ++ "}}]}";
