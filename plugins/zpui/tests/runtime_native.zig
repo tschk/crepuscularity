@@ -361,8 +361,8 @@ test "crepus-zpui long press cancels when pointer leaves and never fires in inac
         \\{"version":7,"root":[{"kind":"button","label":"Hold","onLongPress":"hold","style":{"width":100,"height":60}}]}
     );
     defer f.deinit();
-    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
-    _ = f.platform.simulateInput(.{ .mouse_move = .{ .position = .{ .x = 150, .y = 10 }, .pressed_button = .left } });
+    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 97, .y = 10 } } });
+    _ = f.platform.simulateInput(.{ .mouse_move = .{ .position = .{ .x = 102, .y = 10 }, .pressed_button = .left } });
     f.app.advanceClock(500 * std.time.ns_per_ms);
     f.settle();
     try testing.expectEqual(@as(usize, 0), f.model().holds);

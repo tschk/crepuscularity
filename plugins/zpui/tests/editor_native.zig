@@ -236,3 +236,25 @@ test "crepus-zpui multiline vertical navigation and drag outside the editor pres
     try testing.expectEqual(@as(usize, 0), selected.range.start);
     try testing.expectEqual(@as(usize, 7), selected.range.end);
 }
+
+test "crepus-zpui empty edits do not dispatch host changes" {
+    var f = try Fixture.init(simple, "ABC");
+    defer f.deinit();
+    try f.focus();
+    f.key("home", .{});
+    f.key("backspace", .{});
+    f.key("end", .{});
+    f.key("delete", .{});
+    f.typeText("");
+    const shortcut: zpui.input.Modifiers = if (@import("builtin").os.tag == .macos) .{ .platform = true } else .{ .control = true };
+    f.key("x", shortcut);
+    f.app.platform.vtable.writeClipboard(f.app.platform.ptr, "");
+    f.key("v", shortcut);
+    f.app.platform.vtable.writeClipboard(f.app.platform.ptr, "\r\n");
+    f.key("v", shortcut);
+    try testing.expectEqualStrings("ABC", f.model().value.items);
+    try testing.expectEqual(@as(usize, 0), f.model().changes);
+    f.typeText("D");
+    try testing.expectEqualStrings("ABCD", f.model().value.items);
+    try testing.expectEqual(@as(usize, 1), f.model().changes);
+}

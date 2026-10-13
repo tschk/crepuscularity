@@ -19,7 +19,7 @@ use real image UV crops. Text transforms cover Unicode upper/lower casing and
 inheritance/reset; capitalization and transformed editor display remain unfinished.
 Static/relative/absolute positioning and supported cursors have explicit contracts.
 
-Validation: 21 decoder tests on Zig 0.16/0.17; 42 native headless tests with the
+Validation: 21 decoder tests on Zig 0.16/0.17; 43 native headless tests with the
 pinned backend; five Rust Unicode tests and strict Clippy; actual macOS input and
 WKWebView acceptance with allocator teardown. Current-candidate independent review
 and CI remain required before release. A host-factory witness alone is insufficient
@@ -43,5 +43,6 @@ stacking-order contract beyond the backend's global deferred-draw priority.
 The adapter stays under `plugins/zpui` with its own locked Unicode helper and CI.
 Root Cargo/shared DSL/CE/Kit files remain outside this lane. The CLI 0.17.0 version
 patch is prepared separately; publication requires coordinated root version/lock
-changes and remediation of the existing ammonia/quinn-proto audit failures.
+changes and full CLI validation. A separate proposal resolves ammonia 4.1.7 and
+quinn-proto 0.11.18 and passes audit; it remains unapplied to this PR.
 No dependency audit or merge gate is weakened. ZPUI remains MIT; the adapter is ISC.

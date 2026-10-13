@@ -99,6 +99,7 @@ pub fn State(comptime View: type) type {
             if (self.multiline) filtered.appendSlice(a, value) catch @panic("OOM") else {
                 for (value) |byte| if (byte != '\r' and byte != '\n') filtered.append(a, byte) catch @panic("OOM");
             }
+            if (range.start == range.end and filtered.items.len == 0) return false;
             const new_len = self.text.items.len - (range.end - range.start) + filtered.items.len;
             if (new_len > text_limit) return false;
             // Allocate separately: inserting can otherwise invalidate slices into this text.

@@ -15,6 +15,7 @@ pub fn State(comptime View: type) type {
         down: input.MouseDownEvent = .{ .button = .left, .position = .zero },
         fired: bool = false,
         painted: bool = false,
+        bounds: ?zpui.Bounds(zpui.Pixels) = null,
         task: zpui.Task(void) = .none,
 
         fn init(app: *zpui.App) Self {
@@ -30,6 +31,7 @@ pub fn State(comptime View: type) type {
             const Callback = struct {
                 fn call(view: *View, state: *Self, w: *zpui.Window, context: *zpui.Context(View)) void {
                     if (!w.isWindowActive() or !state.painted) return;
+                    if (state.bounds) |bounds| if (!bounds.contains(w.mouse_position)) return;
                     if (comptime @hasDecl(View, "onCrepusLongPress")) view.onCrepusLongPress(state.handler, state.scope, &state.down, w, context);
                 }
                 fn inWindow(state: *Self, w: *zpui.Window, app: *zpui.App) void {
@@ -45,6 +47,7 @@ pub fn State(comptime View: type) type {
             const dx = event.position.x - self.down.position.x;
             const dy = event.position.y - self.down.position.y;
             if (dx * dx + dy * dy > 64) self.task.cancel();
+            if (self.bounds) |bounds| if (!bounds.contains(event.position)) self.task.cancel();
         }
         fn exit(self: *Self, _: *const input.MouseExitEvent, _: *zpui.Window, _: *zpui.Context(Self)) void {
             self.task.cancel();
@@ -87,9 +90,10 @@ pub fn attach(comptime View: type, window: *zpui.Window, cx: *zpui.Context(View)
         fn up(weak: *zpui.WeakEntity(S), event: *const input.MouseUpEvent, phase: zpui.window.DispatchPhase, w: *zpui.Window, app: *zpui.App) void {
             if (phase == .capture) _ = weak.update(app, S.up, .{ event, w });
         }
-        fn paint(state: zpui.Entity(S), _: zpui.Bounds(zpui.Pixels), w: *zpui.Window, app: *zpui.App) void {
+        fn paint(state: zpui.Entity(S), bounds: zpui.Bounds(zpui.Pixels), w: *zpui.Window, app: *zpui.App) void {
             var l = state.lease(app);
             l.value.painted = true;
+            l.value.bounds = bounds.intersect(w.contentMask().bounds);
             l.end();
             w.onMouseEvent(input.MouseMoveEvent, state.downgrade(), move);
             w.onMouseEvent(input.MouseUpEvent, state.downgrade(), up);

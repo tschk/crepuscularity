@@ -346,7 +346,7 @@
     "decoder": "implemented",
     "headlessNative": "implemented",
     "backendIntegration": "partial",
-    "independentReview": "pending_for_current_candidate"
+    "independentReview": "pending_for_final_completion"
   },
   "remaining": [
     "letterSpacing, zIndex, scaleX, scaleY, rotate, userSelect",
@@ -354,6 +354,6 @@
     "Fixed positioning, wait cursor",
     "Browser platform matrix and native OS/GPU acceptance beyond macOS",
     "Immutable final review and CI",
-    "Paired CLI version/lock coordination and root dependency audit remediation before CLI publication"
+    "Apply audited CLI version/lock proposal in coordinated source and pass full CLI validation before publication"
   ]
 }
