@@ -30,7 +30,10 @@ pub fn length(value: f32) zpui.Length {
 pub fn apply(initial: zpui.StatefulDiv, style: ir.Style) zpui.StatefulDiv {
     var element = initial;
     inline for (.{ .{ "padding", "p" }, .{ "paddingHorizontal", "px" }, .{ "paddingVertical", "py" }, .{ "paddingTop", "pt" }, .{ "paddingRight", "pr" }, .{ "paddingBottom", "pb" }, .{ "paddingLeft", "pl" }, .{ "margin", "m" }, .{ "marginHorizontal", "mx" }, .{ "marginVertical", "my" }, .{ "marginTop", "mt" }, .{ "marginRight", "mr" }, .{ "marginBottom", "mb" }, .{ "marginLeft", "ml" }, .{ "fontSize", "textSize" }, .{ "cornerRadius", "rounded" }, .{ "borderWidth", "border" }, .{ "top", "top" }, .{ "right", "right" }, .{ "bottom", "bottom" }, .{ "left", "left" } }) |mapping| {
-        if (@field(style, mapping[0])) |v| element = @field(zpui.StatefulDiv, mapping[1])(element, zpui.px(v));
+        const is_inset = comptime @import("std").mem.eql(u8, mapping[0], "top") or @import("std").mem.eql(u8, mapping[0], "right") or @import("std").mem.eql(u8, mapping[0], "bottom") or @import("std").mem.eql(u8, mapping[0], "left");
+        if (@field(style, mapping[0])) |v| {
+            if ((style.position orelse .relative) != .static or !is_inset) element = @field(zpui.StatefulDiv, mapping[1])(element, zpui.px(v));
+        }
     }
     inline for (.{ .{ "width", "w" }, .{ "height", "h" }, .{ "minWidth", "minW" }, .{ "minHeight", "minH" }, .{ "maxWidth", "maxW" }, .{ "maxHeight", "maxH" } }) |mapping| {
         if (@field(style, mapping[0])) |v| element = @field(zpui.StatefulDiv, mapping[1])(element, length(v));

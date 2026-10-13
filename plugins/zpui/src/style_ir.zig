@@ -5,8 +5,10 @@ pub const Axis = enum { row, column };
 pub const Align = enum { start, end, center, stretch, baseline };
 pub const Justify = enum { start, end, center, between, around, evenly };
 pub const TextAlign = enum { left, center, right };
+pub const TextTransform = enum { normal, uppercase, lowercase };
 pub const FontFamily = enum { sans, serif, mono };
 pub const Position = enum { static, relative, absolute };
+pub const ObjectPosition = enum { center, top, bottom, left, right, @"left-top", @"left-bottom", @"right-top", @"right-bottom" };
 pub const Gradient = enum { @"to-t", @"to-tr", @"to-r", @"to-br", @"to-b", @"to-bl", @"to-l", @"to-tl" };
 pub const WhiteSpace = enum { normal, nowrap };
 pub const TextOverflow = enum { clip, ellipsis };
@@ -42,6 +44,7 @@ pub const Style = struct {
     textAlign: ?TextAlign = null,
     lineHeight: ?f32 = null,
     fontFamily: ?FontFamily = null,
+    textTransform: ?TextTransform = null,
     italic: ?bool = null,
     underline: ?bool = null,
     strikethrough: ?bool = null,
@@ -72,6 +75,9 @@ pub const Style = struct {
     lineClamp: ?u32 = null,
     cursor: ?Cursor = null,
     objectFit: ?ObjectFit = null,
+    objectPosition: ?ObjectPosition = null,
+    translateX: ?f32 = null,
+    translateY: ?f32 = null,
     backgroundGradientDirection: ?Gradient = null,
     backgroundGradientFrom: ?u32 = null,
     backgroundGradientTo: ?u32 = null,
@@ -90,11 +96,6 @@ pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
             const owned = try a.alloc([]const u8, val.array.items.len);
             for (val.array.items, owned) |item, *out| out.* = try a.dupe(u8, try json.string(item));
             result.classes = owned;
-            continue;
-        }
-        // ZPUI centers image fits; other positions have no exact mapping.
-        if (std.mem.eql(u8, key, "objectPosition")) {
-            if (!std.mem.eql(u8, try json.string(val), "center")) return error.UnsupportedObjectPosition;
             continue;
         }
         var found = false;
@@ -135,7 +136,7 @@ fn styleNumber(comptime key: []const u8, value: std.json.Value) !f32 {
         if (n < 1 or n > 1000 or @floor(n) != n) return error.InvalidFontWeight;
     } else if (comptime std.mem.eql(u8, key, "aspectRatio") or std.mem.eql(u8, key, "lineHeight")) {
         if (n <= 0) return error.InvalidStyleNumber;
-    } else if (comptime !std.mem.startsWith(u8, key, "margin") and !json.oneOf(key, &.{ "top", "right", "bottom", "left", "shadowOffsetX", "shadowOffsetY" })) {
+    } else if (comptime !std.mem.startsWith(u8, key, "margin") and !json.oneOf(key, &.{ "top", "right", "bottom", "left", "shadowOffsetX", "shadowOffsetY", "translateX", "translateY" })) {
         if (n < 0) return error.InvalidStyleNumber;
     }
     return n;

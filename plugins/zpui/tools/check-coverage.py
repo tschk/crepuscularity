@@ -12,7 +12,11 @@ def camel(name):
 
 def main():
     plugin = Path(__file__).resolve().parents[1]
-    source = (plugin.parents[1] / "crates/crepuscularity-native/src/ir.rs").read_text()
+    source_path = plugin.parents[1] / "crates/crepuscularity-native/src/ir.rs"
+    snapshot = plugin / "tests/native-ir-v7.rs"
+    if source_path.exists() and source_path.read_bytes() != snapshot.read_bytes():
+        raise SystemExit("Bundled IR snapshot differs from authoritative repository source")
+    source = (source_path if source_path.exists() else snapshot).read_text()
     goal = json.loads((plugin / "coverage.json").read_text())
     style = source.split("pub struct ViewStyle {", 1)[1].split("\n}", 1)[0]
     node = source.split("pub enum ViewNode {", 1)[1].split("\n}", 1)[0]

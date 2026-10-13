@@ -155,3 +155,7 @@ comptime {
 comptime {
     _ = @import("runtime_native.zig");
 }
+
+comptime {
+    _ = @import("editor_native.zig");
+}

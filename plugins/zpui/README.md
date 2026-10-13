@@ -1,4 +1,4 @@
-# Crepuscularity → ZPUI (experimental)
+# Crepuscularity → ZPUI 0.2.0 (experimental)
 
 This optional Zig adapter consumes Crepuscularity View IR v7 and constructs
 ZPUI elements. Compile `.crepus` templates with the existing Rust compiler:
@@ -40,9 +40,12 @@ upstream package's current `.paths` list only includes its build files and
 `src`, while its build references `vendor` and app resources. Verify packaging
 before using a fetched archive as a Zig package dependency.
 
-The adapter declares **no automatic upstream download** and vendors no ZPUI
-code. It adds no Cargo dependencies, shared macro changes, or CE/Kit types.
-The host supplies its already configured module:
+The adapter vendors no ZPUI code and does not download it. Native rendering links
+a separate Rust static library under `native-text`, locked to
+`unicode-segmentation =1.13.3` for UAX #29 extended graphemes. It requires Cargo
+and a matching installed Rust target. Decoder builds need only Zig. This library
+has its own workspace/lock and adds no root Cargo dependency, shared macro change,
+or CE/Kit type. The host supplies its configured ZPUI module:
 
 ```zig
 // Host build.zig; `zpui_module` is supplied by the host's pinned upstream build.
@@ -92,27 +95,33 @@ working behavior and acceptance evidence. [COVERAGE.md](COVERAGE.md) and
 [coverage.json](coverage.json) record the inventory and unfinished work. CI checks
 the inventory against the Rust source. The goal remains in progress.
 
-All 25 kinds decode with owned storage. The bridge directly implements 23:
-stacks, text, buttons, scrolls, native form controls, status/layout elements,
-images, links, lists/items, conditions, keyed collections, rotating text,
-dropzones and file pickers. Inputs and web views require fallible host factories.
-Their request/placement plumbing is tested; the retained-editor and real-browser
-references remain required. Tab icons are retained and rejected by rendering
-until actual icon support is implemented.
+All 25 kinds decode with owned storage. The bridge implements 24 directly,
+including a retained editor and icon-bearing tabs. A macOS WKWebView reference
+provides real browser navigation; other platforms require a host factory and
+separate acceptance. The finish goal remains in progress.
+
+The editor supports host-controlled text, selection, pointer dragging, grapheme
+navigation/deletion, multiline vertical movement, clipboard and UTF-16 IME
+preedit/commit. It owns its text layout between frames. Secure inputs mask extended
+graphemes, preserve multiline breaks and block plaintext clipboard/IME extraction.
+This does not establish OS secure-keyboard mode, undo, word movement or autoscroll.
+Hosts can override `crepusInput` with their own editor.
 
 Styles cover spacing, size constraints, aspect ratio, flex layout, alignment,
-text weight/size/alignment/line height/font family/decorations, colors, borders,
-opacity, visibility/clipping, relative/absolute positioning and insets, shadows,
-supported cursors, centered image fit, and two-stop linear gradients. Source
-classes are owned metadata; rendering uses resolved style hints.
+text size/weight/family/decorations, colors, borders, opacity, visibility/clipping,
+static/relative/absolute positioning, shadows and eight two-stop gradients.
+Translations move paint, hit regions and accessibility bounds without changing
+flow layout. Images support all nine object positions with actual UV cropping.
+Unicode upper/lower casing inherits through containers; `normal` resets it, and
+option values remain unchanged. Capitalization and transformed editor presentation
+are unsupported. Source classes remain owned metadata.
 
 Widths/heights/maxima accept nonnegative points, `-1` for parent fill and `-2`
 for auto sizing. Minimum sizes are nonnegative. Colors accept `#RRGGBB`.
-Gradients require direction and both endpoints; all eight `to-*` directions map
-to native gradient fills. Image positioning is centered. Position accepts
-`relative` and `absolute`; cursors accept `auto`, `default`, `pointer`, `text`,
-and `move`. Other active values fail explicitly. Native controls retain their
-platform-owned intrinsic height and segmented radio-group selection semantics.
+Gradients require direction and both endpoints. Cursors accept `auto`, `default`,
+`pointer`, `text`, and `move`. Fixed positioning, wait cursor, letter spacing,
+z-index, scale/rotation and user selection are still explicit errors. Native
+controls retain their platform-owned intrinsic height.
 
 ## Host contract
 
@@ -136,8 +145,8 @@ that error in its normal UI error path. The examples validate during `init`.
 | `onCrepusDrop(files: Files, window, cx)` | A dropzone has `onDrop` |
 | `onCrepusPick(files: Files, window, cx)` | A file picker has `onPick` |
 | `crepusAcceptExtensions(accept) ![]const []const u8` | MIME filters; return extensions without dots, or an error |
-| `crepusInput(request: Input, window, cx) !AnyElement` | An input appears |
-| `crepusWebView(request: WebView, window, cx) !NativeViewId` | A web view appears; return an attached browser view owned by the host |
+| `crepusInput(request: Input, window, cx) !AnyElement` | Optional retained-editor override |
+| `crepusWebView(request: WebView, window, cx) !NativeViewId` | Required outside macOS or on a headless platform; optional browser override on macOS |
 
 `Value` is `text`, `boolean`, `number`, `record`, or `list`. Lists contain keyed
 `Item` values; records contain named `Field` values. Keys must be nonempty and unique.
@@ -171,10 +180,12 @@ selection, link dispatch and a borrowed decoded image alongside the existing
 
 Async dialogs and hold timers copy their context; other event data and scopes are
 borrowed for the callback duration. Copy data retained by the host. The host's
-allocator must outlive outstanding platform-dialog callbacks. Input factories must
+allocator must outlive outstanding platform-dialog callbacks. Input overrides must
 provide actual retained editing and copy request data they retain. Web factories
 must create/reuse an attached browser view and detach it at the end of its host
-lifetime. A backend without native child views fails explicitly.
+lifetime. A backend without native child views fails explicitly. `MacBrowser` owns
+one window attachment, rejects reuse in another window and uses a nonpersistent
+WebKit data store. Its `title()` borrows WebKit storage; copy retained results.
 
 Rotation timers reset when phrases/interval change and cancel on unmount. Conditions
 validate only the active branch; tabs validate only the selected panel. Readers
@@ -191,28 +202,33 @@ zig build test -j1 --summary all
 python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/to/zpui
 ```
 
-Nineteen decoder tests cover current compiler fixtures, all 25 node shapes,
-Unicode/storage ownership, source classes, version/size/depth boundaries, invalid
-controls/options, runtime metadata, and gradient/style contracts. Decoding is
-checked on Zig 0.16 and 0.17.
+Twenty-one decoder tests cover current compiler fixtures, all node shapes,
+Unicode/ownership, IR boundaries, malformed file filters and style contracts.
+They pass on Zig 0.16 and 0.17. Forty-two native headless tests compile the renderer
+and examples against pinned ZPUI, including scoped runtime, async lifecycle,
+retained input, icon tabs, translations, image crops and casing. Five separately
+locked Rust tests cover grapheme boundaries, UTF-16 and Unicode case/mask helpers;
+strict Clippy and format checks also run in CI. Allocator failures fail acceptance.
 
-Twenty-seven native headless tests compile the renderer and example views against
-the pinned module. Besides the original control/media/layout tests, they exercise
-branch switching, scoped fields/handlers on collection reorder, invalid keys,
-timer advancement/unmount, drop filtering, hold thresholds/cancellation, delayed
-file selection/cancellation/filtering, and callbacks after window/App destruction.
-Input/browser witnesses verify request/placement plumbing only. The test allocator
-checks leaks. The harness uses one build job and opens no desktop windows.
+For real macOS acceptance, run:
+
+```sh
+python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/to/zpui --desktop
+```
+
+This opens its own AppKit/Metal window, edits Unicode through the native input
+handler, navigates WKWebView, verifies its title and 200×100 `#123456` snapshot,
+and drains deferred platform teardown. It requires Xcode's Swift compiler and an
+active graphical session. It does not capture another app or change OS permissions.
+The snapshot is written to `/tmp/crepus-zpui-browser-acceptance.png`. This proves the
+specified macOS scenario; broader OS widget/GPU behavior remains a finish gate.
 
 On case-insensitive macOS filesystems, two upstream `SOURCE` provenance files
-collide with their libraries' `source/` directories. The harness permits only
-those metadata deletions; changes to compiler inputs are rejected.
-
-The counter and form fixtures come from the current Rust parser/native lowering
-crate. The macOS workflow regenerates both and runs decoder/native acceptance.
-These checks establish headless layout/event/atlas behavior; actual GPU output,
-native OS widget integration and other platforms still need separate acceptance.
-No release or deployment workflow is added.
+collide with their `source/` directories. The harness permits only those metadata
+deletions and rejects altered compiler inputs. CI regenerates the counter/form
+fixtures from the current Rust parser and lowering crate. Standalone archives use
+the bundled IR inventory snapshot; repository checks also require exact agreement
+with the authoritative Rust source.
 
 ## Licensing
 
@@ -220,4 +236,5 @@ The new adapter follows Crepuscularity's ISC license. ZPUI is MIT-licensed.
 Preserve the applicable MIT notice
 and the separate notices for upstream vendored libraries and assets when
 distributing a linked application. This PR contains the independently written
-adapter and Crepuscularity fixtures.
+adapter and Crepuscularity fixtures. The Unicode dependency is MIT OR Apache-2.0;
+this distribution includes its MIT license and copyright notice under `native-text`.

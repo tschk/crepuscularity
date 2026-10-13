@@ -14,6 +14,7 @@ pub fn State(comptime View: type) type {
         scope: ?*const host.Scope = null,
         down: input.MouseDownEvent = .{ .button = .left, .position = .zero },
         fired: bool = false,
+        painted: bool = false,
         task: zpui.Task(void) = .none,
 
         fn init(app: *zpui.App) Self {
@@ -28,6 +29,7 @@ pub fn State(comptime View: type) type {
             self.fired = true;
             const Callback = struct {
                 fn call(view: *View, state: *Self, w: *zpui.Window, context: *zpui.Context(View)) void {
+                    if (!w.isWindowActive() or !state.painted) return;
                     if (comptime @hasDecl(View, "onCrepusLongPress")) view.onCrepusLongPress(state.handler, state.scope, &state.down, w, context);
                 }
                 fn inWindow(state: *Self, w: *zpui.Window, app: *zpui.App) void {
@@ -43,6 +45,9 @@ pub fn State(comptime View: type) type {
             const dx = event.position.x - self.down.position.x;
             const dy = event.position.y - self.down.position.y;
             if (dx * dx + dy * dy > 64) self.task.cancel();
+        }
+        fn exit(self: *Self, _: *const input.MouseExitEvent, _: *zpui.Window, _: *zpui.Context(Self)) void {
+            self.task.cancel();
         }
         fn outside(self: *Self, _: *const input.MouseDownEvent, _: *zpui.Window, _: *zpui.Context(Self)) void {
             self.task.cancel();
@@ -75,9 +80,25 @@ pub fn attach(comptime View: type, window: *zpui.Window, cx: *zpui.Context(View)
             state.task = lease.cx.timer(500 * std.time.ns_per_ms, S.fire) catch @panic("OOM");
         }
     };
+    const Observe = struct {
+        fn move(weak: *zpui.WeakEntity(S), event: *const input.MouseMoveEvent, phase: zpui.window.DispatchPhase, w: *zpui.Window, app: *zpui.App) void {
+            if (phase == .capture) _ = weak.update(app, S.move, .{ event, w });
+        }
+        fn up(weak: *zpui.WeakEntity(S), event: *const input.MouseUpEvent, phase: zpui.window.DispatchPhase, w: *zpui.Window, app: *zpui.App) void {
+            if (phase == .capture) _ = weak.update(app, S.up, .{ event, w });
+        }
+        fn paint(state: zpui.Entity(S), _: zpui.Bounds(zpui.Pixels), w: *zpui.Window, app: *zpui.App) void {
+            var l = state.lease(app);
+            l.value.painted = true;
+            l.end();
+            w.onMouseEvent(input.MouseMoveEvent, state.downgrade(), move);
+            w.onMouseEvent(input.MouseUpEvent, state.downgrade(), up);
+        }
+    };
     var lease = entity.lease(window.app);
     defer lease.end();
-    return initial.onMouseDown(.left, cx.listenerWith(payload, Callback.down))
+    lease.value.painted = false;
+    return initial.child(zpui.canvas(entity, Observe.paint).absolute().inset0()).onMouseDown(.left, cx.listenerWith(payload, Callback.down))
         .onMouseUp(.left, lease.cx.listener(S.up)).onMouseUpOut(.left, lease.cx.listener(S.up))
-        .onMouseMove(lease.cx.listener(S.move)).onMouseDownOut(lease.cx.listener(S.outside));
+        .onMouseMove(lease.cx.listener(S.move)).onMouseExit(lease.cx.listener(S.exit)).onMouseDownOut(lease.cx.listener(S.outside));
 }

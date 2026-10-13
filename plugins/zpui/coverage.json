@@ -80,8 +80,9 @@
       "status": "implemented"
     },
     "webView": {
-      "status": "host_contract",
-      "remaining": "Reference implementation and real platform acceptance"
+      "status": "partial",
+      "evidence": "mac_desktop.zig: real WKWebView navigation/title, 200x100 pixel snapshot and allocator teardown passed on macOS",
+      "remaining": "Windows/Linux browser references and platform acceptance; headless platforms require factories"
     },
     "scroll": {
       "status": "implemented"
@@ -96,8 +97,8 @@
       "status": "implemented"
     },
     "input": {
-      "status": "host_contract",
-      "remaining": "Reference implementation and real platform acceptance"
+      "status": "implemented",
+      "evidence": "editor_native.zig: Unicode editing, UTF-16 IME, clipboard, secure/multiline, controlled updates"
     },
     "picker": {
       "status": "implemented"
@@ -192,7 +193,9 @@
       "status": "pending"
     },
     "textTransform": {
-      "status": "pending"
+      "status": "partial",
+      "evidence": "Unicode upper/lower casing, inheritance/reset and unchanged option values tested",
+      "remaining": "capitalize and transformed input display/caret mapping"
     },
     "fontFamily": {
       "status": "implemented"
@@ -264,10 +267,12 @@
       "status": "implemented"
     },
     "translateX": {
-      "status": "pending"
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
     },
     "translateY": {
-      "status": "pending"
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
     },
     "scaleX": {
       "status": "pending"
@@ -318,7 +323,8 @@
       "status": "implemented"
     },
     "objectPosition": {
-      "status": "partial"
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
     }
   },
   "events": {
@@ -332,22 +338,22 @@
   "runtime": {
     "scopedConditions": "implemented",
     "scopedCollections": "implemented",
-    "retainedInput": "host_contract",
+    "retainedInput": "implemented",
     "timedText": "implemented",
-    "nativeWebView": "host_contract"
+    "nativeWebView": "partial"
   },
   "validation": {
     "decoder": "implemented",
     "headlessNative": "implemented",
-    "backendIntegration": "pending",
+    "backendIntegration": "partial",
     "independentReview": "pending_for_current_candidate"
   },
   "remaining": [
-    "Retained input reference with selection, IME, Unicode editing, secure/multiline behavior, and state synchronization",
-    "Browser reference hosting an actual web engine, with navigation and teardown acceptance",
-    "Tab icons",
-    "letterSpacing, textTransform, zIndex, translateX, translateY, scaleX, scaleY, rotate, userSelect",
-    "Fixed/static positioning, wait cursor, non-center objectPosition",
-    "Real OS widgets, GPU output, supported platform matrix, and independent review for the final candidate"
+    "letterSpacing, zIndex, scaleX, scaleY, rotate, userSelect",
+    "Capitalize and transformed input display/caret mapping",
+    "Fixed positioning, wait cursor",
+    "Browser platform matrix and native OS/GPU acceptance beyond macOS",
+    "Immutable final review and CI",
+    "Paired CLI version/lock coordination and root dependency audit remediation before CLI publication"
   ]
 }

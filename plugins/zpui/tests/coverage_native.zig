@@ -267,3 +267,108 @@ test "crepus-zpui meter ratio stays finite across extreme valid f32 ranges" {
     }
     try testing.expect(found_fill);
 }
+
+test "crepus-zpui translation moves paint hitboxes and accessibility without moving siblings" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"stack","axis":"row","children":[{"kind":"button","label":"Moved","onClick":"apply","style":{"width":60,"height":30,"backgroundColor":"#123456","translateX":20,"translateY":40}},{"kind":"button","label":"Neighbor","style":{"width":60,"height":30}}]}]}
+    );
+    defer f.deinit();
+    const moved = try f.findNode(.button, "Moved");
+    const neighbor = try f.findNode(.button, "Neighbor");
+    try testing.expectEqual(@as(f32, 20), moved.bounds.origin.x);
+    try testing.expectEqual(@as(f32, 40), moved.bounds.origin.y);
+    try testing.expectEqual(@as(f32, 60), neighbor.bounds.origin.x);
+    try testing.expectEqual(@as(f32, 0), neighbor.bounds.origin.y);
+    try f.click(.button, "Moved");
+    try testing.expectEqual(@as(usize, 1), f.view().applied);
+    var found = false;
+    for (f.window.rendered_frame.scene.quads.items) |quad| if (quad.background.solid.eql(zpui.rgb(0x123456).toHsla())) {
+        found = true;
+        try testing.expectEqual(@as(f32, 20), quad.bounds.origin.x);
+        try testing.expectEqual(@as(f32, 40), quad.bounds.origin.y);
+    };
+    try testing.expect(found);
+}
+
+test "crepus-zpui all image positions crop actual atlas sprites at the selected edge" {
+    const cases = .{
+        .{ "left-top", @as(i32, 0), @as(i32, 0) },
+        .{ "left-bottom", @as(i32, 0), @as(i32, 2) },
+        .{ "right-top", @as(i32, 4), @as(i32, 0) },
+        .{ "right-bottom", @as(i32, 4), @as(i32, 2) },
+        .{ "left", @as(i32, 0), @as(i32, 1) },
+        .{ "right", @as(i32, 4), @as(i32, 1) },
+        .{ "top", @as(i32, 2), @as(i32, 0) },
+        .{ "bottom", @as(i32, 2), @as(i32, 2) },
+        .{ "center", @as(i32, 2), @as(i32, 1) },
+    };
+    var base_x: i32 = 0;
+    var base_y: i32 = 0;
+    inline for (.{ "32", "8" }) |height| {
+        inline for (cases, 0..) |case, index| {
+            var f = try Fixture.init("{\"version\":7,\"root\":[{\"kind\":\"image\",\"src\":\"preview\",\"alt\":\"Crop\",\"style\":{\"width\":32,\"height\":" ++ height ++ ",\"objectFit\":\"cover\",\"objectPosition\":\"" ++ case[0] ++ "\"}}]}");
+            defer f.deinit();
+            try testing.expect(f.window.rendered_frame.scene.polychrome_sprites.items.len > 0);
+            const sprite = f.window.rendered_frame.scene.polychrome_sprites.items[0];
+            if (index == 0) {
+                base_x = sprite.tile.bounds.origin.x;
+                base_y = sprite.tile.bounds.origin.y;
+            }
+            if (comptime std.mem.eql(u8, height, "32")) {
+                try testing.expectEqual(base_x + case[1], sprite.tile.bounds.origin.x);
+                try testing.expectEqual(@as(i32, 4), sprite.tile.bounds.size.width);
+            } else {
+                try testing.expectEqual(base_y + case[2], sprite.tile.bounds.origin.y);
+                try testing.expectEqual(@as(i32, 2), sprite.tile.bounds.size.height);
+            }
+        }
+    }
+}
+
+test "crepus-zpui static position ignores insets while relative positioning keeps them" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"stack","axis":"column","children":[{"kind":"button","label":"Static","style":{"position":"static","left":50,"top":20,"width":60,"height":30}},{"kind":"button","label":"Relative","style":{"position":"relative","left":50,"top":20,"width":60,"height":30}}]}]}
+    );
+    defer f.deinit();
+    const first = try f.findNode(.button, "Static");
+    const second = try f.findNode(.button, "Relative");
+    try testing.expectEqual(@as(f32, 0), first.bounds.origin.x);
+    try testing.expectEqual(@as(f32, 0), first.bounds.origin.y);
+    try testing.expectEqual(@as(f32, 50), second.bounds.origin.x);
+    try testing.expectEqual(@as(f32, 50), second.bounds.origin.y);
+}
+
+test "crepus-zpui icon tabs paint decoded icons and keep mouse keyboard selection and panels" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"tabs","bind":"tab","onChange":"tab_changed","tabs":[{"value":"overview","label":"Overview","icon":"preview","children":[]},{"value":"details","label":"Details","icon":"preview","children":[]}]}]}
+    );
+    defer f.deinit();
+    try testing.expect(f.window.rendered_frame.scene.polychrome_sprites.items.len >= 2);
+    try f.click(.radio_button, "Details");
+    try testing.expect(f.view().details);
+    _ = try f.findNode(.tab_panel, "Details");
+    f.key("left");
+    try testing.expect(!f.view().details);
+    _ = try f.findNode(.tab_panel, "Overview");
+    f.key("end");
+    try testing.expect(f.view().details);
+}
+
+test "crepus-zpui Unicode text casing inherits and normal resets the inherited mode" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"stack","axis":"column","style":{"textTransform":"uppercase"},"children":[{"kind":"text","content":"Straße"},{"kind":"text","content":"Keep Case","style":{"textTransform":"normal"}},{"kind":"text","content":"ΟΣ","style":{"textTransform":"lowercase"}}]}]}
+    );
+    defer f.deinit();
+    _ = try f.findNode(.label, "STRASSE");
+    _ = try f.findNode(.label, "Keep Case");
+    _ = try f.findNode(.label, "ος");
+}
+
+test "crepus-zpui transformed choice labels preserve raw bound option values" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"tabs","bind":"tab","style":{"textTransform":"uppercase"},"tabs":[{"value":"overview","label":"Overview","children":[]},{"value":"details","label":"Details","children":[]}]}]}
+    );
+    defer f.deinit();
+    try f.click(.radio_button, "DETAILS");
+    try testing.expect(f.view().details);
+}

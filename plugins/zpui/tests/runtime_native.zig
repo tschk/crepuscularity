@@ -65,6 +65,7 @@ const View = struct {
         if (self.last_key) |old| a.free(old);
         self.last_key = a.dupe(u8, key) catch @panic("OOM");
     }
+    pub fn onCrepusLink(_: *View, _: bridge.Link, _: *const zpui.ClickEvent, _: *zpui.Window, _: *zpui.Context(View)) void {}
     // Contract witnesses only. These do not claim a native editor/browser implementation.
     pub fn crepusInput(self: *View, request: bridge.Input, _: *zpui.Window, _: *zpui.Context(View)) !zpui.AnyElement {
         self.input_flags = request.multiline and request.secure;
@@ -251,7 +252,7 @@ test "crepus-zpui long press fires after threshold and cancels on release or mov
     try testing.expectEqual(@as(usize, 1), f.model().holds);
 }
 
-test "crepus-zpui input and browser contracts fail explicitly when absent" {
+test "crepus-zpui built-in input and absent browser factory validation" {
     const Missing = struct {
         pub fn crepusValue(_: *@This(), _: []const u8) ?bridge.Value {
             return .{ .text = "" };
@@ -263,12 +264,12 @@ test "crepus-zpui input and browser contracts fail explicitly when absent" {
         \\{"version":7,"root":[{"kind":"input","bind":"name","placeholder":"Name"}]}
     );
     defer input_doc.deinit();
-    try testing.expectError(error.MissingInputFactory, bridge.validateHost(Missing, &missing, &input_doc));
+    try bridge.validateHost(Missing, &missing, &input_doc); // Built-in editor now supplies this contract.
     var web_doc = try bridge.Document.parse(testing.allocator,
         \\{"version":7,"root":[{"kind":"webView","src":"https://example.com"}]}
     );
     defer web_doc.deinit();
-    try testing.expectError(error.MissingWebViewFactory, bridge.validateHost(Missing, &missing, &web_doc));
+    if (@import("builtin").os.tag == .macos) try bridge.validateHost(Missing, &missing, &web_doc) else try testing.expectError(error.MissingWebViewFactory, bridge.validateHost(Missing, &missing, &web_doc));
 }
 
 test "crepus-zpui gradient paints native angle and both stops" {
@@ -353,4 +354,33 @@ test "crepus-zpui host factory request preserves input flags and native view pla
     try testing.expectEqual(@as(f32, 120), placement.bounds.size.width);
     try testing.expectEqual(@as(f32, 80), placement.bounds.size.height);
     // This proves request/placement plumbing only, never browser rendering or editing.
+}
+
+test "crepus-zpui long press cancels when pointer leaves and never fires in inactive window" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"button","label":"Hold","onLongPress":"hold","style":{"width":100,"height":60}}]}
+    );
+    defer f.deinit();
+    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    _ = f.platform.simulateInput(.{ .mouse_move = .{ .position = .{ .x = 150, .y = 10 }, .pressed_button = .left } });
+    f.app.advanceClock(500 * std.time.ns_per_ms);
+    f.settle();
+    try testing.expectEqual(@as(usize, 0), f.model().holds);
+    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    f.platform.simulateActive(false);
+    f.app.advanceClock(500 * std.time.ns_per_ms);
+    f.settle();
+    try testing.expectEqual(@as(usize, 0), f.model().holds);
+}
+
+test "crepus-zpui link accessible names follow active conditions and scoped collections" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"link","href":"https://example.com","children":[{"kind":"if","condition":"ready","thenChildren":[{"kind":"forEach","bind":"rows","itemName":"row","itemBody":[{"kind":"text","content":"","bind":"row.title"}]}],"elseChildren":[{"kind":"text","content":"Wait"}]}]}]}
+    );
+    defer f.deinit();
+    _ = try f.node(.link, "First Second");
+    f.model().ready = false;
+    f.settle();
+    _ = try f.node(.link, "Wait");
+    try testing.expectError(error.MissingNode, f.node(.link, "First Second"));
 }

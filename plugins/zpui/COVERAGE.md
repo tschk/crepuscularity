@@ -1,61 +1,47 @@
 # ZPUI completion goal
 
 Finish all **25 View IR v7 node kinds, 71 ViewStyle fields, and five event contracts**
-with working behavior and acceptance evidence. The target is complete integration,
-including retained input, scoped conditions/collections, timed text, files, and native
-browser hosting. Decoder acceptance and a host-factory witness do not establish a
-working text editor or browser.
+with working behavior and acceptance evidence. `coverage.json` inventories the
+requirements and prevents a complete status while gaps remain. The checker verifies
+inventory agreement; it does not establish implementation correctness.
 
-`coverage.json` records the complete inventory and current gaps. Run
-`python3 tools/check-coverage.py` from this package to compare the inventory against
-the authoritative Rust `ViewNode` and `ViewStyle` definitions. CI runs the check.
-It rejects a `complete` status while any item, acceptance gate, or remaining task
-is unfinished. It does not independently prove implementation correctness.
+## Tested 0.2.0 checkpoint
 
-## Current checkpoint
+All 25 node shapes decode. Twenty-four are implemented directly, including retained
+input, scoped conditions/collections, timed text, file operations and icon tabs.
+The macOS browser reference navigates actual WKWebView content and passes title,
+pixel and teardown acceptance. Windows/Linux browsers still need host factories
+and platform validation, so browser coverage remains partial.
 
-All 25 node shapes decode with owned storage. The bridge directly implements 23
-kinds. `input` and `webView` have explicit, fallible host factory contracts, with
-request/placement tests; a reference retained editor and real browser acceptance
-remain required. Missing factories or platform support return errors. Tab icons
-are preserved by the decoder and explicitly rejected by the renderer pending
-actual icon rendering.
+The style inventory records 62 implemented, three partial and six pending fields.
+Translations preserve flow while moving paint/hit/AX bounds. All object positions
+use real image UV crops. Text transforms cover Unicode upper/lower casing and
+inheritance/reset; capitalization and transformed editor display remain unfinished.
+Static/relative/absolute positioning and supported cursors have explicit contracts.
 
-Conditions select active branches. Collections require unique nonempty keys and
-carry scoped values into text, controls and callbacks. Rotation uses entity-owned
-timers. Long press recognizes a 500 ms hold, cancels on release or movement above
-8 points, and copies its async context. File picking uses the native platform
-dialog; drops use `ExternalPaths`. Both filter extensions. MIME filters require
-an explicit host resolver. Dialog callbacks copy context and survive document,
-window and App retirement without dereferencing dead host storage.
-
-The style inventory has 59 implemented entries, three partial entries
-(`position`, `cursor`, `objectPosition`) and nine pending entries. The nine are
-`letterSpacing`, `textTransform`, `zIndex`, `translateX`, `translateY`, `scaleX`,
-`scaleY`, `rotate`, and `userSelect`. Source classes are retained as metadata;
-resolved numeric/enum hints determine the native styles. All eight two-stop
-linear gradient directions map to ZPUI's native gradient fill.
+Validation: 21 decoder tests on Zig 0.16/0.17; 42 native headless tests with the
+pinned backend; five Rust Unicode tests and strict Clippy; actual macOS input and
+WKWebView acceptance with allocator teardown. Current-candidate independent review
+and CI remain required before release. A host-factory witness alone is insufficient
+for editor/browser implementation claims.
 
 ## Work required to finish
 
-1. Provide a retained editor reference with text/value synchronization, selection,
-   caret movement, clipboard, IME/marked text, Unicode grapheme editing, secure
-   display, multiline behavior, and teardown tests. Implement `crepusInput` with
-   that editor; do not count the contract witness in `runtime_native.zig` as one.
-2. Provide a browser reference that hosts an actual web engine. Verify source
-   navigation, layout/clipping, focus, unmount, and window teardown. The headless
-   native-view witness establishes placement plumbing only.
-3. Complete tab icons, the nine pending styles, static/fixed positioning, wait
-   cursor, and all image positions. The pinned backend lacks a general element
-   transform, letter-spacing and selectable-text surface. Add tested bridge
-   elements or a narrow, separately reviewed backend extension where necessary;
-   an axis-aligned bounding box is insufficient evidence for rotated content.
-4. Run real OS-widget/GPU acceptance and the supported platform matrix. Keep
-   headless layout/event tests separate from visual/browser acceptance. Review
-   an immutable final candidate and require its CI before declaring completion.
+1. Finish `letterSpacing`, `zIndex`, `scaleX`, `scaleY`, `rotate`, `userSelect`,
+   capitalization, transformed input display, fixed positioning and wait cursor.
+2. Provide Windows/Linux browser references and native OS/widget/GPU acceptance
+   for the supported platform matrix.
+3. Independently review the immutable final candidate and pass its CI.
 
-The optional adapter stays isolated under `plugins/zpui`, with documentation and
-its own CI workflow. Root Cargo dependencies, shared DSL/macros, CE and Kit types
-are outside this lane. The pinned ZPUI source remains MIT; this independently
-written adapter remains ISC. Broader dependency security remediation is a separate
-repository lane and does not justify bypassing a merge gate.
+The pinned ZPUI backend exposes no whole-element affine transform, text letter
+spacing, selectable-text policy or viewport-fixed positioning surface. Scale and
+rotation require a narrow backend extension that covers scene/shader primitives,
+clipping, inverse pointer coordinates and native-view placement. Axis-aligned
+bounding-box approximations would not satisfy this goal. Z-index also needs a
+stacking-order contract beyond the backend's global deferred-draw priority.
+
+The adapter stays under `plugins/zpui` with its own locked Unicode helper and CI.
+Root Cargo/shared DSL/CE/Kit files remain outside this lane. The CLI 0.17.0 version
+patch is prepared separately; publication requires coordinated root version/lock
+changes and remediation of the existing ammonia/quinn-proto audit failures.
+No dependency audit or merge gate is weakened. ZPUI remains MIT; the adapter is ISC.

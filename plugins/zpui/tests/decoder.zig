@@ -79,7 +79,7 @@ test "invalid style values fail instead of mapping to an approximation" {
     const cases = .{
         .{ error.UnsupportedEnumValue, "\"position\":\"fixed\"" },
         .{ error.UnsupportedEnumValue, "\"cursor\":\"wait\"" },
-        .{ error.UnsupportedObjectPosition, "\"objectPosition\":\"top\"" },
+        .{ error.UnsupportedEnumValue, "\"objectPosition\":\"midway\"" },
         .{ error.InvalidStyleNumber, "\"aspectRatio\":0" },
         .{ error.InvalidStyleNumber, "\"flexGrow\":-1" },
         .{ error.InvalidFontWeight, "\"fontWeight\":400.5" },
@@ -148,4 +148,30 @@ test "source classes are retained in owned document storage" {
     testing.allocator.free(source);
     defer doc.deinit();
     try testing.expectEqualStrings("theme-蓝", doc.root[0].style.classes.?[1]);
+}
+
+test "nonempty malformed drop filters never become unrestricted" {
+    inline for (.{ ",", " ", " , , " }) |accept| {
+        try testing.expectError(error.InvalidAccept, ir.Document.parse(testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"dropzone\",\"label\":\"Files\",\"accept\":\"" ++ accept ++ "\",\"children\":[]}]}"));
+    }
+    var doc = try ir.Document.parse(testing.allocator,
+        \\{"version":7,"root":[{"kind":"dropzone","label":"Files","accept":"","children":[]},{"kind":"dropzone","label":"Files","children":[]}]}
+    );
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.root[0].accept.len);
+    try testing.expectEqual(@as(usize, 0), doc.root[1].accept.len);
+}
+
+test "all image positions and supported text transforms decode typed values" {
+    inline for (.{ "center", "top", "bottom", "left", "right", "left-top", "left-bottom", "right-top", "right-bottom" }) |position| {
+        var doc = try ir.Document.parse(testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"image\",\"src\":\"preview\",\"style\":{\"objectPosition\":\"" ++ position ++ "\"}}]}");
+        doc.deinit();
+    }
+    inline for (.{ "normal", "uppercase", "lowercase" }) |mode| {
+        var doc = try ir.Document.parse(testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"text\",\"content\":\"X\",\"style\":{\"textTransform\":\"" ++ mode ++ "\"}}]}");
+        doc.deinit();
+    }
+    try testing.expectError(error.UnsupportedEnumValue, ir.Document.parse(testing.allocator,
+        \\{"version":7,"root":[{"kind":"text","content":"X","style":{"textTransform":"capitalize"}}]}
+    ));
 }

@@ -44,6 +44,11 @@ jobs:
           python3 tools/check-coverage.py
           zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
           zig build test -j1 --summary all
+      - name: Unicode helper tests
+        run: |
+          cargo fmt --check --manifest-path plugins/zpui/native-text/Cargo.toml
+          cargo test --locked -j1 --manifest-path plugins/zpui/native-text/Cargo.toml
+          cargo clippy --locked -j1 --all-targets --manifest-path plugins/zpui/native-text/Cargo.toml -- -D warnings
       - name: Verify current compiler fixtures
         run: |
           for example in counter form; do

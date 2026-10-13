@@ -113,7 +113,10 @@ fn validateNode(comptime View: type, self: *View, node: *const ir.Node, scope: ?
         .slider => _ = try numericAt(View, self, node, scope),
         .picker, .tabs => {
             _ = try selectedAt(View, self, node, scope);
-            for (node.options) |option| if (option.icon != null) return error.UnsupportedTabIcon;
+            for (node.options) |option| if (option.icon) |icon| {
+                if (icon.len == 0) return error.EmptyImageSource;
+                if (std.mem.indexOf(u8, icon, "://") != null and !@hasDecl(View, "crepusImage")) return error.MissingImageResolver;
+            };
         },
         .@"if" => {
             const children = if (try condition(View, self, node.condition, scope)) node.children else node.else_children;
@@ -129,10 +132,11 @@ fn validateNode(comptime View: type, self: *View, node: *const ir.Node, scope: ?
             return;
         },
         .input => {
-            _ = try textAt(View, self, node, scope);
-            if (!@hasDecl(View, "crepusInput")) return error.MissingInputFactory;
+            const value = try textAt(View, self, node, scope);
+            if (!std.unicode.utf8ValidateSlice(value)) return error.InvalidUtf8;
+            if (value.len > 1024 * 1024) return error.InputTooLarge;
         },
-        .webView => if (!@hasDecl(View, "crepusWebView")) return error.MissingWebViewFactory,
+        .webView => if (@import("builtin").os.tag != .macos and !@hasDecl(View, "crepusWebView")) return error.MissingWebViewFactory,
         .dropzone => if (node.on_drop != null and !@hasDecl(View, "onCrepusDrop")) return error.MissingDropHandler,
         .filePicker => if (node.on_pick != null and !@hasDecl(View, "onCrepusPick")) return error.MissingPickHandler,
         .link => if (!@hasDecl(View, "onCrepusLink")) return error.MissingLinkHandler,

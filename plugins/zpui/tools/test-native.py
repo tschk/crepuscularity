@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--zig", default="zig")
     parser.add_argument("--zpui-source", required=True, type=Path)
+    parser.add_argument("--desktop", action="store_true", help="Open a real macOS acceptance window and verify browser pixels")
     args = parser.parse_args()
     plugin = Path(__file__).resolve().parents[1]
     upstream = args.zpui_source.resolve()
@@ -37,6 +38,19 @@ def main():
             '.dependencies = .{ .bridge = .{ .path = ' + json.dumps(os.path.relpath(plugin, root)) +
             ' }, .zpui = .{ .path = ' + json.dumps(os.path.relpath(upstream, root)) + ' } } }\n'
         )
+        desktop = '''
+    const swift = b.addSystemCommand(&.{"xcrun", "swiftc", "-emit-library", "-parse-as-library"});
+    swift.addFileArg(bridge_dep.path("tools/mac-snapshot.swift"));
+    swift.addArg("-o");
+    const snapshot = swift.addOutputFileArg("libmac_snapshot.dylib");
+    const desktop_root = b.createModule(.{
+        .root_source_file = bridge_dep.path("tests/mac_desktop.zig"), .target = target, .optimize = optimize,
+        .imports = &.{ .{ .name = "zpui", .module = zpui }, .{ .name = "crepuscularity_zpui", .module = bridge } },
+    });
+    desktop_root.addObjectFile(snapshot);
+    const desktop = b.addExecutable(.{ .name = "crepus-zpui-desktop-acceptance", .root_module = desktop_root });
+    b.step("desktop", "Verify real AppKit/Metal input and WKWebView pixels").dependOn(&b.addRunArtifact(desktop).step);
+''' if args.desktop else ""
         (root / "build.zig").write_text('''const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -65,8 +79,15 @@ pub fn build(b: *std.Build) void {
     b.step("test", "Run adapter acceptance on the real headless ZPUI platform")
         .dependOn(&b.addRunArtifact(tests).step);
 }
-''')
-        subprocess.run([args.zig, "build", "test", "-j1", "--summary", "all"], cwd=root, check=True)
+'''.replace("\n}\n", desktop + "\n}\n"))
+        completed = subprocess.run(
+            [args.zig, "build", "desktop" if args.desktop else "test", "-j1", "--summary", "all"],
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        print(completed.stdout.decode("utf-8", errors="replace"), end="")
+        completed.check_returncode()
+        if b"error(SafeAllocator)" in completed.stdout:
+            raise SystemExit("Native acceptance failed allocator teardown")
 
 
 if __name__ == "__main__":

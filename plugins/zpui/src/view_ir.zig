@@ -203,6 +203,7 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
                 const trimmed = std.mem.trim(u8, part, " \t\r\n");
                 if (trimmed.len > 0) try filters.append(a, trimmed);
             }
+            if (filter.len > 0 and filters.items.len == 0) return error.InvalidAccept;
             node.accept = filters.items;
         }
     }
@@ -236,7 +237,7 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
         node.options = try decodeOptions(a, value.object.get(key) orelse return error.MissingOptions, kind == .tabs, depth);
     }
     if (json.optional(value, "style")) |v| node.style = try styles.decode(a, v);
-    if (node.style.objectFit != null and kind != .image) return error.ObjectFitRequiresImage;
+    if ((node.style.objectFit != null or node.style.objectPosition != null) and kind != .image) return error.ObjectFitRequiresImage;
     return node;
 }
 

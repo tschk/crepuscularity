@@ -4,6 +4,9 @@ const ir = @import("view_ir");
 const host = @import("host.zig");
 
 pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, identity: []const u8, scope: ?*const host.Scope) !zpui.AnyElement {
+    if (node.kind == .tabs) {
+        for (node.options) |option| if (option.icon != null) return @import("icon_tabs.zig").render(View, self, window, cx, node, identity, scope);
+    }
     const kind: zpui.elements.native_control.Kind = switch (node.kind) {
         .toggle => .switch_,
         .checkbox => .checkbox,

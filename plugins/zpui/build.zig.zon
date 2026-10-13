@@ -1,7 +1,7 @@
 .{
     .name = .crepuscularity_zpui,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .fingerprint = 0xe74027d9fbb02269,
     .minimum_zig_version = "0.16.0",
-    .paths = .{ "build.zig", "build.zig.zon", "src", "examples", "tests", "tools", "README.md", "coverage.json", "COVERAGE.md" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "examples", "tests", "tools", "native-text", "README.md", "LICENSE", "coverage.json", "COVERAGE.md" },
 }
