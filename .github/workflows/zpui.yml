@@ -41,6 +41,7 @@ jobs:
       - name: Decode and format checks
         working-directory: plugins/zpui
         run: |
+          python3 tools/check-coverage.py
           zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
           zig build test -j1 --summary all
       - name: Verify current compiler fixtures

@@ -11,9 +11,9 @@ const oneOf = json.oneOf;
 
 pub const ir_version: u32 = 7;
 pub const zpui_revision = "cca22983e7e8124bb8e650616e3803f217e52b95";
-pub const Kind = enum { stack, text, button, scroll, toggle, checkbox, slider, picker, tabs, progress, meter, badge, divider, spacer, image, link, list, listItem };
+pub const Kind = enum { stack, text, button, scroll, toggle, checkbox, slider, picker, tabs, progress, meter, badge, divider, spacer, image, link, list, listItem, @"if", forEach, input, slotRotate, webView, dropzone, filePicker };
 pub const Tone = enum { neutral, info, success, warning, @"error" };
-pub const Option = struct { value: []const u8, label: []const u8, children: []const Node = &.{} };
+pub const Option = struct { value: []const u8, label: []const u8, children: []const Node = &.{}, icon: ?[]const u8 = null };
 
 pub const Node = struct {
     kind: Kind,
@@ -24,6 +24,18 @@ pub const Node = struct {
     justify_content: ?styles.Justify = null,
     on_click: ?[]const u8 = null,
     on_change: ?[]const u8 = null,
+    on_long_press: ?[]const u8 = null,
+    on_drop: ?[]const u8 = null,
+    on_pick: ?[]const u8 = null,
+    condition: []const u8 = "",
+    item_name: []const u8 = "",
+    else_children: []const Node = &.{},
+    phrases: []const []const u8 = &.{},
+    interval_ms: u64 = 0,
+    accept: []const []const u8 = &.{},
+    multiline: bool = false,
+    secure: bool = false,
+    multiple: bool = false,
     bind: ?[]const u8 = null,
     checked: bool = false,
     value: f32 = 0,
@@ -81,11 +93,12 @@ fn decodeNodes(a: std.mem.Allocator, value: std.json.Value, depth: usize) anyerr
 
 fn allowedFields(kind: Kind) []const []const u8 {
     return switch (kind) {
-        .stack => &.{ "axis", "children", "spacing", "alignItems", "justifyContent" },
+        .stack => &.{ "axis", "children", "spacing", "alignItems", "justifyContent", "onLongPress" },
         .scroll => &.{ "axis", "children" },
         .text => &.{ "content", "bind" },
-        .button => &.{ "label", "onClick" },
-        .toggle, .checkbox => &.{ "label", "bind", "checked", "onChange" },
+        .button => &.{ "label", "onClick", "onLongPress" },
+        .toggle => &.{ "label", "bind", "checked", "onChange", "onLongPress" },
+        .checkbox => &.{ "label", "bind", "checked", "onChange" },
         .slider => &.{ "label", "bind", "value", "min", "max", "step", "onChange" },
         .picker => &.{ "bind", "options", "onChange" },
         .tabs => &.{ "bind", "tabs", "onChange" },
@@ -94,10 +107,17 @@ fn allowedFields(kind: Kind) []const []const u8 {
         .badge => &.{ "label", "tone" },
         .divider => &.{"axis"},
         .spacer => &.{"size"},
-        .image => &.{ "src", "alt", "placeholder" },
+        .image => &.{ "src", "alt", "placeholder", "onLongPress" },
         .link => &.{ "href", "target", "rel", "children" },
         .list => &.{ "ordered", "children" },
-        .listItem => &.{"children"},
+        .listItem => &.{ "children", "onLongPress" },
+        .@"if" => &.{ "condition", "thenChildren", "elseChildren" },
+        .forEach => &.{ "bind", "itemName", "itemBody" },
+        .input => &.{ "placeholder", "bind", "multiline", "secure", "onChange" },
+        .slotRotate => &.{ "phrases", "intervalMs" },
+        .webView => &.{"src"},
+        .dropzone => &.{ "label", "accept", "onDrop", "children" },
+        .filePicker => &.{ "label", "accept", "multiple", "onPick" },
     };
 }
 
@@ -115,9 +135,9 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     }
     switch (kind) {
         .text => node.text = try json.requiredString(a, value, "content"),
-        .button, .toggle, .checkbox, .badge => node.text = try json.requiredString(a, value, "label"),
+        .button, .toggle, .checkbox, .badge, .dropzone, .filePicker => node.text = try json.requiredString(a, value, "label"),
         .slider, .progress, .meter => node.text = try json.ownedString(a, value, "label") orelse "",
-        .image => {
+        .image, .webView => {
             node.src = try json.requiredString(a, value, "src");
             if (node.src.len == 0) return error.EmptyImageSource;
             node.text = try json.ownedString(a, value, "alt") orelse "";
@@ -134,7 +154,7 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     if (oneOf(tag, &.{ "stack", "scroll", "divider" })) {
         node.axis = try json.enumValue(Axis, value.object.get("axis") orelse return error.MissingAxis);
     }
-    if (oneOf(tag, &.{ "stack", "scroll", "link", "list", "listItem" })) {
+    if (oneOf(tag, &.{ "stack", "scroll", "link", "list", "listItem", "dropzone" })) {
         node.children = try decodeNodes(a, value.object.get("children") orelse return error.MissingChildren, depth + 1);
     }
     if (kind == .stack) {
@@ -147,8 +167,49 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     }
     node.on_click = try handler(a, value, "onClick");
     node.on_change = try handler(a, value, "onChange");
+    node.on_long_press = try handler(a, value, "onLongPress");
+    node.on_drop = try handler(a, value, "onDrop");
+    node.on_pick = try handler(a, value, "onPick");
     node.bind = try handler(a, value, "bind");
-    if ((kind == .picker or kind == .tabs) and node.bind == null) return error.MissingBinding;
+    if ((kind == .picker or kind == .tabs or kind == .input or kind == .forEach) and node.bind == null) return error.MissingBinding;
+    if (kind == .input) {
+        node.placeholder = try json.requiredString(a, value, "placeholder");
+        if (json.optional(value, "multiline")) |v| node.multiline = try json.boolean(v);
+        if (json.optional(value, "secure")) |v| node.secure = try json.boolean(v);
+    }
+    if (kind == .@"if") {
+        node.condition = try json.requiredString(a, value, "condition");
+        if (node.condition.len == 0) return error.EmptyCondition;
+        node.children = try decodeNodes(a, value.object.get("thenChildren") orelse return error.MissingChildren, depth + 1);
+        if (json.optional(value, "elseChildren")) |v| node.else_children = try decodeNodes(a, v, depth + 1);
+    }
+    if (kind == .forEach) {
+        node.item_name = try json.requiredString(a, value, "itemName");
+        if (node.item_name.len == 0) return error.EmptyItemName;
+        node.children = try decodeNodes(a, value.object.get("itemBody") orelse return error.MissingChildren, depth + 1);
+    }
+    if (kind == .slotRotate) {
+        node.phrases = try strings(a, value.object.get("phrases") orelse return error.MissingPhrases);
+        if (node.phrases.len == 0) return error.EmptyPhrases;
+        const interval = value.object.get("intervalMs") orelse return error.MissingInterval;
+        if (interval != .integer or interval.integer <= 0 or interval.integer > std.math.maxInt(u64) / std.time.ns_per_ms) return error.InvalidInterval;
+        node.interval_ms = @intCast(interval.integer);
+    }
+    if (kind == .dropzone) {
+        if (try json.ownedString(a, value, "accept")) |filter| {
+            var filters: std.ArrayList([]const u8) = .empty;
+            var parts = std.mem.splitScalar(u8, filter, ',');
+            while (parts.next()) |part| {
+                const trimmed = std.mem.trim(u8, part, " \t\r\n");
+                if (trimmed.len > 0) try filters.append(a, trimmed);
+            }
+            node.accept = filters.items;
+        }
+    }
+    if (kind == .filePicker) {
+        if (json.optional(value, "accept")) |v| node.accept = try strings(a, v);
+        if (json.optional(value, "multiple")) |v| node.multiple = try json.boolean(v);
+    }
     if (kind == .toggle or kind == .checkbox) node.checked = try json.boolean(value.object.get("checked") orelse return error.MissingChecked);
     if (kind == .slider or kind == .progress or kind == .meter) {
         node.value = try number(value.object.get("value") orelse return error.MissingValue);
@@ -179,6 +240,13 @@ fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
     return node;
 }
 
+fn strings(a: std.mem.Allocator, value: std.json.Value) ![]const []const u8 {
+    if (value != .array) return error.InvalidStringArray;
+    const values = try a.alloc([]const u8, value.array.items.len);
+    for (value.array.items, values) |item, *owned| owned.* = try a.dupe(u8, try string(item));
+    return values;
+}
+
 fn handler(a: std.mem.Allocator, object: std.json.Value, key: []const u8) !?[]const u8 {
     const name = try json.ownedString(a, object, key) orelse return null;
     if (name.len == 0) return error.EmptyHandler;
@@ -193,11 +261,12 @@ fn decodeOptions(a: std.mem.Allocator, value: std.json.Value, tabs: bool, depth:
         var fields = item.object.iterator();
         while (fields.next()) |field| {
             if (oneOf(field.key_ptr.*, &.{ "value", "label" })) continue;
-            if (tabs and std.mem.eql(u8, field.key_ptr.*, "children")) continue;
+            if (tabs and oneOf(field.key_ptr.*, &.{ "children", "icon" })) continue;
             if (field.value_ptr.* != .null) return error.UnsupportedOptionField;
         }
         option.* = .{ .value = try json.requiredString(a, item, "value"), .label = try json.requiredString(a, item, "label") };
         for (options[0..index]) |previous| if (std.mem.eql(u8, previous.value, option.value)) return error.DuplicateOption;
+        if (tabs) option.icon = try json.ownedString(a, item, "icon");
         if (tabs) option.children = try decodeNodes(a, item.object.get("children") orelse return error.MissingChildren, depth + 1);
     }
     return options;
@@ -236,8 +305,8 @@ test "reject version mismatch and non-array roots" {
 }
 
 test "reject unsupported controls and behavior instead of dropping them" {
-    try std.testing.expectError(error.UnsupportedNode, Document.parse(std.testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"input\"}]}"));
-    try std.testing.expectError(error.UnsupportedNodeField, Document.parse(std.testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"button\",\"label\":\"Save\",\"onLongPress\":\"save\"}]}"));
+    try std.testing.expectError(error.MissingBinding, Document.parse(std.testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"input\"}]}"));
+    try std.testing.expectError(error.UnsupportedNodeField, Document.parse(std.testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"button\",\"label\":\"Save\",\"onHover\":\"save\"}]}"));
     try std.testing.expectError(error.UnsupportedStyle, Document.parse(std.testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"text\",\"content\":\"Hi\",\"style\":{\"rotate\":45}}]}"));
 }
 

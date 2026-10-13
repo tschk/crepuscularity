@@ -6,7 +6,8 @@ pub const Align = enum { start, end, center, stretch, baseline };
 pub const Justify = enum { start, end, center, between, around, evenly };
 pub const TextAlign = enum { left, center, right };
 pub const FontFamily = enum { sans, serif, mono };
-pub const Position = enum { relative, absolute };
+pub const Position = enum { static, relative, absolute };
+pub const Gradient = enum { @"to-t", @"to-tr", @"to-r", @"to-br", @"to-b", @"to-bl", @"to-l", @"to-tl" };
 pub const WhiteSpace = enum { normal, nowrap };
 pub const TextOverflow = enum { clip, ellipsis };
 pub const Cursor = enum { auto, default, pointer, text, move };
@@ -14,6 +15,7 @@ pub const ObjectFit = enum { contain, cover, fill, none, @"scale-down" };
 
 pub const Style = struct {
     id: ?[]const u8 = null,
+    classes: ?[]const []const u8 = null,
     padding: ?f32 = null,
     paddingHorizontal: ?f32 = null,
     paddingVertical: ?f32 = null,
@@ -70,6 +72,9 @@ pub const Style = struct {
     lineClamp: ?u32 = null,
     cursor: ?Cursor = null,
     objectFit: ?ObjectFit = null,
+    backgroundGradientDirection: ?Gradient = null,
+    backgroundGradientFrom: ?u32 = null,
+    backgroundGradientTo: ?u32 = null,
 };
 
 pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
@@ -82,7 +87,9 @@ pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
         if (val == .null) continue;
         if (std.mem.eql(u8, key, "classes")) {
             if (val != .array) return error.InvalidClasses;
-            for (val.array.items) |item| _ = try json.string(item);
+            const owned = try a.alloc([]const u8, val.array.items.len);
+            for (val.array.items, owned) |item, *out| out.* = try a.dupe(u8, try json.string(item));
+            result.classes = owned;
             continue;
         }
         // ZPUI centers image fits; other positions have no exact mapping.
@@ -96,6 +103,8 @@ pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
                 const T = @typeInfo(@TypeOf(@field(result, name))).optional.child;
                 @field(result, name) = if (comptime T == []const u8)
                     try a.dupe(u8, try json.string(val))
+                else if (comptime T == []const []const u8)
+                    unreachable // classes are handled above
                 else if (comptime T == bool)
                     try json.boolean(val)
                 else if (comptime T == f32)
@@ -111,6 +120,8 @@ pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
         }
         if (!found) return error.UnsupportedStyle;
     }
+    const gradient = result.backgroundGradientDirection != null or result.backgroundGradientFrom != null or result.backgroundGradientTo != null;
+    if (gradient and (result.backgroundGradientDirection == null or result.backgroundGradientFrom == null or result.backgroundGradientTo == null)) return error.IncompleteGradient;
     return result;
 }
 

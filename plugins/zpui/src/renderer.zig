@@ -10,6 +10,15 @@ pub const Link = host.Link;
 pub const validateHost = host.validate;
 const styles = @import("style.zig");
 const controls = @import("controls.zig");
+const rotation = @import("rotation.zig");
+const files = @import("files.zig");
+const long_press = @import("long_press.zig");
+pub const Scope = host.Scope;
+pub const Item = host.Item;
+pub const Field = host.Field;
+pub const Files = host.Files;
+pub const Input = host.Input;
+pub const WebView = host.WebView;
 
 /// Validate host methods/values and construct elements. Namespace distinguishes instances.
 /// Document and host-returned strings/images must outlive the rendered frame.
@@ -18,28 +27,31 @@ pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
     var root = zpui.div().id(namespace);
     for (document.root, 0..) |*node, index| {
         const path = zpui.fmt("{s}/{d}", .{ namespace, index });
-        root = root.child(try renderNode(View, self, window, cx, node, path));
+        root = root.child(try renderNode(View, self, window, cx, node, path, null));
     }
     return zpui.intoAnyElement(root);
 }
 
-fn renderNode(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, path: []const u8) anyerror!zpui.AnyElement {
+fn renderNode(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, path: []const u8, scope: ?*const host.Scope) anyerror!zpui.AnyElement {
     const identity = if (node.style.id) |id| zpui.fmt("{s}/{s}", .{ path, id }) else path;
     var element = zpui.div().id(identity);
     switch (node.kind) {
         .text => {
-            const value = try host.text(View, self, node);
+            const value = try host.textAt(View, self, node, scope);
             element = element.role(.label).ariaLabel(value).child(value);
         },
         .button => {
             element = element.role(.button).ariaLabel(node.text).child(node.text);
             if (node.on_click) |handler| {
+                const Payload = struct { handler: []const u8, scope: ?*const host.Scope };
+                const payload = try zpui.frameAllocator().create(Payload);
+                payload.* = .{ .handler = handler, .scope = scope };
                 const Callback = struct {
-                    fn click(view: *View, name: []const u8, event: *const zpui.ClickEvent, w: *zpui.Window, context: *zpui.Context(View)) void {
-                        if (comptime @hasDecl(View, "onCrepusClick")) view.onCrepusClick(name, event, w, context);
+                    fn click(view: *View, data: *const Payload, event: *const zpui.ClickEvent, w: *zpui.Window, context: *zpui.Context(View)) void {
+                        if (comptime @hasDecl(View, "onCrepusScopedClick")) view.onCrepusScopedClick(data.handler, data.scope, event, w, context) else if (comptime @hasDecl(View, "onCrepusClick")) view.onCrepusClick(data.handler, event, w, context);
                     }
                 };
-                element = element.cursorPointer().focusable().onClick(cx.listenerWith(handler, Callback.click));
+                element = element.cursorPointer().focusable().onClick(cx.listenerWith(payload, Callback.click));
             }
         },
         .stack, .scroll => {
@@ -52,15 +64,15 @@ fn renderNode(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
                 element = element.role(.scroll_view);
                 element = if (node.axis == .row) element.overflowXScroll() else element.overflowYScroll();
             }
-            element = try appendChildren(View, self, window, cx, element, node.children, identity);
+            element = try appendChildren(View, self, window, cx, element, node.children, identity, scope);
         },
         .toggle, .checkbox, .slider, .picker, .tabs => {
-            element = element.flex().flexCol().itemsStart().child(try controls.render(View, self, window, cx, node, zpui.fmt("{s}/control", .{identity})));
+            element = element.flex().flexCol().itemsStart().child(try controls.render(View, self, window, cx, node, zpui.fmt("{s}/control", .{identity}), scope));
             if (node.kind == .toggle and node.text.len > 0) element = element.child(node.text);
             if (node.kind == .tabs) {
-                const selected = try host.selected(View, self, node);
+                const selected = try host.selectedAt(View, self, node, scope);
                 const panel = zpui.div().id(zpui.fmt("{s}/panel", .{identity})).role(.tab_panel).ariaLabel(node.options[selected].label);
-                element = element.child(try appendChildren(View, self, window, cx, panel, node.options[selected].children, zpui.fmt("{s}/tab/{d}", .{ identity, selected })));
+                element = element.child(try appendChildren(View, self, window, cx, panel, node.options[selected].children, zpui.fmt("{s}/tab/{d}", .{ identity, selected }), scope));
             }
         },
         .progress, .meter => {
@@ -113,41 +125,81 @@ fn renderNode(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
                     if (comptime @hasDecl(View, "onCrepusLink")) view.onCrepusLink(Link{ .href = source.href, .target = source.target, .rel = source.rel }, event, w, context);
                 }
             };
-            element = element.role(.link).ariaLabel(try accessibleName(View, self, node)).cursorPointer().focusable().onClick(cx.listenerWith(node, Callback.open));
-            element = try appendChildren(View, self, window, cx, element, node.children, identity);
+            element = element.role(.link).ariaLabel(try accessibleName(View, self, node, scope)).cursorPointer().focusable().onClick(cx.listenerWith(node, Callback.open));
+            element = try appendChildren(View, self, window, cx, element, node.children, identity, scope);
         },
         .list => {
             element = element.role(.list).flex().flexCol();
             for (node.children, 0..) |*child, index| {
                 const child_path = zpui.fmt("{s}/{d}", .{ identity, index });
                 const marker = if (node.ordered) zpui.fmt("{d}.", .{index + 1}) else "•";
-                element = element.child(zpui.div().flex().flexRow().gap(zpui.px(6)).child(marker).child(try renderNode(View, self, window, cx, child, child_path)));
+                element = element.child(zpui.div().flex().flexRow().gap(zpui.px(6)).child(marker).child(try renderNode(View, self, window, cx, child, child_path, scope)));
             }
         },
-        .listItem => element = try appendChildren(View, self, window, cx, element.role(.list_item), node.children, identity),
+        .@"if" => {
+            const active = try host.condition(View, self, node.condition, scope);
+            const children = if (active) node.children else node.else_children;
+            const branch = zpui.fmt("{s}/{s}", .{ identity, if (active) "then" else "else" });
+            element = try appendChildren(View, self, window, cx, element, children, branch, scope);
+        },
+        .forEach => {
+            const items = try host.collection(View, self, node.bind.?, scope);
+            for (items, 0..) |item, index| {
+                const child_scope = try zpui.frameAllocator().create(host.Scope);
+                child_scope.* = .{ .parent = scope, .name = node.item_name, .key = item.key, .index = index, .value = item.value };
+                const item_path = zpui.fmt("{s}/key/{d}:{s}", .{ identity, item.key.len, item.key });
+                const row = try appendChildren(View, self, window, cx, zpui.div().id(item_path), node.children, item_path, child_scope);
+                element = element.child(row);
+            }
+        },
+        .slotRotate => {
+            const text = rotation.text(window, node, identity);
+            element = element.role(.label).ariaLabel(text).child(text);
+        },
+        .input => {
+            if (comptime @hasDecl(View, "crepusInput")) {
+                element = element.child(try self.crepusInput(host.Input{ .identity = identity, .bind = node.bind.?, .handler = node.on_change, .value = try host.textAt(View, self, node, scope), .placeholder = node.placeholder.?, .multiline = node.multiline, .secure = node.secure, .scope = scope }, window, cx));
+            } else return error.MissingInputFactory;
+        },
+        .webView => {
+            if (!window.platform_window.supportsNativeViews()) return error.MissingNativeViewBackend;
+            if (comptime @hasDecl(View, "crepusWebView")) {
+                const native = try self.crepusWebView(host.WebView{ .identity = identity, .src = node.src, .scope = scope }, window, cx);
+                var view = zpui.nativeViewWith(native, .{ .corner_radius = node.style.cornerRadius orelse 0 });
+                view = view.wFull().hFull();
+                element = element.child(view);
+            } else return error.MissingWebViewFactory;
+        },
+        .dropzone => {
+            element = try files.drop(View, self, cx, element.role(.group).ariaLabel(node.text), node, scope);
+            element = try appendChildren(View, self, window, cx, element, node.children, identity, scope);
+        },
+        .filePicker => element = try files.picker(View, self, window, cx, element, node, scope),
+        .listItem => element = try appendChildren(View, self, window, cx, element.role(.list_item), node.children, identity, scope),
     }
+    if (node.on_long_press) |handler| element = try long_press.attach(View, window, cx, element, identity, handler, scope);
     return zpui.intoAnyElement(styles.apply(element, node.style));
 }
 
-fn appendChildren(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), initial: zpui.StatefulDiv, children: []const ir.Node, path: []const u8) !zpui.StatefulDiv {
+fn appendChildren(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), initial: zpui.StatefulDiv, children: []const ir.Node, path: []const u8, scope: ?*const host.Scope) !zpui.StatefulDiv {
     var element = initial;
     for (children, 0..) |*child, index| {
-        element = element.child(try renderNode(View, self, window, cx, child, zpui.fmt("{s}/{d}", .{ path, index })));
+        element = element.child(try renderNode(View, self, window, cx, child, zpui.fmt("{s}/{d}", .{ path, index }), scope));
     }
     return element;
 }
 
-fn accessibleName(comptime View: type, self: *View, node: *const ir.Node) ![]const u8 {
+fn accessibleName(comptime View: type, self: *View, node: *const ir.Node, scope: ?*const host.Scope) ![]const u8 {
     var name: std.ArrayList(u8) = .empty;
-    try appendName(View, self, node.children, &name);
+    try appendName(View, self, node.children, &name, scope);
     return if (name.items.len > 0) name.items else node.href;
 }
 
-fn appendName(comptime View: type, self: *View, children: []const ir.Node, name: *std.ArrayList(u8)) anyerror!void {
+fn appendName(comptime View: type, self: *View, children: []const ir.Node, name: *std.ArrayList(u8), scope: ?*const host.Scope) anyerror!void {
     for (children) |*child| {
         if (child.style.hidden == true) continue;
         const label: []const u8 = switch (child.kind) {
-            .text => try host.text(View, self, child),
+            .text => try host.textAt(View, self, child, scope),
             .button, .badge, .image, .toggle, .checkbox => child.text,
             else => "",
         };
@@ -155,6 +207,6 @@ fn appendName(comptime View: type, self: *View, children: []const ir.Node, name:
             if (name.items.len > 0) try name.append(zpui.frameAllocator(), ' ');
             try name.appendSlice(zpui.frameAllocator(), label);
         }
-        try appendName(View, self, child.children, name);
+        try appendName(View, self, child.children, name, scope);
     }
 }

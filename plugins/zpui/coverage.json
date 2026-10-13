@@ -1,0 +1,353 @@
+{
+  "goal": "Complete View IR v7 coverage with tested behavior, without placeholder rendering or silent drops",
+  "sourceRevision": "8485f22a03a86d3be5a9ad162bfb230f4762ac91",
+  "upstreamRevision": "cca22983e7e8124bb8e650616e3803f217e52b95",
+  "irVersion": 7,
+  "completion": {
+    "nodes": 25,
+    "styles": 71,
+    "events": [
+      "click",
+      "change",
+      "longPress",
+      "drop",
+      "pick"
+    ],
+    "runtime": [
+      "scopedConditions",
+      "scopedCollections",
+      "retainedInput",
+      "timedText",
+      "nativeWebView"
+    ],
+    "validation": [
+      "decoder",
+      "headlessNative",
+      "backendIntegration",
+      "independentReview"
+    ]
+  },
+  "nodes": {
+    "text": {
+      "status": "implemented"
+    },
+    "if": {
+      "status": "implemented"
+    },
+    "forEach": {
+      "status": "implemented"
+    },
+    "stack": {
+      "status": "implemented"
+    },
+    "button": {
+      "status": "implemented"
+    },
+    "toggle": {
+      "status": "implemented"
+    },
+    "checkbox": {
+      "status": "implemented"
+    },
+    "slider": {
+      "status": "implemented"
+    },
+    "progress": {
+      "status": "implemented"
+    },
+    "meter": {
+      "status": "implemented"
+    },
+    "badge": {
+      "status": "implemented"
+    },
+    "divider": {
+      "status": "implemented"
+    },
+    "spacer": {
+      "status": "implemented"
+    },
+    "dropzone": {
+      "status": "implemented"
+    },
+    "filePicker": {
+      "status": "implemented"
+    },
+    "image": {
+      "status": "implemented"
+    },
+    "link": {
+      "status": "implemented"
+    },
+    "webView": {
+      "status": "host_contract",
+      "remaining": "Reference implementation and real platform acceptance"
+    },
+    "scroll": {
+      "status": "implemented"
+    },
+    "list": {
+      "status": "implemented"
+    },
+    "listItem": {
+      "status": "implemented"
+    },
+    "slotRotate": {
+      "status": "implemented"
+    },
+    "input": {
+      "status": "host_contract",
+      "remaining": "Reference implementation and real platform acceptance"
+    },
+    "picker": {
+      "status": "implemented"
+    },
+    "tabs": {
+      "status": "implemented"
+    }
+  },
+  "styles": {
+    "id": {
+      "status": "implemented"
+    },
+    "classes": {
+      "status": "implemented"
+    },
+    "padding": {
+      "status": "implemented"
+    },
+    "paddingHorizontal": {
+      "status": "implemented"
+    },
+    "paddingVertical": {
+      "status": "implemented"
+    },
+    "paddingTop": {
+      "status": "implemented"
+    },
+    "paddingBottom": {
+      "status": "implemented"
+    },
+    "paddingLeft": {
+      "status": "implemented"
+    },
+    "paddingRight": {
+      "status": "implemented"
+    },
+    "margin": {
+      "status": "implemented"
+    },
+    "marginHorizontal": {
+      "status": "implemented"
+    },
+    "marginVertical": {
+      "status": "implemented"
+    },
+    "marginTop": {
+      "status": "implemented"
+    },
+    "marginBottom": {
+      "status": "implemented"
+    },
+    "marginLeft": {
+      "status": "implemented"
+    },
+    "marginRight": {
+      "status": "implemented"
+    },
+    "width": {
+      "status": "implemented"
+    },
+    "height": {
+      "status": "implemented"
+    },
+    "minWidth": {
+      "status": "implemented"
+    },
+    "minHeight": {
+      "status": "implemented"
+    },
+    "maxWidth": {
+      "status": "implemented"
+    },
+    "maxHeight": {
+      "status": "implemented"
+    },
+    "aspectRatio": {
+      "status": "implemented"
+    },
+    "fontSize": {
+      "status": "implemented"
+    },
+    "fontWeight": {
+      "status": "implemented"
+    },
+    "textAlign": {
+      "status": "implemented"
+    },
+    "lineHeight": {
+      "status": "implemented"
+    },
+    "letterSpacing": {
+      "status": "pending"
+    },
+    "textTransform": {
+      "status": "pending"
+    },
+    "fontFamily": {
+      "status": "implemented"
+    },
+    "italic": {
+      "status": "implemented"
+    },
+    "underline": {
+      "status": "implemented"
+    },
+    "strikethrough": {
+      "status": "implemented"
+    },
+    "foregroundColor": {
+      "status": "implemented"
+    },
+    "backgroundColor": {
+      "status": "implemented"
+    },
+    "cornerRadius": {
+      "status": "implemented"
+    },
+    "borderWidth": {
+      "status": "implemented"
+    },
+    "borderColor": {
+      "status": "implemented"
+    },
+    "opacity": {
+      "status": "implemented"
+    },
+    "hidden": {
+      "status": "implemented"
+    },
+    "overflowHidden": {
+      "status": "implemented"
+    },
+    "flexGrow": {
+      "status": "implemented"
+    },
+    "flexShrink": {
+      "status": "implemented"
+    },
+    "alignSelf": {
+      "status": "implemented"
+    },
+    "flexWrap": {
+      "status": "implemented"
+    },
+    "flexDirection": {
+      "status": "implemented"
+    },
+    "position": {
+      "status": "partial"
+    },
+    "zIndex": {
+      "status": "pending"
+    },
+    "top": {
+      "status": "implemented"
+    },
+    "right": {
+      "status": "implemented"
+    },
+    "bottom": {
+      "status": "implemented"
+    },
+    "left": {
+      "status": "implemented"
+    },
+    "translateX": {
+      "status": "pending"
+    },
+    "translateY": {
+      "status": "pending"
+    },
+    "scaleX": {
+      "status": "pending"
+    },
+    "scaleY": {
+      "status": "pending"
+    },
+    "rotate": {
+      "status": "pending"
+    },
+    "shadowColor": {
+      "status": "implemented"
+    },
+    "shadowRadius": {
+      "status": "implemented"
+    },
+    "shadowOffsetX": {
+      "status": "implemented"
+    },
+    "shadowOffsetY": {
+      "status": "implemented"
+    },
+    "textOverflow": {
+      "status": "implemented"
+    },
+    "whiteSpace": {
+      "status": "implemented"
+    },
+    "lineClamp": {
+      "status": "implemented"
+    },
+    "cursor": {
+      "status": "partial"
+    },
+    "userSelect": {
+      "status": "pending"
+    },
+    "backgroundGradientDirection": {
+      "status": "implemented"
+    },
+    "backgroundGradientFrom": {
+      "status": "implemented"
+    },
+    "backgroundGradientTo": {
+      "status": "implemented"
+    },
+    "objectFit": {
+      "status": "implemented"
+    },
+    "objectPosition": {
+      "status": "partial"
+    }
+  },
+  "events": {
+    "click": "implemented",
+    "change": "implemented",
+    "longPress": "implemented",
+    "drop": "implemented",
+    "pick": "implemented"
+  },
+  "status": "in_progress",
+  "runtime": {
+    "scopedConditions": "implemented",
+    "scopedCollections": "implemented",
+    "retainedInput": "host_contract",
+    "timedText": "implemented",
+    "nativeWebView": "host_contract"
+  },
+  "validation": {
+    "decoder": "implemented",
+    "headlessNative": "implemented",
+    "backendIntegration": "pending",
+    "independentReview": "pending_for_current_candidate"
+  },
+  "remaining": [
+    "Retained input reference with selection, IME, Unicode editing, secure/multiline behavior, and state synchronization",
+    "Browser reference hosting an actual web engine, with navigation and teardown acceptance",
+    "Tab icons",
+    "letterSpacing, textTransform, zIndex, translateX, translateY, scaleX, scaleY, rotate, userSelect",
+    "Fixed/static positioning, wait cursor, non-center objectPosition",
+    "Real OS widgets, GPU output, supported platform matrix, and independent review for the final candidate"
+  ]
+}

@@ -40,6 +40,19 @@ pub fn apply(initial: zpui.StatefulDiv, style: ir.Style) zpui.StatefulDiv {
     if (style.opacity) |v| element = element.opacity(v);
     if (style.foregroundColor) |v| element = element.textColor(zpui.rgb(v).toHsla());
     if (style.backgroundColor) |v| element = element.bg(zpui.rgb(v));
+    if (style.backgroundGradientDirection) |direction| {
+        const angle: f32 = switch (direction) {
+            .@"to-t" => 0,
+            .@"to-tr" => 45,
+            .@"to-r" => 90,
+            .@"to-br" => 135,
+            .@"to-b" => 180,
+            .@"to-bl" => 225,
+            .@"to-l" => 270,
+            .@"to-tl" => 315,
+        };
+        element = element.bg(zpui.color.linearGradient(angle, zpui.color.linearColorStop(zpui.rgb(style.backgroundGradientFrom.?).toHsla(), 0), zpui.color.linearColorStop(zpui.rgb(style.backgroundGradientTo.?).toHsla(), 1)));
+    }
     if (style.borderColor) |v| element = element.borderColor(zpui.rgb(v).toHsla());
     if (style.hidden == true) element = element.hidden();
     if (style.overflowHidden == true) element = element.overflowHidden();

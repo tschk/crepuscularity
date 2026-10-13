@@ -151,3 +151,7 @@ test "crepus-zpui replaces a document and retires it after the old frame" {
 comptime {
     _ = @import("coverage_native.zig");
 }
+
+comptime {
+    _ = @import("runtime_native.zig");
+}

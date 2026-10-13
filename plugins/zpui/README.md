@@ -85,46 +85,34 @@ state when a document reorders nodes. The example retains its document for the
 whole view lifetime.
 The namespace string must also remain alive while its frame is active.
 
-## Coverage
+## Coverage and finish goal
 
-The adapter implements **18 of the 25 View IR v7 node kinds**. The compiler-generated
-form fixture contains every supported kind; the remaining kinds stay explicit
-`UnsupportedNode` errors.
+The goal is all 25 node kinds, 71 style fields and five event contracts with
+working behavior and acceptance evidence. [COVERAGE.md](COVERAGE.md) and
+[coverage.json](coverage.json) record the inventory and unfinished work. CI checks
+the inventory against the Rust source. The goal remains in progress.
 
-| Node kinds | Mapping |
-| --- | --- |
-| `stack`, `scroll` | Row/column layout, spacing, alignment, justification, recursive children, horizontal/vertical scrolling |
-| `text`, `button` | Resolved/bound text; accessible button with named click dispatch and keyboard focus |
-| `toggle`, `checkbox`, `slider` | Native or ZPUI-drawn controls, typed boolean/numeric bindings and change events, slider range/step |
-| `picker`, `tabs` | Native popup/segmented selection by option value; tabs render only the selected panel |
-| `progress`, `meter` | Painted proportional track and accessible value/minimum/maximum |
-| `badge`, `divider`, `spacer` | Tone colors, separator orientation, fixed-size or flexible space |
-| `list`, `listItem` | Ordered/unordered markers and accessible list structure |
-| `link` | Visible-text accessible name, mouse/keyboard dispatch, preserved `href`/`target`/`rel` |
-| `image` | Host asset/decoded source, image fitting, alt name, loading placeholder and atlas output |
+All 25 kinds decode with owned storage. The bridge directly implements 23:
+stacks, text, buttons, scrolls, native form controls, status/layout elements,
+images, links, lists/items, conditions, keyed collections, rotating text,
+dropzones and file pickers. Inputs and web views require fallible host factories.
+Their request/placement plumbing is tested; the retained-editor and real-browser
+references remain required. Tab icons are retained and rejected by rendering
+until actual icon support is implemented.
 
-Styles include padding and all margin edges, sizing/minimum/maximum constraints,
-aspect ratio, font size/weight/family, text alignment and line height, italic and
-text decorations, clipping/line clamp, colors, borders/radius, opacity, visibility,
-flex grow/shrink/wrap/direction/self alignment, relative/absolute positioning and
-insets, shadows, supported cursors, and image fit. `classes` remain validated
-metadata; the adapter uses the compiler's resolved hints.
+Styles cover spacing, size constraints, aspect ratio, flex layout, alignment,
+text weight/size/alignment/line height/font family/decorations, colors, borders,
+opacity, visibility/clipping, relative/absolute positioning and insets, shadows,
+supported cursors, centered image fit, and two-stop linear gradients. Source
+classes are owned metadata; rendering uses resolved style hints.
 
 Widths/heights/maxima accept nonnegative points, `-1` for parent fill and `-2`
 for auto sizing. Minimum sizes are nonnegative. Colors accept `#RRGGBB`.
-Image positioning is centered; other positions fail. `position` accepts only
-`relative` and `absolute`. Supported cursors are `auto`, `default`, `pointer`,
-`text`, and `move`. Font families map to the platform system font, `serif`, or
-`monospace`. Styling native controls affects their container and requested width;
-the platform owns their intrinsic control height. Segmented tabs retain ZPUI's
-native radio-group selection semantics and expose a selected tab-panel role.
-
-The seven remaining node kinds are `if`, `forEach`, `input`, `slotRotate`,
-`webView`, `dropzone`, and `filePicker`. Tab icons, long-press handlers,
-transforms, gradients, text transforms, letter spacing, z-index, selection hints,
-and other unsupported active fields fail explicitly. This adapter adds no
-expression VM, retained text editor, timer runtime or web browser. The pinned
-upstream provides low-level input/IME APIs but no ready-made text editor.
+Gradients require direction and both endpoints; all eight `to-*` directions map
+to native gradient fills. Image positioning is centered. Position accepts
+`relative` and `absolute`; cursors accept `auto`, `default`, `pointer`, `text`,
+and `move`. Other active values fail explicitly. Native controls retain their
+platform-owned intrinsic height and segmented radio-group selection semantics.
 
 ## Host contract
 
@@ -141,12 +129,24 @@ that error in its normal UI error path. The examples validate during `init`.
 | `onCrepusChange(change: Change, window, cx)` | A control has a binding or `onChange` |
 | `onCrepusLink(link: Link, event, window, cx)` | A link appears |
 | `crepusImage(src) ?ImageSource` | Custom/remote image resolution; otherwise configure ZPUI's asset source |
+| `crepusResolve(expression, scope) ?Value` | Optional expression override; scoped record paths work without it |
+| `crepusCondition(expression, scope) ?bool` | Optional condition override; boolean bindings work without it |
+| `onCrepusScopedClick(handler, scope, event, window, cx)` | A button callback inside a collection; may also handle unscoped clicks |
+| `onCrepusLongPress(handler, scope, mouseDown, window, cx)` | A node has `onLongPress` |
+| `onCrepusDrop(files: Files, window, cx)` | A dropzone has `onDrop` |
+| `onCrepusPick(files: Files, window, cx)` | A file picker has `onPick` |
+| `crepusAcceptExtensions(accept) ![]const []const u8` | MIME filters; return extensions without dots, or an error |
+| `crepusInput(request: Input, window, cx) !AnyElement` | An input appears |
+| `crepusWebView(request: WebView, window, cx) !NativeViewId` | A web view appears; return an attached browser view owned by the host |
 
-`Value` is `text`, `boolean`, or `number`. Text and selections require text,
+`Value` is `text`, `boolean`, `number`, `record`, or `list`. Lists contain keyed
+`Item` values; records contain named `Field` values. Keys must be nonempty and unique.
+`Scope` contains parent, item name, key, index and value. `row.title` resolves a
+record field in the nearest matching scope; arbitrary expressions remain host-owned. Text and selections require text,
 toggles/checkboxes require booleans, and sliders require finite numbers within
 the declared range. Readers must be pure and stable during one render.
 Selection values must match an option. `Change` includes
-the optional binding name, optional handler name, and typed new value. Controls
+the optional binding name, optional handler name, typed new value and optional scope. Controls
 without a binding or handler are displayed disabled. An unbound handler receives
 the event; the host must replace its snapshot to change the displayed value.
 
@@ -169,28 +169,40 @@ them beyond that storage's lifetime.
 selection, link dispatch and a borrowed decoded image alongside the existing
 [counter](examples/counter.zig). Both views require normal host window setup.
 
+Async dialogs and hold timers copy their context; other event data and scopes are
+borrowed for the callback duration. Copy data retained by the host. The host's
+allocator must outlive outstanding platform-dialog callbacks. Input factories must
+provide actual retained editing and copy request data they retain. Web factories
+must create/reuse an attached browser view and detach it at the end of its host
+lifetime. A backend without native child views fails explicitly.
+
+Rotation timers reset when phrases/interval change and cancel on unmount. Conditions
+validate only the active branch; tabs validate only the selected panel. Readers
+must be pure and stable throughout one render. Long press recognizes a 500 ms hold
+and cancels after movement above 8 points or release. Its callback is separate from
+normal click/change handling; hosts decide whether to suppress those actions.
+
 ## Validation
 
 ```sh
+python3 tools/check-coverage.py
 zig fmt --check build.zig build.zig.zon src/*.zig examples/*.zig tests/*.zig
 zig build test -j1 --summary all
 python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/to/zpui
 ```
 
-The nine original decoder tests cover the canonical Rust golden fixture,
-Unicode/storage ownership, version rejection, unsupported behavior, size limits,
-and the exact 128/129 node-depth boundary. Seven additional decoder tests exercise
-a compiler-generated fixture containing all 18 supported kinds, option ownership,
-invalid controls/options, typed style contracts and the remaining unsupported kinds.
+Nineteen decoder tests cover current compiler fixtures, all 25 node shapes,
+Unicode/storage ownership, source classes, version/size/depth boundaries, invalid
+controls/options, runtime metadata, and gradient/style contracts. Decoding is
+checked on Zig 0.16 and 0.17.
 
-Fifteen native headless tests compile the renderer and both example views against
-the exact pinned ZPUI module. They exercise mouse/Space/Enter activation and focus,
-toggle/checkbox host changes, slider range/step, popup and tab selection, bound-text
-redraw, link metadata, layout constraints/alignment/margins, colors/borders/shadows,
-scrolling on both axes, decoded image atlas output, accessibility roles/ranges,
-text decoration overrides, extreme numeric ranges, document retirement, and missing-host/backend errors.
-The test allocator checks leaks. The harness verifies toolchain/source pins, uses
-one build job and opens no desktop windows.
+Twenty-seven native headless tests compile the renderer and example views against
+the pinned module. Besides the original control/media/layout tests, they exercise
+branch switching, scoped fields/handlers on collection reorder, invalid keys,
+timer advancement/unmount, drop filtering, hold thresholds/cancellation, delayed
+file selection/cancellation/filtering, and callbacks after window/App destruction.
+Input/browser witnesses verify request/placement plumbing only. The test allocator
+checks leaks. The harness uses one build job and opens no desktop windows.
 
 On case-insensitive macOS filesystems, two upstream `SOURCE` provenance files
 collide with their libraries' `source/` directories. The harness permits only
