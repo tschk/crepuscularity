@@ -61,7 +61,7 @@ pub const Document = struct {
         }
         var arena = std.heap.ArenaAllocator.init(parent);
         errdefer arena.deinit();
-        const root = try decodeNodes(arena.allocator(), value.object.get("root") orelse return error.MissingRoot, 0);
+        const root = try decodeNodes(arena.allocator(), value.object.get("root") orelse return error.MissingRoot, 1);
         return .{ .arena = arena, .root = root };
     }
 
@@ -72,7 +72,6 @@ pub const Document = struct {
 };
 
 fn decodeNodes(a: std.mem.Allocator, value: std.json.Value, depth: usize) anyerror![]const Node {
-    if (depth > 128) return error.TreeTooDeep;
     if (value != .array) return error.InvalidChildren;
     const nodes = try a.alloc(Node, value.array.items.len);
     for (value.array.items, nodes) |item, *node| node.* = try decodeNode(a, item, depth);
@@ -80,6 +79,7 @@ fn decodeNodes(a: std.mem.Allocator, value: std.json.Value, depth: usize) anyerr
 }
 
 fn decodeNode(a: std.mem.Allocator, value: std.json.Value, depth: usize) !Node {
+    if (depth > 128) return error.TreeTooDeep;
     if (value != .object) return error.InvalidNode;
     const tag = try string(value.object.get("kind") orelse return error.MissingKind);
     const kind = std.meta.stringToEnum(Kind, tag) orelse return error.UnsupportedNode;
@@ -274,4 +274,28 @@ test "deep tree rejection frees partially decoded nodes" {
     for (0..130) |_| try source.appendSlice(a, "]}");
     try source.appendSlice(a, "]}");
     try std.testing.expectError(error.TreeTooDeep, Document.parse(a, source.items));
+}
+
+test "depth limit accepts 128 node levels and rejects 129" {
+    const a = std.testing.allocator;
+    for ([_]usize{ 128, 129 }) |levels| {
+        for ([_][]const u8{
+            "{\"kind\":\"text\",\"content\":\"Leaf\"}",
+            "{\"kind\":\"stack\",\"axis\":\"column\",\"children\":[]}",
+        }) |leaf| {
+            var source: std.ArrayList(u8) = .empty;
+            defer source.deinit(a);
+            try source.appendSlice(a, "{\"version\":7,\"root\":[");
+            for (1..levels) |_| try source.appendSlice(a, "{\"kind\":\"stack\",\"axis\":\"column\",\"children\":[");
+            try source.appendSlice(a, leaf);
+            for (1..levels) |_| try source.appendSlice(a, "]}");
+            try source.appendSlice(a, "]}");
+            if (levels == 128) {
+                var document = try Document.parse(a, source.items);
+                document.deinit();
+            } else {
+                try std.testing.expectError(error.TreeTooDeep, Document.parse(a, source.items));
+            }
+        }
+    }
 }

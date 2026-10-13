@@ -119,10 +119,11 @@ Tests consume a byte-for-byte copy of the canonical Rust golden fixture at
 `crates/crepuscularity-native/tests/fixtures/hello.json`. They cover multiple
 roots, Unicode, input-buffer independence, cleanup on invalid documents, scroll
 axis, sizing sentinels, version rejection, and unsupported behavior.
-They also reject the installed compiler's actual v5 output, excessive depth,
-and oversized documents.
+They also reject the installed compiler's actual v5 output, trees beyond 128
+node levels, and oversized documents.
 
-The eight decoder tests passed on Zig 0.16.0 and 0.17.0. Four native headless
+The nine decoder tests passed on Zig 0.17.0, including the exact depth boundary
+for both text leaves and empty containers. Four native headless
 tests also compile the adapter and actual counter view against the exact pinned
 ZPUI module. They exercise mouse clicks, Space/Enter activation and focus,
 physical sizing/background/borders, scrolling on both axes, and document
