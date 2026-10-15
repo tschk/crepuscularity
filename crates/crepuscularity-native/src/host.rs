@@ -282,7 +282,9 @@ mod tests {
         fn new(output: &str) -> Self {
             use std::io::Write;
             use std::os::unix::fs::PermissionsExt;
-            let dir = tempfile::Builder::new().tempdir().unwrap();
+            let dir = tempfile::Builder::new()
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
             let path = dir.path().join("fake_java");
             let mut file = std::fs::File::create(&path).unwrap();
             writeln!(file, "#!/bin/sh\ncat << 'EOF'\n{output}\nEOF").unwrap();
