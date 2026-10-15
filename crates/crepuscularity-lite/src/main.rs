@@ -381,7 +381,7 @@ impl LiteRoot {
 
         cx.spawn(async move |weak_root, async_cx| {
             let result = reply_rx.recv();
-            async_cx.update(|app| {
+            let _ = async_cx.update(|app| {
                 let _ = app.update_window(any_wh, |_root_view, window, app| {
                     if let Some(entity) = weak_root.upgrade() {
                         entity.update(app, |root, cx| {
@@ -540,7 +540,7 @@ fn main() {
 
         let wh = handle;
         cx.spawn(async move |async_cx| {
-            async_cx.update(|app| {
+            let _ = async_cx.update(|app| {
                 let _ = wh.update(app, |root: &mut LiteRoot, window, ctxt| {
                     root.run_guest(window, ctxt);
                 });
