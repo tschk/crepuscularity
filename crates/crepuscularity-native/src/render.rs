@@ -835,7 +835,6 @@ mod tests {
     use crepuscularity_core::ast::TextPart;
     use crepuscularity_core::context::TemplateContext;
 
-
     #[test]
     fn test_render_text_inline_literal_only() {
         let parts = vec![TextPart::Literal("Hello world".to_string())];
