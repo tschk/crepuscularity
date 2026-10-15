@@ -886,4 +886,40 @@ mod tests {
         let result = render_text_inline(&parts, &ctx).unwrap();
         assert_eq!(result, "Score: 42");
     }
+
+    #[test]
+    fn test_text_bind() {
+        // Happy path: Single Expr part
+        let parts = vec![TextPart::Expr("  some_expr  ".to_string())];
+        assert_eq!(text_bind(&parts), Some("some_expr".to_string()));
+
+        let parts = vec![TextPart::Expr("x".to_string())];
+        assert_eq!(text_bind(&parts), Some("x".to_string()));
+
+        // Edge case: Empty Expr
+        let parts = vec![TextPart::Expr("".to_string())];
+        assert_eq!(text_bind(&parts), Some("".to_string()));
+
+        // Error condition: Empty parts
+        let parts = vec![];
+        assert_eq!(text_bind(&parts), None);
+
+        // Error condition: Single Literal part
+        let parts = vec![TextPart::Literal("hello".to_string())];
+        assert_eq!(text_bind(&parts), None);
+
+        // Error condition: Multiple parts (e.g. Literal and Expr)
+        let parts = vec![
+            TextPart::Literal("hello ".to_string()),
+            TextPart::Expr("name".to_string()),
+        ];
+        assert_eq!(text_bind(&parts), None);
+
+        // Error condition: Multiple Expr parts
+        let parts = vec![
+            TextPart::Expr("a".to_string()),
+            TextPart::Expr("b".to_string()),
+        ];
+        assert_eq!(text_bind(&parts), None);
+    }
 }
