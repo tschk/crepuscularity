@@ -17,10 +17,10 @@ div flex flex-col gap-2 p-4 class:bg-white={visible}
   for item in {0..3}
     "Row {item}"
   match {visible}
-    {true} =>
-      "Enabled"
-    {false} =>
-      "Disabled"
+  {true} =>
+    "Enabled"
+  {false} =>
+    "Disabled"
 "#
     );
 
