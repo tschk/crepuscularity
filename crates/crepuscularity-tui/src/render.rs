@@ -152,6 +152,90 @@ pub fn collect_focusable_ids_from_nodes(nodes: &[Node]) -> Vec<String> {
     ids
 }
 
+/// Collect focusable IDs from the currently rendered branches and loop items.
+pub(crate) fn collect_focusable_ids_with_context(
+    template: &str,
+    ctx: &TemplateContext,
+) -> Result<Vec<String>, CrepusError> {
+    let nodes = parse_template(template)?;
+    let mut ids = Vec::new();
+    collect_focusable_ids_in_context(&nodes, ctx, &mut ids);
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    Ok(ids)
+}
+
+fn collect_focusable_ids_in_context(nodes: &[Node], ctx: &TemplateContext, out: &mut Vec<String>) {
+    let mut ctx = ctx.clone();
+    for node in nodes {
+        match node {
+            Node::LetDecl(decl) => {
+                if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
+                    let value = eval_expr(&decl.expr, &ctx).unwrap_or(TemplateValue::Null);
+                    ctx.vars.insert(decl.name.clone(), value);
+                }
+            }
+            Node::Element(el) => {
+                let static_focusable = el
+                    .classes
+                    .iter()
+                    .any(|class| class == "focusable" || class.contains("focusable"));
+                let dynamic_focusable = el.conditional_classes.iter().any(|class| {
+                    class.class == "focusable" && eval_condition(&ctx, &class.condition)
+                });
+                if static_focusable || dynamic_focusable {
+                    if let Some(id) = &el.id {
+                        out.push(id.clone());
+                    }
+                }
+                collect_focusable_ids_in_context(&el.children, &ctx, out);
+            }
+            Node::If(block) => {
+                let branch = if eval_condition(&ctx, &block.condition) {
+                    Some(&block.then_children)
+                } else {
+                    block.else_children.as_ref()
+                };
+                if let Some(branch) = branch {
+                    collect_focusable_ids_in_context(branch, &ctx, out);
+                }
+            }
+            Node::For(block) => {
+                for item_ctx in ctx.get_list_ref(&block.iterator) {
+                    let mut child_ctx = ctx.clone();
+                    child_ctx.vars.extend(item_ctx.vars.clone());
+                    if !block.pattern.trim().is_empty() {
+                        let item_str = item_ctx.get_str("value");
+                        if !item_str.is_empty() {
+                            child_ctx.vars.insert(
+                                block.pattern.trim().to_string(),
+                                TemplateValue::Str(item_str),
+                            );
+                        }
+                    }
+                    collect_focusable_ids_in_context(&block.body, &child_ctx, out);
+                }
+            }
+            Node::Match(block) => {
+                let value =
+                    value_to_str(&eval_expr(&block.expr, &ctx).unwrap_or(TemplateValue::Null));
+                let arm = block.arms.iter().find(|arm| {
+                    let pattern = arm.pattern.trim();
+                    let quoted = pattern
+                        .strip_prefix('"')
+                        .and_then(|value| value.strip_suffix('"'))
+                        == Some(value.as_str());
+                    pattern == "_" || quoted || pattern == value
+                });
+                if let Some(arm) = arm {
+                    collect_focusable_ids_in_context(&arm.body, &ctx, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_focusable_ids_recursive(nodes: &[Node], out: &mut Vec<String>) {
     for node in nodes {
         match node {

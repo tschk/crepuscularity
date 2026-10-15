@@ -993,6 +993,42 @@ host-permissions = ["https://example.com/*"]
     }
 
     #[test]
+    fn content_script_default_fallback_match_about_blank() {
+        let manifest = ExtensionManifest {
+            extension: ExtensionInfo {
+                name: "Test".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                author: None,
+                homepage: None,
+                minimum_chrome_version: None,
+            },
+            capabilities: CapabilitiesSection {
+                content_script: true,
+                host_permissions: vec!["https://example.com/*".to_string()],
+                ..Default::default()
+            },
+            content_scripts: vec![],
+            plugins: HashMap::new(),
+            options: ManifestOptions::default(),
+            web_accessible_resources: WebAccessibleResourcesOptions::default(),
+            commands: BTreeMap::new(),
+            chrome_url_overrides: BTreeMap::new(),
+        };
+
+        let opts = ManifestOptions::default();
+        let content_scripts = ManifestV3::build_content_scripts(&manifest, &opts);
+
+        assert_eq!(content_scripts.len(), 1);
+        assert_eq!(content_scripts[0].matches, vec!["https://example.com/*"]);
+        assert_eq!(content_scripts[0].js, vec!["src/content.js"]);
+        assert_eq!(content_scripts[0].css, vec!["src/content.css"]);
+        assert_eq!(content_scripts[0].run_at, "document_idle".to_string());
+        assert_eq!(content_scripts[0].all_frames, None);
+        assert_eq!(content_scripts[0].match_about_blank, None);
+    }
+
+    #[test]
     fn test_manifest_v3_generation() {
         let manifest = ExtensionManifest {
             extension: ExtensionInfo {
