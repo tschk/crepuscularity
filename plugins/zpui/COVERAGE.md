@@ -19,7 +19,7 @@ use real image UV crops. Text transforms cover Unicode upper/lower casing and
 inheritance/reset; capitalization and transformed editor display remain unfinished.
 Static/relative/absolute positioning and supported cursors have explicit contracts.
 
-Validation: 21 decoder tests on Zig 0.16/0.17; 43 native headless tests with the
+Validation: 21 decoder tests on Zig 0.16/0.17; 44 native headless tests with the
 pinned backend; five Rust Unicode tests and strict Clippy; actual macOS input and
 WKWebView acceptance with allocator teardown. Current-candidate independent review
 and CI remain required before release. A host-factory witness alone is insufficient

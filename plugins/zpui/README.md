@@ -204,7 +204,7 @@ python3 tools/test-native.py --zig /path/to/zig-0.17.0/zig --zpui-source /path/t
 
 Twenty-one decoder tests cover current compiler fixtures, all node shapes,
 Unicode/ownership, IR boundaries, malformed file filters and style contracts.
-They pass on Zig 0.16 and 0.17. Forty-three native headless tests compile the renderer
+They pass on Zig 0.16 and 0.17. Forty-four native headless tests compile the renderer
 and examples against pinned ZPUI, including scoped runtime, async lifecycle,
 retained input, icon tabs, translations, image crops and casing. Five separately
 locked Rust tests cover grapheme boundaries, UTF-16 and Unicode case/mask helpers;

@@ -252,6 +252,29 @@ test "crepus-zpui long press fires after threshold and cancels on release or mov
     try testing.expectEqual(@as(usize, 1), f.model().holds);
 }
 
+test "crepus-zpui long press consumes the release so the click handler stays silent" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"button","label":"Hold","onLongPress":"hold","onClick":"tap","style":{"width":100,"height":60}}]}
+    );
+    defer f.deinit();
+    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    f.app.advanceClock(500 * std.time.ns_per_ms);
+    f.settle();
+    try testing.expectEqual(@as(usize, 1), f.model().holds);
+    try testing.expectEqual(@as(usize, 0), f.model().clicks);
+    // Releasing after the hold dispatched must not also fire the click handler.
+    _ = f.platform.simulateInput(.{ .mouse_up = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    f.settle();
+    try testing.expectEqual(@as(usize, 0), f.model().clicks);
+    try testing.expectEqual(@as(usize, 1), f.model().holds);
+    // A later quick tap still clicks exactly once.
+    _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    _ = f.platform.simulateInput(.{ .mouse_up = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    f.settle();
+    try testing.expectEqual(@as(usize, 1), f.model().clicks);
+    try testing.expectEqual(@as(usize, 1), f.model().holds);
+}
+
 test "crepus-zpui built-in input and absent browser factory validation" {
     const Missing = struct {
         pub fn crepusValue(_: *@This(), _: []const u8) ?bridge.Value {

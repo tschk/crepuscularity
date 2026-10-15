@@ -40,8 +40,14 @@ pub fn State(comptime View: type) type {
             };
             _ = cx.app.updateWindow(self.window, self, Callback.inWindow);
         }
-        fn up(self: *Self, _: *const input.MouseUpEvent, _: *zpui.Window, _: *zpui.Context(Self)) void {
+        fn up(self: *Self, event: *const input.MouseUpEvent, _: *zpui.Window, cx: *zpui.Context(Self)) void {
             self.task.cancel();
+            if (self.fired and event.button == self.down.button) {
+                // The long press already dispatched; consume this release so the
+                // button's click handler does not fire as well.
+                self.fired = false;
+                cx.stopPropagation();
+            }
         }
         fn move(self: *Self, event: *const input.MouseMoveEvent, _: *zpui.Window, _: *zpui.Context(Self)) void {
             const dx = event.position.x - self.down.position.x;
