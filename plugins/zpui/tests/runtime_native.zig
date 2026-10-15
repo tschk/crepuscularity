@@ -381,7 +381,7 @@ test "crepus-zpui host factory request preserves input flags and native view pla
 
 test "crepus-zpui long press cancels when pointer leaves and never fires in inactive window" {
     var f = try Fixture.init(
-        \\{"version":7,"root":[{"kind":"button","label":"Hold","onLongPress":"hold","style":{"width":100,"height":60}}]}
+        \\{"version":7,"root":[{"kind":"button","label":"Hold","onLongPress":"hold","onClick":"tap","style":{"width":100,"height":60}}]}
     );
     defer f.deinit();
     _ = f.platform.simulateInput(.{ .mouse_down = .{ .button = .left, .position = .{ .x = 97, .y = 10 } } });
@@ -394,6 +394,11 @@ test "crepus-zpui long press cancels when pointer leaves and never fires in inac
     f.app.advanceClock(500 * std.time.ns_per_ms);
     f.settle();
     try testing.expectEqual(@as(usize, 0), f.model().holds);
+    f.platform.simulateActive(true);
+    _ = f.platform.simulateInput(.{ .mouse_up = .{ .button = .left, .position = .{ .x = 10, .y = 10 } } });
+    f.settle();
+    try testing.expectEqual(@as(usize, 0), f.model().holds);
+    try testing.expectEqual(@as(usize, 1), f.model().clicks);
 }
 
 test "crepus-zpui link accessible names follow active conditions and scoped collections" {

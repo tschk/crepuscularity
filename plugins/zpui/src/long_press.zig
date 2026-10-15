@@ -27,12 +27,14 @@ pub fn State(comptime View: type) type {
         }
         fn fire(self: *Self, cx: *zpui.Context(Self)) void {
             self.task.detach();
-            self.fired = true;
             const Callback = struct {
                 fn call(view: *View, state: *Self, w: *zpui.Window, context: *zpui.Context(View)) void {
                     if (!w.isWindowActive() or !state.painted) return;
                     if (state.bounds) |bounds| if (!bounds.contains(w.mouse_position)) return;
-                    if (comptime @hasDecl(View, "onCrepusLongPress")) view.onCrepusLongPress(state.handler, state.scope, &state.down, w, context);
+                    if (comptime @hasDecl(View, "onCrepusLongPress")) {
+                        view.onCrepusLongPress(state.handler, state.scope, &state.down, w, context);
+                        state.fired = true;
+                    }
                 }
                 fn inWindow(state: *Self, w: *zpui.Window, app: *zpui.App) void {
                     _ = state.view.?.update(app, call, .{ state, w });
