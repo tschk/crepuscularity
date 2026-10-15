@@ -1,0 +1,41 @@
+div flex flex-col gap-2 w-80
+  div flex items-center justify-between
+    badge tone="success"
+      "Online"
+    button @click="apply"
+      "Apply"
+  toggle bind=enabled checked=false @change="enabled_changed"
+    "Enabled"
+  checkbox bind=remember checked=false @change="remember_changed"
+    "Remember"
+  slider bind=volume value=30 min=0 max=100 step=10 label="Volume" @change="volume_changed" w-56
+  picker bind=mode @change="mode_changed" w-40
+    option value="compact"
+      "Compact"
+    option value="expanded"
+      "Expanded"
+  tabs bind=tab @change="tab_changed" w-64
+    tab value="overview" label="Overview"
+      div
+        "Overview content"
+    tab value="details" label="Details"
+      div
+        "Details content"
+  progress value=60 max=100 label="Sync"
+  meter value=40 min=10 max=70 label="Storage"
+  divider flex-row
+  spacer size=6
+  ul
+    li
+      "First item"
+    li
+      "Second item"
+  ol
+    li
+      "Ordered item"
+  a href="https://example.com/help" target="_blank" rel="noopener"
+    "Help"
+  img src="preview" alt="Preview" object-cover w-16 h-8
+  div overflow-y-auto h-16
+    div
+      "Scrollable content"
