@@ -1264,6 +1264,22 @@ mod focus_events {
     }
 
     #[test]
+    fn refresh_focus_only_includes_the_visible_conditional_branch() {
+        let source = "div\n if {show_alternate}\n  div #alternate focusable\n    \"Alternate\"\n else\n  div #primary focusable\n    \"Primary\"";
+        let mut tpl = Template::from_source(source);
+
+        tpl.set("show_alternate", false);
+        tpl.refresh_focus();
+        assert_eq!(tpl.focus().focusable_ids, vec!["primary"]);
+        assert_eq!(tpl.focus().focused_id.as_deref(), Some("primary"));
+
+        tpl.set("show_alternate", true);
+        tpl.refresh_focus();
+        assert_eq!(tpl.focus().focusable_ids, vec!["alternate"]);
+        assert_eq!(tpl.focus().focused_id.as_deref(), Some("alternate"));
+    }
+
+    #[test]
     fn template_handle_event_tab_cycles_focus() {
         let source = "div flex-col\n  div #first focusable\n    \"First\"\n  div #second focusable\n    \"Second\"";
         let mut tpl = Template::from_source(source);
@@ -1351,8 +1367,10 @@ mod focus_events {
 // ─── Diff tracking ────────────────────────────────────────────────────────────
 
 mod diff_tracking {
+    use crate::tests::{all_text, buffer_rows, temp_case};
     use crate::{DiffTracker, Template, TemplateContext};
     use ratatui::{backend::TestBackend, Terminal};
+    use std::fs;
 
     #[test]
     fn diff_tracker_detects_new_variables() {
@@ -1442,6 +1460,234 @@ mod diff_tracking {
             })
             .unwrap();
         assert!(!drew_again, "second draw with no changes should skip");
+        assert!(
+            buffer_rows(&terminal).join("\n").contains("Hello"),
+            "skipping an unchanged render must preserve the visible frame"
+        );
+    }
+
+    #[test]
+    fn template_draw_if_changed_renders_external_include_after_invalidate() {
+        let dir = temp_case("draw-if-changed-external-include");
+        let template_path = dir.join("ui.crepus");
+        let include_path = dir.join("child.crepus");
+        fs::write(&template_path, "div\n include child.crepus").unwrap();
+        fs::write(&include_path, "div\n  \"Include before\"").unwrap();
+
+        let mut tpl = Template::from_path(&template_path).unwrap();
+        let backend = TestBackend::new(32, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+        assert!(all_text(&buffer_rows(&terminal)).contains("Include before"));
+
+        fs::write(&include_path, "div\n  \"Include after\"").unwrap();
+        tpl.reload().expect("unchanged root template reloads");
+
+        let mut drew = true;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(
+            !drew,
+            "unchanged context and root source skip the cached render"
+        );
+        assert!(
+            text.contains("Include before"),
+            "stale cached text missing: {text}"
+        );
+        assert!(
+            !text.contains("Include after"),
+            "include changed without cache invalidation: {text}"
+        );
+
+        tpl.invalidate();
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(drew, "explicit invalidation must force a fresh render");
+        assert!(
+            text.contains("Include after"),
+            "updated include missing: {text}"
+        );
+        assert!(
+            !text.contains("Include before"),
+            "stale include remained: {text}"
+        );
+    }
+
+    #[test]
+    fn template_draw_if_changed_renders_replaced_source() {
+        let mut tpl = Template::from_source("div\n  \"first version\"");
+        let backend = TestBackend::new(40, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        tpl.set_source("div\n  \"second version\"");
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(drew, "a changed source must render");
+        assert!(text.contains("second version"), "{text}");
+        assert!(!text.contains("first version"), "{text}");
+    }
+
+    #[test]
+    fn template_draw_if_changed_renders_after_terminal_resize() {
+        let mut tpl = Template::from_source("div\n  \"12345678\"");
+        let backend = TestBackend::new(4, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                assert!(tpl.draw_if_changed(frame, frame.area()).unwrap());
+            })
+            .unwrap();
+        assert!(!all_text(&buffer_rows(&terminal)).contains("12345678"));
+
+        terminal.backend_mut().resize(8, 1);
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(
+            drew,
+            "changed terminal dimensions must invalidate the cached frame"
+        );
+        assert!(text.contains("12345678"), "resized frame was stale: {text}");
+    }
+
+    #[test]
+    fn template_draw_if_changed_updates_interpolated_style() {
+        let mut tpl = Template::from_source("div\n  div text-{tone}\n    \"Color\"");
+        tpl.set("tone", "red-500");
+        let backend = TestBackend::new(12, 2);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+        let before = terminal.backend().buffer().cell((0, 0)).unwrap().fg;
+
+        tpl.set("tone", "green-400");
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let after = terminal.backend().buffer().cell((0, 0)).unwrap().fg;
+        assert!(drew, "a style-only context change must re-render");
+        assert_ne!(
+            before, after,
+            "updated class should replace the cached foreground"
+        );
+    }
+
+    #[test]
+    fn template_draw_if_changed_clears_removed_context_output() {
+        let mut tpl = Template::from_source("div\n  \"{message}\"");
+        tpl.set("message", "Old message");
+        let backend = TestBackend::new(24, 2);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+        assert!(all_text(&buffer_rows(&terminal)).contains("Old message"));
+
+        tpl.context_mut().vars.clear();
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(
+            drew,
+            "clearing the mutable context must invalidate the cached frame"
+        );
+        assert!(
+            !text.contains("Old message"),
+            "cleared output remained visible: {text}"
+        );
+    }
+
+    #[test]
+    fn template_draw_if_changed_tracks_focus_transitions() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+        let source = "div\n  \"Focused: {focused_id}\"\n  div #first focusable\n    \"First\"\n  div #second focusable\n    \"Second\"";
+        let mut tpl = Template::from_source(source);
+        tpl.refresh_focus();
+        let backend = TestBackend::new(24, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+        assert!(all_text(&buffer_rows(&terminal)).contains("Focused: first"));
+
+        let tab = crossterm::event::Event::Key(KeyEvent::new_with_kind_and_state(
+            KeyCode::Tab,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+            crossterm::event::KeyEventState::NONE,
+        ));
+        assert_eq!(tpl.handle_event(&tab), crate::EventResult::Handled);
+
+        let mut drew = false;
+        terminal
+            .draw(|frame| {
+                drew = tpl.draw_if_changed(frame, frame.area()).unwrap();
+            })
+            .unwrap();
+
+        let text = all_text(&buffer_rows(&terminal));
+        assert!(drew, "a focus transition must invalidate the cached frame");
+        assert!(
+            text.contains("Focused: second"),
+            "focus output was stale: {text}"
+        );
+        assert!(
+            !text.contains("Focused: first"),
+            "old focus output remained: {text}"
+        );
     }
 
     #[test]
