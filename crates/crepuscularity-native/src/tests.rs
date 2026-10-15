@@ -156,6 +156,55 @@ fn codegen_wraps_native_rows() {
 }
 
 #[test]
+fn codegen_compose_keeps_context_strings_literal() {
+    let mut ctx = TemplateContext::new();
+    ctx.set("message", "Price $amount ${run { 7 }}");
+    ctx.set("url", "https://example.invalid/${run { 7 }}");
+    let ir = render_template_to_ir("button \"{message}\"\niframe src={url}", &ctx).unwrap();
+    assert!(matches!(
+        &ir.root[1],
+        crate::ViewNode::WebView { src, .. } if src == "https://example.invalid/${run { 7 }}"
+    ));
+    let compose = generate_native_source(&ir, NativeCodegenTarget::Compose, "LiteralView");
+    assert!(compose.contains(r#"Text("Price \$amount \${run { 7 }}")"#));
+    let url = r#""https://example.invalid/\${run { 7 }}""#;
+    assert_eq!(compose.matches(url).count(), 3);
+
+    let swift = generate_native_source(&ir, NativeCodegenTarget::SwiftUi, "LiteralView");
+    assert!(swift.contains(r#"Text("Price $amount ${run { 7 }}")"#));
+}
+
+#[test]
+fn codegen_compose_keeps_decoded_ir_strings_literal() {
+    let ir: ViewIr = serde_json::from_value(json!({
+        "version": IR_VERSION,
+        "root": [{
+            "kind": "tabs",
+            "bind": "$selected",
+            "onChange": "change:$value",
+            "tabs": [{
+                "value": "${run { 7 }}",
+                "label": "$label",
+                "children": []
+            }]
+        }, {
+            "kind": "picker",
+            "bind": "$selected",
+            "onChange": "change:$value",
+            "options": [{"value": "$option", "label": "$label"}]
+        }]
+    }))
+    .unwrap();
+    let compose = generate_native_source(&ir, NativeCodegenTarget::Compose, "LiteralView");
+    assert_eq!(compose.matches(r#""\${run { 7 }}""#).count(), 3);
+    assert!(compose.contains(r#"CrepusStateStore.text("\$selected")"#));
+    assert!(compose.contains(
+        r#"CrepusActions.performChange("change:\$value", "\$selected", JsonPrimitive("\$option"))"#
+    ));
+    assert_eq!(compose.matches(r#"Text("\$label")"#).count(), 2);
+}
+
+#[test]
 fn codegen_honors_native_justify_center() {
     let ir = render_template_to_ir(
         "div flex flex-col justify-center h-full\n  span\n    \"Centered\"",
