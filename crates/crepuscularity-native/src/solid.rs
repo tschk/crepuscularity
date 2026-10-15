@@ -1051,6 +1051,28 @@ mod tests {
     }
 
     #[test]
+    fn emits_list_with_children() {
+        let node = ViewNode::List {
+            ordered: false,
+            style: None,
+            children: vec![ViewNode::ListItem {
+                on_long_press: None,
+                style: None,
+                children: vec![ViewNode::Text {
+                    content: "nested".to_string(),
+                    bind: None,
+                    style: None,
+                }],
+            }],
+        };
+        let out = emit_node(&node, 0, &[]);
+        assert!(
+            out.contains("<ul>\n  <li>\n    <span>nested</span>\n  </li>\n</ul>"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn emits_list() {
         let node = ViewNode::List {
             ordered: true,
@@ -1115,6 +1137,31 @@ mod tests {
         let out = emit_node(&node, 0, &[]);
         assert!(
             out.contains("onChange={(event) => handlers().colorChanged?.(event)}"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn emits_tabs_with_children() {
+        let node = ViewNode::Tabs {
+            bind: "tab".to_string(),
+            tabs: vec![crate::ir::TabItem {
+                value: "one".to_string(),
+                label: "One".to_string(),
+                icon: None,
+                children: vec![ViewNode::Text {
+                    content: "tab content".to_string(),
+                    bind: None,
+                    style: None,
+                }],
+            }],
+            on_change: Some("tabChanged".to_string()),
+            style: None,
+        };
+        let out = emit_node(&node, 0, &[]);
+        assert!(out.contains("<div>"));
+        assert!(
+            out.contains("<div role=\"tabpanel\">\n    <span>tab content</span>\n  </div>"),
             "{out}"
         );
     }
