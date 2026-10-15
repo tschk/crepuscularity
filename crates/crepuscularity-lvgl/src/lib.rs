@@ -681,4 +681,16 @@ div #card p-2
         assert!(xml.contains(r#"<lv_label text="OK"/>"#));
         assert!(!xml.contains("fallback"));
     }
+
+    #[test]
+    fn maps_unhandled_tags_to_lv_obj() {
+        let template = r#"
+unknown-tag
+  "Text"
+custom-tag
+"#;
+        let xml = render_template_to_lvgl_xml(template, &TemplateContext::new()).unwrap();
+        assert!(xml.contains(r#"<lv_obj text="Text"/>"#));
+        assert!(xml.contains(r#"<lv_obj/>"#));
+    }
 }

@@ -506,7 +506,20 @@ fn push_bindings(
         if skip_interval && binding.prop == "interval" {
             continue;
         }
-        let value = value_to_str(&eval_expr(&binding.value, ctx)?);
+        let evaluated = eval_expr(&binding.value, ctx)?;
+        let value = match evaluated {
+            TemplateValue::Bool(false)
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("hidden") =>
+            {
+                continue
+            }
+            TemplateValue::Bool(true) if binding.prop.eq_ignore_ascii_case("hidden") => {
+                "hidden".to_string()
+            }
+            TemplateValue::Bool(true) if is_boolean_html_attribute(&binding.prop) => String::new(),
+            value => value_to_str(&value),
+        };
         if crate::is_url_attr(&binding.prop) && !crate::is_safe_url_value(&binding.prop, &value) {
             continue;
         }
@@ -517,6 +530,38 @@ fn push_bindings(
         out.push('"');
     }
     Ok(())
+}
+
+fn is_boolean_html_attribute(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "allowfullscreen"
+            | "async"
+            | "autofocus"
+            | "autoplay"
+            | "checked"
+            | "controls"
+            | "default"
+            | "defer"
+            | "disabled"
+            | "disablepictureinpicture"
+            | "disableremoteplayback"
+            | "formnovalidate"
+            | "inert"
+            | "ismap"
+            | "itemscope"
+            | "loop"
+            | "multiple"
+            | "muted"
+            | "nomodule"
+            | "novalidate"
+            | "open"
+            | "playsinline"
+            | "readonly"
+            | "required"
+            | "reversed"
+            | "selected"
+    )
 }
 
 fn push_handlers_and_animations(out: &mut String, el: &Element) {

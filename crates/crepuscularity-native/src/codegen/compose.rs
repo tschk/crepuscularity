@@ -222,9 +222,7 @@ fn compose_node_with_base(
                 .unwrap_or_else(|| format!("{value:.3}f"));
             let on_value_change = bind
                 .as_deref()
-                .map(|bind| {
-                    compose_change(on_change.as_deref(), bind, "JsonPrimitive(it.toDouble())")
-                })
+                .map(|bind| compose_change(on_change.as_deref(), bind, "JsonPrimitive(it)"))
                 .unwrap_or_default();
             format!(
                 "{pad}Column{modifier} {{\n{label}{}Slider(value = {slider_value}, onValueChange = {{ {on_value_change} }}, valueRange = {min:.3}f..{max:.3}f)\n{pad}}}",

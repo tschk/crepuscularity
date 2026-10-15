@@ -312,4 +312,25 @@ mod tests {
         assert_eq!(fetched["ok"], true);
         assert_eq!(fetched["data"]["value"]["id"], "123");
     }
+
+    #[test]
+    fn test_compute_only_bridge() {
+        let b = Bridge::compute_only_bridge();
+
+        // Core capability should be allowed
+        let v = b.invoke_envelope("core", "echo", &json!({"x": 42}));
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["data"]["x"], 42);
+
+        // App capability should be allowed
+        let v = b.invoke_envelope("app", "exit", &json!({}));
+        assert_eq!(v["ok"], true);
+        assert!(b.quit_requested());
+
+        // Other capabilities (e.g., Fs) should be denied
+        // Note: fs plugin won't even be registered because compute_only_bridge only sets up Core and App
+        let v = b.invoke_envelope("fs", "readTextFile", &json!({"path": "dummy.txt"}));
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"]["code"], "unknown_plugin");
+    }
 }

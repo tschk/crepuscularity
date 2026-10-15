@@ -1,13 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use ratatui::backend::Backend;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::{CompletedFrame, Frame, Terminal};
 
 use crate::component::ComponentRegistry;
 use crate::diff::DiffTracker;
 use crate::event::{DispatchResult, Event, EventDispatcher, FocusManager};
-use crate::{collect_focusable_ids, render_template, TemplateContext};
+use crate::render::collect_focusable_ids_with_context;
+use crate::{render_template, TemplateContext};
 
 pub struct Template {
     path: PathBuf,
@@ -16,6 +18,7 @@ pub struct Template {
     focus: FocusManager,
     dispatcher: EventDispatcher,
     diff: DiffTracker,
+    rendered: Option<(Rect, Buffer)>,
     components: ComponentRegistry,
 }
 
@@ -28,6 +31,7 @@ impl Clone for Template {
             focus: self.focus.clone(),
             dispatcher: EventDispatcher::new(),
             diff: DiffTracker::new(),
+            rendered: None,
             components: self.components.clone(),
         }
     }
@@ -88,6 +92,7 @@ impl Template {
             focus: FocusManager::new(),
             dispatcher: EventDispatcher::new(),
             diff: DiffTracker::new(),
+            rendered: None,
             components: ComponentRegistry::new(),
         }
     }
@@ -103,6 +108,7 @@ impl Template {
             focus: FocusManager::new(),
             dispatcher: EventDispatcher::new(),
             diff: DiffTracker::new(),
+            rendered: None,
             components: ComponentRegistry::new(),
         }
     }
@@ -120,6 +126,7 @@ impl Template {
             focus: FocusManager::new(),
             dispatcher: EventDispatcher::new(),
             diff: DiffTracker::new(),
+            rendered: None,
             components: ComponentRegistry::new(),
         })
     }
@@ -143,6 +150,7 @@ impl Template {
     }
 
     pub fn context_mut(&mut self) -> &mut TemplateContext {
+        self.invalidate_render_cache();
         &mut self.ctx
     }
 
@@ -150,6 +158,7 @@ impl Template {
         self.components.register(name, source);
         std::sync::Arc::make_mut(&mut self.ctx.virtual_files)
             .insert(name.to_string(), source.to_string());
+        self.invalidate_render_cache();
         self
     }
 
@@ -158,6 +167,7 @@ impl Template {
     }
 
     pub fn components_mut(&mut self) -> &mut ComponentRegistry {
+        self.invalidate_render_cache();
         &mut self.components
     }
 
@@ -174,7 +184,12 @@ impl Template {
     /// Useful for live-reload pipelines that want to keep the same [`TemplateContext`]
     /// (variables, `base_dir`) but swap the rendered DSL.
     pub fn set_source(&mut self, source: impl Into<String>) -> &mut Self {
-        self.source = source.into();
+        let source = source.into();
+        if self.source != source {
+            self.source = source;
+            self.invalidate_render_cache();
+            self.refresh_focus();
+        }
         self
     }
 
@@ -189,7 +204,7 @@ impl Template {
         }
         let source = std::fs::read_to_string(&self.path)
             .map_err(|e| format!("template error: {:?}: {}", self.path, e))?;
-        self.source = source;
+        self.set_source(source);
         Ok(())
     }
 
@@ -201,14 +216,31 @@ impl Template {
         self.draw(frame, frame.area())
     }
 
+    /// Draw changed template output and replay the cached buffer on skipped renders.
+    ///
+    /// Returns `true` when the template was re-rendered and `false` when the previous
+    /// buffer was reused. Replaying the buffer keeps Ratatui frames complete after its
+    /// back buffer is reset between draw calls.
     pub fn draw_if_changed(&mut self, frame: &mut Frame, area: Rect) -> Result<bool, String> {
-        if self.diff.has_changed(&self.ctx) {
-            render_template(&self.source, &self.ctx, frame, area).map_err(|e| e.to_string())?;
+        let needs_render = self.diff.has_changed(&self.ctx)
+            || self
+                .rendered
+                .as_ref()
+                .is_none_or(|(rendered_area, _)| *rendered_area != area);
+
+        if needs_render {
+            let mut buffer = Buffer::empty(area);
+            crate::render_template_to_buffer(&self.source, &self.ctx, &mut buffer, area)
+                .map_err(|e| e.to_string())?;
             self.diff.update(&self.ctx);
-            Ok(true)
-        } else {
-            Ok(false)
+            self.rendered = Some((area, buffer));
         }
+
+        if let Some((_, buffer)) = &self.rendered {
+            frame.buffer_mut().merge(buffer);
+        }
+
+        Ok(needs_render)
     }
 
     pub fn draw_full_if_changed(&mut self, frame: &mut Frame) -> Result<bool, String> {
@@ -221,6 +253,19 @@ impl Template {
 
     pub fn mark_rendered(&mut self) {
         self.diff.update(&self.ctx);
+    }
+
+    /// Invalidate the cached render output.
+    ///
+    /// Call this after changing rendering inputs that are not tracked in the
+    /// template context, such as an included file on disk.
+    pub fn invalidate(&mut self) {
+        self.invalidate_render_cache();
+    }
+
+    fn invalidate_render_cache(&mut self) {
+        self.diff = DiffTracker::new();
+        self.rendered = None;
     }
 
     /// Returns a reference to the focus manager.
@@ -244,7 +289,7 @@ impl Template {
     /// Refresh the focusable ID list from the current template source and sync
     /// the `focused_id` context variable.
     pub fn refresh_focus(&mut self) {
-        if let Ok(ids) = collect_focusable_ids(&self.source) {
+        if let Ok(ids) = collect_focusable_ids_with_context(&self.source, &self.ctx) {
             self.focus.set_focusable_ids(ids);
         }
         let focused = self.focus.focused_id.clone().unwrap_or_default();
@@ -264,9 +309,7 @@ impl Template {
     /// Handle a crate-level [`Event`].
     pub fn handle_tui_event(&mut self, event: &Event) -> EventResult {
         if self.focus.focusable_ids.is_empty() {
-            if let Ok(ids) = collect_focusable_ids(&self.source) {
-                self.focus.set_focusable_ids(ids);
-            }
+            self.refresh_focus();
         }
 
         let mut handled = false;
