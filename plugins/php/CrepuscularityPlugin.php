@@ -17,12 +17,13 @@ final class CrepuscularityPlugin
             throw new RuntimeException('Invalid characters in CREPUS_BIN');
         }
 
-        $basename = basename(str_replace('\\', '/', $bin));
+        $basename = basename($bin);
         if ($basename !== 'crepus' && $basename !== 'crepus.exe') {
             throw new RuntimeException("Invalid CREPUS_BIN: binary name must be 'crepus' or 'crepus.exe', got '$basename'");
         }
 
-        if ($bin !== $basename && $bin[0] !== '/' && !preg_match('/^[A-Za-z]:[\\\\\/]/', $bin)) {
+        $isAbsolute = str_starts_with($bin, '/') || preg_match('/^[A-Za-z]:[\\\\\/]/', $bin) === 1;
+        if ($bin !== $basename && !$isAbsolute) {
             throw new RuntimeException('Invalid CREPUS_BIN: must be an absolute path or a simple binary name');
         }
 
