@@ -298,9 +298,10 @@ fn generated_v_bindings_compile() {
     let opts = fixture(dir.path(), HEADER, &["v"]);
     let generated = generate_all(&opts).unwrap().remove(0).path;
     // Compile the package declarations inside a standalone executable harness.
-    let mut code = fs::read_to_string(generated)
-        .unwrap()
-        .replacen("module crepuscularity", "module main", 1);
+    let mut code =
+        fs::read_to_string(generated)
+            .unwrap()
+            .replacen("module crepuscularity", "module main", 1);
     code.push_str("\nfn main() {\n");
     for name in NAMES {
         code.push_str(&format!("    _ = C.{name}\n"));
