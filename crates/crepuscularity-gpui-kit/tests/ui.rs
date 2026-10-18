@@ -40,6 +40,12 @@ fn native_controls_update_a_compiled_template(cx: &mut TestAppContext) {
         assert_eq!(window.find("name").focused(), Some(true));
         window.input("Ada 🦀", cx);
         assert_eq!(window.find("name").value(), Some("Ada 🦀"));
+    })
+    .expect("type into native input");
+
+    // Input events reach entity subscriptions when the previous app update ends.
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
         assert_eq!(window.find("status").label(), Some("Ada 🦀: 1"));
 
         window.click("reset", cx);
