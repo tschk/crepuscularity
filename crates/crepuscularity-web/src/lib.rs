@@ -22,8 +22,10 @@ mod void_html;
 /// Enable the `reactive` feature to use signals, memos, and effects in WASM.
 #[cfg(all(target_arch = "wasm32", feature = "reactive"))]
 pub mod reactive {
-    pub use crepuscularity_reactive::dom::{bind_attr, bind_class, bind_text};
-    pub use crepuscularity_reactive::{batch_begin, batch_end, flush, Effect, Memo, Signal};
+    pub use crepuscularity_reactive::{
+        batch_begin, batch_end, bind_attr, bind_bool_attr, bind_checked, bind_class, bind_text,
+        bind_value, flush, hydrate_root, Effect, Memo, Signal,
+    };
 }
 
 pub use bundle::{parse_bundle, render_bundle, render_bundle_with_context, Bundle};
@@ -70,19 +72,35 @@ pub fn render_from_files(
 ) -> Result<String, CrepusError> {
     let mut ctx = ctx.clone();
     ctx.virtual_files = std::sync::Arc::new(files.clone());
+    let entry_path = entry.split_once('#').map_or(entry, |(path, _)| path);
+    ctx.base_dir = Path::new(entry_path)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|parent| parent.to_path_buf());
 
     if let Some((file_part, comp_name)) = entry.split_once('#') {
         let content = files.get(file_part).ok_or_else(|| {
             CrepusError::render(format!("file not found in virtual fs: {file_part}"))
         })?;
-        return render_component_file_to_html(content, comp_name, &ctx);
+        return crepuscularity_core::render_entry::render_component_file(
+            content,
+            comp_name,
+            &ctx,
+            |nodes, ctx| {
+                render::Walker::plain(0)
+                    .with_virtual_only(true)
+                    .nodes(nodes, ctx)
+            },
+        );
     }
 
     let content = files
         .get(entry)
         .ok_or_else(|| CrepusError::render(format!("file not found in virtual fs: {entry}")))?;
     let nodes = parse_template_with_path(content, Some(Path::new(entry)))?;
-    render_nodes_to_html(&nodes, &ctx)
+    render::Walker::plain(0)
+        .with_virtual_only(true)
+        .nodes(&nodes, &ctx)
 }
 
 /// Render multiple entry points from a virtual file map in parallel (requires `parallel` feature).
@@ -164,9 +182,9 @@ pub fn par_render_component_file(
 
 /// Parse a single `.crepus` template string and render it to escaped HTML.
 ///
-/// This entry point does not resolve filesystem includes. For component trees that use
-/// `include`, prefer [`render_from_files`] so every source file is supplied through the same
-/// virtual file map used by WASM and static-site builds.
+/// Native rendering can resolve filesystem includes relative to `ctx.base_dir`,
+/// after checking `ctx.virtual_files`. Use [`render_from_files`] for self-contained
+/// component trees whose sources must come only from the supplied virtual file map.
 #[tracing::instrument(skip(template, ctx), fields(template_len = template.len()))]
 pub fn render_template_to_html(
     template: &str,
@@ -213,15 +231,18 @@ fn render_embed(embed: &EmbedNode, ctx: &TemplateContext) -> Result<String, Crep
     let props_json = serde_json::Value::Object(props).to_string();
     let adapter = embed.adapter.as_deref().unwrap_or("module");
     let scope_attr = if adapter == "rust" {
-        format!(" data-crepus-scope=\"{}\"", escape_html(&embed.src))
+        format!(
+            " data-crepus-scope=\"{}\"",
+            escape_html_attribute(&embed.src)
+        )
     } else {
         String::new()
     };
     Ok(format!(
         "<div data-crepus-island=\"\" data-crepus-island-src=\"{}\" data-crepus-island-adapter=\"{}\"{scope_attr} data-crepus-island-props=\"{}\"></div>",
-        escape_html(&embed.src),
-        escape_html(adapter),
-        escape_html(&props_json)
+        escape_html_attribute(&embed.src),
+        escape_html_attribute(adapter),
+        escape_html_attribute(&props_json)
     ))
 }
 
@@ -372,27 +393,23 @@ fn render_nodes_with_hydration_impl(
 ) -> Result<String, CrepusError> {
     use std::sync::atomic::Ordering;
 
-    // Process LetDecl nodes first.
-    let mut overlay = Some(ctx.clone());
-    for node in nodes {
-        if let Node::LetDecl(decl) = node {
-            let overlay_ctx = overlay.as_mut().expect("overlay for hydration");
-            if decl.is_default && overlay_ctx.vars.contains_key(&decl.name) {
-                continue;
-            }
-            let val = crepuscularity_core::eval::eval_expr(&decl.expr, overlay_ctx)?;
-            overlay_ctx.vars.insert(decl.name.clone(), val);
-        }
-    }
-    let ctx = overlay.as_ref().expect("overlay for hydration");
+    let mut overlay: Option<TemplateContext> = None;
 
     let mut html = String::new();
     let mut is_first = is_root;
 
     for node in nodes {
-        if let Node::LetDecl(_) = node {
+        if let Node::LetDecl(decl) = node {
+            let current = overlay.as_ref().unwrap_or(ctx);
+            if decl.is_default && current.vars.contains_key(&decl.name) {
+                continue;
+            }
+            let current = overlay.get_or_insert_with(|| ctx.clone());
+            let value = eval_expr(&decl.expr, current)?;
+            current.vars.insert(decl.name.clone(), value);
             continue;
         }
+        let ctx = overlay.as_ref().unwrap_or(ctx);
         if let Node::Element(el) = node {
             let dyn_id = if node_is_dynamic(node) {
                 Some(counter.fetch_add(1, Ordering::Relaxed))
@@ -420,6 +437,7 @@ fn render_element_with_hydration(
     is_root: bool,
     dyn_id: Option<u32>,
 ) -> Result<String, CrepusError> {
+    void_html::validate_children(el)?;
     if el.tag == "slot" {
         return if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
             render_nodes_to_html(slot_nodes, slot_ctx)
@@ -428,16 +446,14 @@ fn render_element_with_hydration(
         };
     }
 
-    let mut class_names = el.classes.clone();
-    for cc in &el.conditional_classes {
-        if ctx.eval_condition(&cc.condition)? {
-            class_names.push(cc.class.clone());
-        }
-    }
-
     let mut out = String::new();
     out.push('<');
     out.push_str(&el.tag);
+    if let Some(id) = &el.id {
+        out.push_str(" id=\"");
+        out.push_str(&escape_html_attribute(id));
+        out.push('"');
+    }
 
     if is_root {
         out.push_str(" data-crepus-root");
@@ -446,43 +462,15 @@ fn render_element_with_hydration(
         out.push_str(&format!(" data-crepus-id=\"{id}\""));
     }
 
-    if !class_names.is_empty() {
+    if let Some(classes) = build_class_attr(&el.classes, &el.conditional_classes, ctx)? {
         out.push_str(" class=\"");
-        out.push_str(&escape_html(&ctx.interpolate(&class_names.join(" "))?));
+        out.push_str(&classes);
         out.push('"');
     }
 
-    for binding in &el.bindings {
-        out.push(' ');
-        out.push_str(&binding.prop);
-        out.push_str("=\"");
-        let value = crepuscularity_core::context::value_to_str(
-            &crepuscularity_core::eval::eval_expr(&binding.value, ctx)?,
-        );
-        out.push_str(&escape_html(&value));
-        out.push('"');
-    }
+    render::push_bindings(&mut out, el, ctx, false)?;
 
-    for handler in &el.event_handlers {
-        out.push(' ');
-        out.push_str("data-on");
-        out.push_str(&handler.event);
-        out.push_str("=\"");
-        out.push_str(&escape_html(&handler.handler));
-        out.push('"');
-    }
-
-    for animation in &el.animations {
-        out.push(' ');
-        out.push_str("data-animate-");
-        out.push_str(&animation.property);
-        out.push_str("=\"");
-        out.push_str(&escape_html(&format!(
-            "{} {}",
-            animation.duration_expr, animation.easing
-        )));
-        out.push('"');
-    }
+    render::push_handlers_and_animations(&mut out, el)?;
 
     if void_html::is_void_html_tag(&el.tag) {
         out.push_str(" />");
@@ -491,12 +479,16 @@ fn render_element_with_hydration(
 
     out.push('>');
 
-    out.push_str(&render_nodes_with_hydration_impl(
-        &el.children,
-        ctx,
-        counter,
-        false,
-    )?);
+    if let Some(value) = render::textarea_content(el, ctx, 0)? {
+        out.push_str(&value);
+    } else {
+        out.push_str(&render_nodes_with_hydration_impl(
+            &el.children,
+            ctx,
+            counter,
+            false,
+        )?);
+    }
 
     out.push_str("</");
     out.push_str(&el.tag);
@@ -542,11 +534,16 @@ pub fn escape_html(input: &str) -> String {
     out
 }
 
+pub(crate) fn escape_html_attribute(input: &str) -> String {
+    // Character references survive HTML carriage-return preprocessing.
+    escape_html(input).replace('\r', "&#13;")
+}
+
 /// True for attributes whose value a browser resolves as a URL, and which
 /// therefore carry a scheme that `escape_html` cannot neutralise.
 pub(crate) fn is_url_attr(prop: &str) -> bool {
     matches!(
-        prop,
+        prop.to_ascii_lowercase().as_str(),
         "href" | "src" | "srcset" | "action" | "formaction" | "poster" | "data" | "xlink:href"
     )
 }
@@ -578,7 +575,10 @@ fn url_scheme(value: &str) -> String {
 pub(crate) fn is_safe_url_value(prop: &str, value: &str) -> bool {
     match url_scheme(value).as_str() {
         "javascript" | "vbscript" => false,
-        "data" => !matches!(prop, "href" | "xlink:href" | "action" | "formaction"),
+        "data" => !matches!(
+            prop.to_ascii_lowercase().as_str(),
+            "href" | "xlink:href" | "action" | "formaction"
+        ),
         _ => true,
     }
 }
@@ -594,6 +594,17 @@ pub(crate) fn build_class_attr(
     let mut joined = String::new();
     let mut first = true;
     for class in base_classes {
+        if let Some(expression) = class
+            .strip_prefix('{')
+            .and_then(|class| class.strip_suffix('}'))
+        {
+            if matches!(
+                eval_expr(expression, ctx),
+                Ok(TemplateValue::Bool(false) | TemplateValue::Null)
+            ) {
+                continue;
+            }
+        }
         let interpolated = ctx.interpolate(class)?;
         let filtered = filter_web_class(&interpolated);
         if let Some(cls) = filtered {
@@ -620,19 +631,45 @@ pub(crate) fn build_class_attr(
     if first {
         return Ok(None);
     }
-    Ok(Some(escape_html(&joined)))
+    Ok(Some(escape_html_attribute(&joined)))
 }
 
 /// Filter target-conditional classes for the web renderer.
 /// `web:p-4` → `p-4`, `tui:h-1` → None, `gpui:h-2` → None, `p-4` → `p-4`.
 fn filter_web_class(class: &str) -> Option<String> {
-    if let Some((prefix, rest)) = class.split_once(':') {
-        return match prefix {
-            "web" => Some(rest.to_string()),
-            "tui" | "gpui" | "gui" | "ios" | "android" | "macos" | "darwin" | "windows"
-            | "win32" | "linux" => None,
-            _ => Some(class.to_string()),
-        };
+    let classes = class
+        .split_whitespace()
+        .filter_map(|class| {
+            if let Some((prefix, rest)) = class.split_once(':') {
+                return match prefix {
+                    "web" => (!rest.is_empty()).then_some(rest),
+                    "tui" | "gpui" | "gui" | "ios" | "android" | "macos" | "darwin" | "windows"
+                    | "win32" | "linux" => None,
+                    _ => Some(class),
+                };
+            }
+            Some(class)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!classes.is_empty()).then_some(classes)
+}
+
+#[cfg(test)]
+mod url_policy_parity_tests {
+    #[test]
+    fn web_url_values_match_reactive_policy() {
+        for (name, value, allowed) in [
+            ("HREF", "javascript:unsafe", false),
+            ("src", "java\nscript:unsafe", false),
+            ("action", "data:text/html,unsafe", false),
+            ("src", "data:image/png;base64,abc", true),
+            ("href", "/local", true),
+            ("href", "https://example.com", true),
+            ("title", "javascript:literal", true),
+        ] {
+            let actual = !super::is_url_attr(name) || super::is_safe_url_value(name, value);
+            assert_eq!(actual, allowed, "{name}: {value}");
+        }
     }
-    Some(class.to_string())
 }

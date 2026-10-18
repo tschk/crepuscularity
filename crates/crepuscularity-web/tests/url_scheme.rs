@@ -53,3 +53,19 @@ fn scheme_check_does_not_touch_non_url_attributes() {
     let html = render("div title=\"javascript:not a url\"\n");
     assert!(html.contains("javascript:not a url"), "{html}");
 }
+
+#[test]
+fn url_attribute_names_are_filtered_case_insensitively() {
+    for (attribute, value) in [
+        ("HREF", "javascript:alert(1)"),
+        ("SrC", "vbscript:unsafe"),
+        ("ACTION", "data:text/html,unsafe"),
+        ("FormAction", "data:text/html,unsafe"),
+    ] {
+        let source = format!("<a {attribute}=\"{value}\">Link</a>");
+        let html = render(&source);
+        assert!(!html.contains(&format!("{attribute}=")), "{html}");
+    }
+    let html = render(r#"<a HREF="/docs">Link</a>"#);
+    assert!(html.contains("HREF=\"/docs\""), "{html}");
+}
