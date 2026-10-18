@@ -668,7 +668,10 @@ assert lib.freed == before
     fn generated_v_matches_compiler_checked_binding() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let root = root.canonicalize().unwrap();
-        let checked = std::fs::read_to_string(root.join("plugins/v/abi_generated.v")).unwrap();
+        // Git can check out the reference with CRLF on Windows.
+        let checked = std::fs::read_to_string(root.join("plugins/v/abi_generated.v"))
+            .unwrap()
+            .replace("\r\n", "\n");
         let body = &checked[checked.find("module crepuscularity").unwrap()..];
         assert_eq!(
             generate_v_imports(
