@@ -47,6 +47,55 @@ fn success(result: std::process::Output) {
         String::from_utf8_lossy(&result.stderr)
     );
 }
+fn assert_generated_signatures(output: &Path) {
+    let source = std::fs::read_to_string(output.join("odin/abi_generated.odin")).unwrap();
+    assert!(
+        source
+            .contains(r#"CrepusEventCallback :: proc "c" (event_json: cstring, userdata: rawptr)"#),
+        "{source}"
+    );
+    for expected in [
+        r#"crepus_session_new :: proc "c" () -> ^CrepusSession ---"#,
+        r#"crepus_session_free :: proc "c" (p0: ^CrepusSession) ---"#,
+        r#"crepus_session_set_template_string :: proc "c" (p0: ^CrepusSession, p1: cstring, p2: cstring) -> i32 ---"#,
+        r#"crepus_session_set_component :: proc "c" (p0: ^CrepusSession, p1: cstring) -> i32 ---"#,
+        r#"crepus_session_set_files_json :: proc "c" (p0: ^CrepusSession, p1: cstring) -> i32 ---"#,
+        r#"crepus_session_set_context_json :: proc "c" (p0: ^CrepusSession, p1: cstring) -> i32 ---"#,
+        r#"crepus_session_apply_context_patch_json :: proc "c" (p0: ^CrepusSession, p1: cstring) -> i32 ---"#,
+        r#"crepus_session_set_event_callback :: proc "c" (p0: ^CrepusSession, p1: CrepusEventCallback, p2: rawptr) -> i32 ---"#,
+        r#"crepus_session_render_ir_json :: proc "c" (p0: ^CrepusSession) -> cstring ---"#,
+        r#"crepus_session_dispatch_event_json :: proc "c" (p0: ^CrepusSession, p1: cstring) -> cstring ---"#,
+        r#"crepus_session_take_last_error :: proc "c" (p0: ^CrepusSession) -> cstring ---"#,
+        r#"crepus_last_error :: proc "c" () -> cstring ---"#,
+        r#"crepus_string_free :: proc "c" (p0: cstring) ---"#,
+    ] {
+        assert!(
+            source.lines().any(|line| line.trim() == expected),
+            "missing {expected}:\n{source}"
+        );
+    }
+    if source.contains("crepus_extra ::") {
+        assert!(
+            source.contains(
+                r#"crepus_extra :: proc "c" (p0: i32, p1: rawptr, p2: cstring) -> i32 ---"#
+            ),
+            "{source}"
+        );
+    }
+    if source.contains("crepus_float ::") {
+        assert!(
+            source.contains(r#"crepus_float :: proc "c" (p0: f32) -> f32 ---"#),
+            "{source}"
+        );
+    }
+    if source.contains("crepus_double ::") {
+        assert!(
+            source.contains(r#"crepus_double :: proc "c" (p0: f64) -> f64 ---"#),
+            "{source}"
+        );
+    }
+}
+
 const SIGNATURES: &str = r#"package check
 import abi "../odin"
 main :: proc() {
@@ -82,12 +131,26 @@ fn check(output: &Path, extra: &str) {
             .expect("installed Odin required"),
     );
 }
-#[test]
-fn actual_header_exports_all_thirteen_exact_typed_odin_signatures() {
+fn actual_header_exports_all_thirteen_exact_typed_odin_signatures_case(compile_external: bool) {
     let output = Output::new();
     generate_all(&options(&output.0, None)).unwrap();
-    check(&output.0, "");
+    assert_generated_signatures(&output.0);
+    if compile_external {
+        check(&output.0, "");
+    }
 }
+
+#[test]
+fn actual_header_exports_all_thirteen_exact_typed_odin_signatures() {
+    actual_header_exports_all_thirteen_exact_typed_odin_signatures_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Odin"]
+fn actual_header_exports_all_thirteen_exact_typed_odin_signatures_compiler_check() {
+    actual_header_exports_all_thirteen_exact_typed_odin_signatures_case(true);
+}
+
 #[test]
 fn reserved_function_name_fails_before_output() {
     for name in ["defer", "context", "or_return", "notin"] {
@@ -115,8 +178,7 @@ fn reserved_function_name_fails_before_output() {
     }
 }
 
-#[test]
-fn selected_header_extra_pointer_scalar_function_is_preserved() {
+fn selected_header_extra_pointer_scalar_function_is_preserved_case(compile_external: bool) {
     let output = Output::new();
     let config = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -128,11 +190,31 @@ fn selected_header_extra_pointer_scalar_function_is_preserved() {
     let header = output.0.join("custom.h");
     std::fs::write(&header, source.replacen("#ifdef __cplusplus", "int32_t crepus_extra(int32_t value, void *userdata, const char *name);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\n#ifdef __cplusplus", 1)).unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
-    check(
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("odin/abi_generated.odin")).unwrap();
+    for name in ["crepus_extra", "crepus_float", "crepus_double"] {
+        assert!(source.contains(name), "missing {name}: {source}");
+    }
+
+    if compile_external {
+        check(
         &output.0,
         "extra: proc \"c\" (i32, rawptr, cstring) -> i32 = abi.crepus_extra\nfloatFn: proc \"c\" (f32) -> f32 = abi.crepus_float\ndoubleFn: proc \"c\" (f64) -> f64 = abi.crepus_double",
     );
+    }
 }
+
+#[test]
+fn selected_header_extra_pointer_scalar_function_is_preserved() {
+    selected_header_extra_pointer_scalar_function_is_preserved_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Odin"]
+fn selected_header_extra_pointer_scalar_function_is_preserved_compiler_check() {
+    selected_header_extra_pointer_scalar_function_is_preserved_case(true);
+}
+
 #[test]
 fn unsupported_arrays_unknown_types_and_opaque_values_do_not_write_bindings() {
     for declaration in [
@@ -205,6 +287,7 @@ fn run(output: &Path, source: &str, library_dir: &Path) -> std::process::Output 
     Command::new(exe).output().unwrap()
 }
 #[test]
+#[ignore = "requires installed Odin, cc, and ar (macOS: xcrun libtool and Command Line Tools)"]
 fn generated_odin_callback_uses_an_independent_real_header_c_stub() {
     let output = Output::new();
     let config = options(&output.0, None);

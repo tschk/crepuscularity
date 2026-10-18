@@ -47,6 +47,49 @@ fn success(result: std::process::Output) {
         String::from_utf8_lossy(&result.stderr)
     );
 }
+fn assert_generated_signatures(output: &Path) {
+    let source = std::fs::read_to_string(output.join("d/abi_generated.d")).unwrap();
+    assert!(source.contains(r#"alias CrepusEventCallback = extern(C) void function(const(char)* event_json, void* userdata);"#), "{source}");
+    for expected in [
+        r#"extern(C) CrepusSession* crepus_session_new();"#,
+        r#"extern(C) void crepus_session_free(CrepusSession*);"#,
+        r#"extern(C) int crepus_session_set_template_string(CrepusSession*, const(char)*, const(char)*);"#,
+        r#"extern(C) int crepus_session_set_component(CrepusSession*, const(char)*);"#,
+        r#"extern(C) int crepus_session_set_files_json(CrepusSession*, const(char)*);"#,
+        r#"extern(C) int crepus_session_set_context_json(CrepusSession*, const(char)*);"#,
+        r#"extern(C) int crepus_session_apply_context_patch_json(CrepusSession*, const(char)*);"#,
+        r#"extern(C) int crepus_session_set_event_callback(CrepusSession*, CrepusEventCallback, void*);"#,
+        r#"extern(C) char* crepus_session_render_ir_json(CrepusSession*);"#,
+        r#"extern(C) char* crepus_session_dispatch_event_json(CrepusSession*, const(char)*);"#,
+        r#"extern(C) char* crepus_session_take_last_error(CrepusSession*);"#,
+        r#"extern(C) char* crepus_last_error();"#,
+        r#"extern(C) void crepus_string_free(char*);"#,
+    ] {
+        assert!(
+            source.lines().any(|line| line.trim() == expected),
+            "missing {expected}:\n{source}"
+        );
+    }
+    if source.contains("crepus_extra(") {
+        assert!(
+            source.contains(r#"extern(C) int crepus_extra(int, void*, const(char)*);"#),
+            "{source}"
+        );
+    }
+    if source.contains("crepus_float(") {
+        assert!(
+            source.contains(r#"extern(C) float crepus_float(float);"#),
+            "{source}"
+        );
+    }
+    if source.contains("crepus_double(") {
+        assert!(
+            source.contains(r#"extern(C) double crepus_double(double);"#),
+            "{source}"
+        );
+    }
+}
+
 const SIGNATURES: &str = r#"import abi_generated;
 static assert(int.sizeof == 4);
 alias Callback = extern(C) void function(const(char)*, void*);
@@ -87,13 +130,27 @@ fn compile(output: &Path, extra: &str) {
             .expect("installed ldc2 required"),
     );
 }
-#[test]
-fn actual_header_exports_all_thirteen_exact_typed_d_signatures() {
+fn actual_header_exports_all_thirteen_exact_typed_d_signatures_case(compile_external: bool) {
     let output = Output::new();
     let files = generate_all(&options(&output.0, None)).unwrap();
     assert_eq!(files.len(), 1);
-    compile(&output.0, "");
+    assert_generated_signatures(&output.0);
+    if compile_external {
+        compile(&output.0, "");
+    }
 }
+
+#[test]
+fn actual_header_exports_all_thirteen_exact_typed_d_signatures() {
+    actual_header_exports_all_thirteen_exact_typed_d_signatures_case(false);
+}
+
+#[test]
+#[ignore = "requires installed D/ldc2"]
+fn actual_header_exports_all_thirteen_exact_typed_d_signatures_compiler_check() {
+    actual_header_exports_all_thirteen_exact_typed_d_signatures_case(true);
+}
+
 #[test]
 fn reserved_function_name_fails_before_output() {
     for name in ["module", "foreach", "ubyte"] {
@@ -121,8 +178,7 @@ fn reserved_function_name_fails_before_output() {
     }
 }
 
-#[test]
-fn selected_header_additional_pointer_scalar_function_is_not_dropped() {
+fn selected_header_additional_pointer_scalar_function_is_not_dropped_case(compile_external: bool) {
     let output = Output::new();
     let config = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -134,8 +190,28 @@ fn selected_header_additional_pointer_scalar_function_is_not_dropped() {
     let header = output.0.join("custom.h");
     std::fs::write(&header, source.replacen("#ifdef __cplusplus", "int32_t crepus_extra(int32_t value, void *userdata, const char *name);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\n#ifdef __cplusplus", 1)).unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
-    compile(&output.0, "alias Extra = extern(C) int function(int, void*, const(char)*);\nstatic assert(is(typeof(&crepus_extra) == Extra));\nalias Float = extern(C) float function(float);\nalias Double = extern(C) double function(double);\nstatic assert(is(typeof(&crepus_float) == Float));\nstatic assert(is(typeof(&crepus_double) == Double));");
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("d/abi_generated.d")).unwrap();
+    for name in ["crepus_extra", "crepus_float", "crepus_double"] {
+        assert!(source.contains(name), "missing {name}: {source}");
+    }
+
+    if compile_external {
+        compile(&output.0, "alias Extra = extern(C) int function(int, void*, const(char)*);\nstatic assert(is(typeof(&crepus_extra) == Extra));\nalias Float = extern(C) float function(float);\nalias Double = extern(C) double function(double);\nstatic assert(is(typeof(&crepus_float) == Float));\nstatic assert(is(typeof(&crepus_double) == Double));");
+    }
 }
+
+#[test]
+fn selected_header_additional_pointer_scalar_function_is_not_dropped() {
+    selected_header_additional_pointer_scalar_function_is_not_dropped_case(false);
+}
+
+#[test]
+#[ignore = "requires installed D/ldc2"]
+fn selected_header_additional_pointer_scalar_function_is_not_dropped_compiler_check() {
+    selected_header_additional_pointer_scalar_function_is_not_dropped_case(true);
+}
+
 #[test]
 fn unsupported_array_unknown_type_and_opaque_value_fail_before_output() {
     for declaration in [
@@ -169,6 +245,7 @@ fn unsupported_array_unknown_type_and_opaque_value_fail_before_output() {
     }
 }
 #[test]
+#[ignore = "requires installed ldc2 and cc"]
 fn generated_d_callback_roundtrips_through_independent_real_header_c_stub() {
     let output = Output::new();
     let config = options(&output.0, None);

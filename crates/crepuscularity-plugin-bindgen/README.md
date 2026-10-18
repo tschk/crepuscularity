@@ -44,3 +44,25 @@ The session lifecycle test links generated Rust bindings to the real ABI library
 cargo build -p crepuscularity-abi
 CREPUS_ABI_LIB_DIR="$PWD/target/debug" cargo test -p crepuscularity-plugin-bindgen generated_rust_bindings_run_the_real_session_lifecycle -- --ignored
 ```
+
+
+D, Nim, and Odin generation/signature assertions run in the default suite without
+those language toolchains. Their compiler and independent C-stub runtime checks
+are explicit ignored tests; missing tools fail when opted in, rather than silently
+skipping. These checks require `ldc2`, `nim`, `odin`, a C compiler (`cc`), and `ar`.
+On macOS the Odin C-stub check also uses `xcrun libtool` and installed Command Line
+Tools. Real Rust ABI checks require `CREPUS_ABI_LIB` pointing to the freshly built
+platform library (`.dylib`, `.so`, or `.dll`); the V lifecycle fixture uses its
+existing `CREPUS_ABI_LIB_DIR` directory setting.
+
+To run every opt-in check (also install Zig, V, and the .NET 8 SDK required by the
+other backend checks):
+
+```sh
+cargo build -p crepuscularity-abi
+CREPUS_ABI_LIB="$PWD/target/debug/libcrepuscularity_abi.dylib" \
+CREPUS_ABI_LIB_DIR="$PWD/target/debug" \
+cargo test -p crepuscularity-plugin-bindgen -- --ignored --test-threads=1
+```
+
+Use the platform's actual library filename in `CREPUS_ABI_LIB`.
