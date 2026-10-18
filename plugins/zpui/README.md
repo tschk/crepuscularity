@@ -238,3 +238,24 @@ and the separate notices for upstream vendored libraries and assets when
 distributing a linked application. This PR contains the independently written
 adapter and Crepuscularity fixtures. The Unicode dependency is MIT OR Apache-2.0;
 this distribution includes its MIT license and copyright notice under `native-text`.
+
+### Key-validation performance probe
+
+From this directory, run the standalone CPU-time probe on macOS/Linux:
+
+```sh
+zig test -OReleaseFast --dep host -Mroot=tests/key_scaling.zig \
+  --dep view_ir -Mhost=src/host.zig -Mview_ir=src/view_ir.zig \
+  -lc --test-filter 'manual collection'
+```
+
+It validates 1,000/2,000/4,000 unique keys and a duplicate at the last row,
+25 times each, checking the original slice and final row. On an Apple Silicon
+host with Zig 0.16.0, median CPU times from three runs were
+24.6/107.5/461.2 ms for the original unique-key scan and 0.37/0.63/1.47 ms
+for the hash-set version. Last-row duplicates changed from
+25.8/108.5/457.4 ms to 0.36/0.67/1.25 ms. These are validation measurements,
+not frame latency. Temporary hash storage is released after each call; allocation
+failure or a list beyond safe hash-table capacity uses the original scan and
+preserves its first-error behavior. The normal decoder test command also runs
+host tests covering that fallback and borrowed-slice/error compatibility.
