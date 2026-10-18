@@ -139,6 +139,7 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         // bind:prop={expr}
         if let Some(prop) = key.strip_prefix("bind:") {
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: prop.to_string(),
                 value: attr.as_expr().unwrap_or_default(),
             });
@@ -148,6 +149,7 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         // All other attributes with values → binding
         if let Some(value) = attr.as_expr() {
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: key.clone(),
                 value,
             });

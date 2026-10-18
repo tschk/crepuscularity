@@ -230,6 +230,14 @@ fn render_element(
         }
     }
 
+    for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                classes.extend(value_to_str(&value).split_whitespace().map(str::to_string));
+            }
+        }
+    }
+
     let mut children = render_nodes_list(&el.children, ctx, depth)?;
     let text = take_text_child(&mut children);
     let mut attrs = Vec::new();
@@ -238,6 +246,25 @@ fn render_element(
     }
     apply_class_attrs(&classes, &mut attrs);
     for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute {
+            if binding.matches_prop("class") {
+                continue;
+            }
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                let mut name = lvgl_attr_name(&binding.prop);
+                let value = if matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "hidden" | "disabled" | "checked"
+                ) {
+                    name.make_ascii_lowercase();
+                    "true".to_owned()
+                } else {
+                    value_to_str(&value)
+                };
+                attrs.push((name, value));
+            }
+            continue;
+        }
         attrs.push((
             lvgl_attr_name(&binding.prop),
             eval_binding(&binding.value, ctx)?,

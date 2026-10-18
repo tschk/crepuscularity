@@ -452,16 +452,7 @@ fn render_element_with_hydration(
         out.push('"');
     }
 
-    for binding in &el.bindings {
-        out.push(' ');
-        out.push_str(&binding.prop);
-        out.push_str("=\"");
-        let value = crepuscularity_core::context::value_to_str(
-            &crepuscularity_core::eval::eval_expr(&binding.value, ctx)?,
-        );
-        out.push_str(&escape_html(&value));
-        out.push('"');
-    }
+    render::push_bindings(&mut out, el, ctx, false)?;
 
     for handler in &el.event_handlers {
         out.push(' ');
@@ -681,5 +672,51 @@ mod tests {
 
         assert_eq!(url_scheme("://example.com"), "");
         assert_eq!(url_scheme(":"), "");
+    }
+}
+
+#[cfg(all(test, feature = "hydration"))]
+mod attribute_origin_hydration_tests {
+    #[test]
+    fn hydration_retains_attribute_presence_and_omits_null() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<input [attr.checked]=\"false\" [disabled]=\"false\" [attr.title]=\"null\"/>",
+            Some(std::path::Path::new("Entry.ng")),
+        )
+        .unwrap();
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &super::TemplateContext::new(),
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(html.contains("checked=\"false\""), "{html}");
+        assert!(!html.contains(" disabled="), "{html}");
+        assert!(!html.contains(" title="), "{html}");
+    }
+
+    #[test]
+    fn hydration_keeps_attribute_class_on_slot_rotate_elements() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<slot-rotate [attr.class]=\"classes\">one<!-- split -->two</slot-rotate>",
+            Some(std::path::Path::new("Entry.ng")),
+        )
+        .unwrap();
+        let mut ctx = super::TemplateContext::new();
+        ctx.set("classes", "literal-{name} & special");
+        ctx.set("name", "CHANGED");
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &ctx,
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(
+            html.contains("class=\"literal-{name} &amp; special\""),
+            "{html}"
+        );
+        assert_eq!(html.matches(" class=").count(), 1, "{html}");
     }
 }

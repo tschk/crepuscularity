@@ -120,6 +120,7 @@ pub(crate) fn vue_build_element(
                 )));
             }
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: "bind".to_string(),
                 value: directive_expr(attr),
             });
@@ -146,6 +147,7 @@ pub(crate) fn vue_build_element(
             match arg {
                 "class" => apply_dynamic_class(&expr, &mut classes, &mut conditional_classes)?,
                 "id" => bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
                     prop: "id".to_string(),
                     value: expr,
                 }),
@@ -155,6 +157,7 @@ pub(crate) fn vue_build_element(
                     ))
                 }
                 _ => bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
                     prop: arg.to_string(),
                     value: expr,
                 }),
@@ -195,6 +198,7 @@ pub(crate) fn vue_build_element(
         }
 
         bindings.push(Binding {
+            origin: crate::ast::BindingOrigin::Expression,
             prop: key.to_string(),
             value: literal_expr(attr),
         });
