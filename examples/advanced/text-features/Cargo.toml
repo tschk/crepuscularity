@@ -11,10 +11,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-# Enable for full tracking/transform demo with a patched gpui checkout.
+# Enable the text extras supported by the pinned GPUI revision.
 vendor-gpui-text = ["crepuscularity-gpui/gpui-text-extras"]
 
 [dependencies]
-gpui = { workspace = true }
-gpui_platform = { workspace = true }
+gpui = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", default-features = false, features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97" }
 crepuscularity-gpui = { path = "../../../crates/crepuscularity-gpui" }

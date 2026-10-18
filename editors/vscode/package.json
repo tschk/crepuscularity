@@ -93,6 +93,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "bun run compile",
+    "test": "bun test tests",
     "lint": "bun x eslint src --ext ts || true"
   },
   "dependencies": {

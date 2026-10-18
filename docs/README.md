@@ -5,13 +5,14 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | Guide | Description |
 | --- | --- |
 | [DSL reference](dsl.md) | Syntax, control flow, attributes, animations, SwiftUI semantic tags |
-| [Input frontends](frontends.md) | `.crepus`, JSX/TSX, `.svelte`, `.vue` → one AST; what Svelte/Vue do not support |
+| [Input frontends](frontends.md) | `.crepus`, JSX/TSX, Svelte, Vue, Astro, Angular → one AST; support and limits |
 | [Components](components.md) | `include`, slots, defaults, multi-component files |
 | [CLI](cli.md) | `crepus` commands for apps, web, and extensions |
 | [Production readiness](production.md) | build gates, security boundaries, and performance checks |
 | [Observability](observability.md) | timing, tracing, and flamegraph workflow |
 | [Timing profile](timing-profile.md) | SSR request breakdown, flamegraph recipes |
 | [Runtime and reactivity](runtime.md) | state model, update lifecycle, hydration, and Metal setup |
+| [Web runtime threads](web-runtime.md) | Worker defaults, event ordering, and main-thread compatibility |
 | [Browser extensions](webext.md) | Manifest V3 apps with `crepus webext` |
 | [Extension policy (MV3)](webext-policy.md) | CSP safety, store submission, permissions checklist |
 | [GPUI integration](gpui.md) | Desktop apps with GPUI |
