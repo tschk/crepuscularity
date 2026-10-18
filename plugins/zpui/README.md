@@ -81,6 +81,13 @@ old frame has been replaced after a document update. Schedule replacement and
 retirement through the host's frame lifecycle rather than freeing a document
 inside one of its own click callbacks.
 
+Callback payloads and copied collection scopes belong to retained per-window,
+per-namespace storage, rather than the temporary frame arena. Successful renders
+retain the current and preceding generations through presentation; failed
+renders discard only their new allocations. Window/element disposal releases
+the storage. Hosts must still copy callback arguments they retain after a
+callback returns.
+
 Give each adapter instance a distinct namespace. Element IDs include that
 namespace, the node's tree position, and its optional source `style.id`.
 IDs distinguish siblings and instances; positional IDs do not promise to retain
