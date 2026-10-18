@@ -177,7 +177,8 @@ fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions() {
     let original = std::fs::read_to_string(
         repo_root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let custom = original.replace("#ifdef __cplusplus\n}", "const char *crepus_extra(const void *userdata);\nint32_t crepus_extra_status(int32_t value);\nvoid CallingConvention(void);\n\n#ifdef __cplusplus\n}");
     assert_ne!(custom, original);
     std::fs::write(&header, custom).unwrap();
@@ -191,7 +192,8 @@ fn csharp_fixed_width_scalars_keep_their_native_calling_types() {
     let original = std::fs::read_to_string(
         repo_root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let custom = original.replace("#ifdef __cplusplus\n}", "uint32_t crepus_unsigned(uint32_t value);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\nint64_t crepus_signed_wide(int64_t value);\nuint64_t crepus_unsigned_wide(uint64_t value);\n\n#ifdef __cplusplus\n}");
     assert_ne!(custom, original);
     std::fs::write(&header, custom).unwrap();
@@ -203,7 +205,8 @@ fn csharp_rejects_unsupported_declarations_before_writing_bindings() {
     let original = std::fs::read_to_string(
         repo_root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let incompatible = original.replace(
         "typedef void (*CrepusEventCallback)(const char *event_json, void *userdata);",
         "typedef int32_t (*CrepusEventCallback)(const char *event_json, void *userdata);",
@@ -256,7 +259,8 @@ fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy() {
     let original = std::fs::read_to_string(
         repo_root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     std::fs::write(&header, &original).unwrap();
     let manifest = output.0.join("plugins.toml");
     std::fs::write(

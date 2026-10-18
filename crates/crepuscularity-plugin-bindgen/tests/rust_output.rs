@@ -132,7 +132,8 @@ fn overridden_header_preserves_typedefs_and_additional_functions() {
     let original = std::fs::read_to_string(
         root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let varied = original
         .replace(
             "typedef struct CrepusSession CrepusSession;",
@@ -188,7 +189,8 @@ fn oversized_original_headers_are_rejected_without_writing_generated_rust() {
     let original = std::fs::read_to_string(
         root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     for limit in ["bytes", "lines"] {
         let output = TempOutput::new();
         let header = output.0.join("oversized.h");

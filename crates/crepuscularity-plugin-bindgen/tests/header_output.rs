@@ -190,3 +190,70 @@ fn ambiguous_or_incomplete_prototypes_fail_without_writing_any_target_output() {
         }
     }
 }
+
+#[test]
+fn raw_crlf_custom_headers_preserve_extra_exports_for_all_typed_backends() {
+    let output = Output::new();
+    let baseline = std::fs::read_to_string(
+        root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let custom = baseline.replace(
+        "#ifdef __cplusplus\n}",
+        "int32_t crepus_crlf_extra(int32_t value, const char *name);\n\n#ifdef __cplusplus\n}",
+    );
+    assert_ne!(
+        custom, baseline,
+        "the extra export must actually be inserted"
+    );
+    for (name, source) in [
+        ("lf", custom.clone()),
+        ("crlf", custom.replace('\n', "\r\n")),
+    ] {
+        if name == "crlf" {
+            assert!(source.contains("\r\n"));
+            assert!(!source.replace("\r\n", "").contains('\n'));
+        }
+        let dir = output.0.join(name);
+        std::fs::create_dir(&dir).unwrap();
+        let header = dir.join("crepuscularity_abi.h");
+        std::fs::write(&header, &source).unwrap();
+        assert_eq!(std::fs::read_to_string(&header).unwrap(), source);
+        let files = generate_all(&options(&dir.join("generated"), header, &LANGUAGES)).unwrap();
+        assert_eq!(files.len(), LANGUAGES.len());
+    }
+    for (language, filename) in [
+        ("rust", "abi_generated.rs"),
+        ("csharp", "AbiGenerated.cs"),
+        ("nim", "abi_generated.nim"),
+        ("d", "abi_generated.d"),
+        ("odin", "abi_generated.odin"),
+    ] {
+        let read = |ending: &str| {
+            std::fs::read_to_string(
+                output
+                    .0
+                    .join(ending)
+                    .join("generated")
+                    .join(language)
+                    .join(filename),
+            )
+            .unwrap()
+        };
+        let lf = read("lf");
+        let crlf = read("crlf");
+        for export in [
+            "crepus_crlf_extra",
+            "crepus_session_new",
+            "crepus_string_free",
+        ] {
+            assert!(crlf.contains(export), "{language} dropped {export}: {crlf}");
+        }
+        assert_eq!(
+            normalized_output(&crlf),
+            normalized_output(&lf),
+            "{language} changed CRLF signatures"
+        );
+    }
+}

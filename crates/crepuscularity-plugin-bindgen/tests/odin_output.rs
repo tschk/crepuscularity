@@ -161,7 +161,8 @@ fn reserved_function_name_fails_before_output() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("reserved.h");
         std::fs::write(
             &header,
@@ -186,7 +187,8 @@ fn selected_header_extra_pointer_scalar_function_is_preserved_case(compile_exter
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("custom.h");
     std::fs::write(&header, source.replacen("#ifdef __cplusplus", "int32_t crepus_extra(int32_t value, void *userdata, const char *name);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\n#ifdef __cplusplus", 1)).unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
@@ -229,7 +231,8 @@ fn unsupported_arrays_unknown_types_and_opaque_values_do_not_write_bindings() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("unsupported.h");
         std::fs::write(
             &header,

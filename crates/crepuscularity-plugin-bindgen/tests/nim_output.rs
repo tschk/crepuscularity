@@ -218,7 +218,8 @@ fn selected_header_extra_function_preserves_pointer_and_scalar_types_case(compil
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("custom.h");
     let extra = "int32_t crepus_extra(int32_t value, void *userdata, const char *name);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\n";
     std::fs::write(
@@ -276,7 +277,8 @@ fn unsupported_array_or_unknown_type_fails_without_writing_bindings() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("unsupported.h");
         std::fs::write(
             &header,
@@ -488,7 +490,8 @@ fn style_insensitive_function_names_fail_without_writing_bindings() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("collision.h");
     std::fs::write(
         &header,
@@ -515,7 +518,8 @@ fn style_insensitive_function_names_preserve_distinct_parameter_overloads_case(
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("overloads.h");
     std::fs::write(&header, source.replacen(
         "#ifdef __cplusplus",
@@ -559,7 +563,8 @@ fn style_insensitive_parameter_names_fail_without_writing_bindings() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("parameter-collision.h");
     std::fs::write(
         &header,
@@ -584,7 +589,8 @@ fn parameter_first_character_case_remains_distinct_case(compile_external: bool) 
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("parameter-case.h");
     std::fs::write(
         &header,
@@ -640,7 +646,8 @@ fn equivalent_parameter_type_aliases_fail_without_writing_bindings() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("alias-collision.h");
         let extra = format!("void crepus_alias({left} value);\nvoid crepusAlias({right} value);\n#ifdef __cplusplus");
         std::fs::write(&header, source.replacen("#ifdef __cplusplus", &extra, 1)).unwrap();
@@ -662,7 +669,8 @@ fn distinct_long_and_character_overloads_remain_supported_case(compile_external:
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("long-overloads.h");
     std::fs::write(
         &header,
