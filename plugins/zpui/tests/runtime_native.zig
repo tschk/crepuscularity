@@ -108,6 +108,8 @@ const Fixture = struct {
     fn settle(self: *Fixture) void {
         self.app.runUntilParked();
         self.window.drawAndPresent();
+        // Idle presentation may release every frame-arena allocation before input.
+        self.window.element_arena.trim();
     }
     fn model(self: *Fixture) *View {
         var lease = self.handle.rootView(self.app).?.lease(self.app);
@@ -411,4 +413,28 @@ test "crepus-zpui link accessible names follow active conditions and scoped coll
     f.settle();
     _ = try f.node(.link, "Wait");
     try testing.expectError(error.MissingNode, f.node(.link, "First Second"));
+}
+
+test "crepus-zpui button callback survives presented frame arena release" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"button","label":"Choose","onClick":"choose","style":{"width":100,"height":40}}]}
+    );
+    defer f.deinit();
+    // Present clears frame allocations; the normal idle timer later trims them.
+    f.window.element_arena.trim();
+    try testing.expectEqual(@as(usize, 0), f.window.element_arena.capacity());
+    try f.click("Choose");
+    try testing.expectEqual(@as(usize, 1), f.model().clicks);
+}
+
+test "crepus-zpui scoped callback survives presented frame arena release" {
+    var f = try Fixture.init(
+        \\{"version":7,"root":[{"kind":"forEach","bind":"rows","itemName":"row","itemBody":[{"kind":"button","label":"Choose","onClick":"choose","style":{"width":100,"height":40}}]}]}
+    );
+    defer f.deinit();
+    f.window.element_arena.trim();
+    try testing.expectEqual(@as(usize, 0), f.window.element_arena.capacity());
+    try f.click("Choose");
+    try testing.expectEqual(@as(usize, 1), f.model().clicks);
+    try testing.expectEqualStrings("first", f.model().last_key.?);
 }

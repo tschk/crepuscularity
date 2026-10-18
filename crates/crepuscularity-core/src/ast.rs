@@ -1,6 +1,6 @@
 /// Runtime AST — mirrors the compile-time macro AST but operates on owned strings.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Element(Element),
     Text(Vec<TextPart>),
@@ -14,7 +14,7 @@ pub enum Node {
     RawHtml(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Element {
     pub tag: String,
     pub id: Option<String>,
@@ -26,13 +26,13 @@ pub struct Element {
     pub children: Vec<Node>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConditionalClass {
     pub class: String,
     pub condition: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventHandler {
     pub event: String,
     pub modifiers: Vec<String>,
@@ -47,7 +47,7 @@ pub enum BindingOrigin {
     Attribute,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     pub origin: BindingOrigin,
     pub prop: String,
@@ -101,7 +101,7 @@ mod binding_origin_tests {
 /// ```text
 /// div animate:opacity={300ms ease-in-out} animate:scale={500ms linear}
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnimationSpec {
     /// The property to animate: "opacity", "scale", "slide-x", "slide-y", "fade", "pulse"
     pub property: String,
@@ -113,39 +113,39 @@ pub struct AnimationSpec {
     pub repeat: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextPart {
     Literal(String),
     Expr(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IfBlock {
     pub condition: String,
     pub then_children: Vec<Node>,
     pub else_children: Option<Vec<Node>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForBlock {
     pub pattern: String,
     pub iterator: String,
     pub body: Vec<Node>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchBlock {
     pub expr: String,
     pub arms: Vec<MatchArm>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchArm {
     pub pattern: String,
     pub body: Vec<Node>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LetDecl {
     pub name: String,
     pub expr: String,
@@ -161,7 +161,7 @@ pub struct LetDecl {
 ///     div p-4
 ///         "slot content"
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncludeNode {
     /// Relative path to the included `.crepus` file.
     pub path: String,
@@ -172,7 +172,7 @@ pub struct IncludeNode {
     pub slot: Vec<Node>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbedNode {
     pub src: String,
     pub adapter: Option<String>,

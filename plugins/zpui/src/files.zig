@@ -26,10 +26,10 @@ pub fn matches(path: []const u8, filter: []const []const u8) bool {
     return false;
 }
 
-pub fn drop(comptime View: type, self: *View, cx: *zpui.Context(View), element: zpui.StatefulDiv, node: *const ir.Node, scope: ?*const host.Scope) !zpui.StatefulDiv {
+pub fn drop(comptime View: type, self: *View, cx: *zpui.Context(View), element: zpui.StatefulDiv, node: *const ir.Node, scope: ?*const host.Scope, callbacks: std.mem.Allocator) !zpui.StatefulDiv {
     const Payload = struct { node: *const ir.Node, scope: ?*const host.Scope, extensions: []const []const u8 };
-    const payload = try zpui.frameAllocator().create(Payload);
-    payload.* = .{ .node = node, .scope = scope, .extensions = try extensions(View, self, node.accept) };
+    const payload = try callbacks.create(Payload);
+    payload.* = .{ .node = node, .scope = scope, .extensions = try ownExtensions(callbacks, try extensions(View, self, node.accept)) };
     if (node.on_drop == null) return element;
     const Callback = struct {
         fn run(view: *View, data: *const Payload, event: *const zpui.ExternalPaths, window: *zpui.Window, context: *zpui.Context(View)) void {
@@ -73,13 +73,13 @@ fn lifetime(app: *zpui.App) *Lifetime {
     return token;
 }
 
-pub fn picker(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), element: zpui.StatefulDiv, node: *const ir.Node, scope: ?*const host.Scope) !zpui.StatefulDiv {
+pub fn picker(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), element: zpui.StatefulDiv, node: *const ir.Node, scope: ?*const host.Scope, callbacks: std.mem.Allocator) !zpui.StatefulDiv {
     const filter = try extensions(View, self, node.accept);
     if (node.on_pick == null) return element.role(.button).ariaLabel(node.text).child(node.text);
     if (window.app.platform.vtable.promptForPaths == null) return error.MissingFileDialogBackend;
     const Payload = struct { node: *const ir.Node, scope: ?*const host.Scope, filter: []const []const u8 };
-    const payload = try zpui.frameAllocator().create(Payload);
-    payload.* = .{ .node = node, .scope = scope, .filter = filter };
+    const payload = try callbacks.create(Payload);
+    payload.* = .{ .node = node, .scope = scope, .filter = try ownExtensions(callbacks, filter) };
     const Job = struct {
         arena: std.heap.ArenaAllocator,
         token: *Lifetime,
@@ -132,4 +132,10 @@ pub fn picker(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
         }
     };
     return element.role(.button).ariaLabel(node.text).child(node.text).cursorPointer().focusable().onClick(cx.listenerWith(payload, Callback.click));
+}
+
+fn ownExtensions(a: std.mem.Allocator, filter: []const []const u8) ![]const []const u8 {
+    const owned = try a.alloc([]const u8, filter.len);
+    for (filter, owned) |value, *out| out.* = try a.dupe(u8, value);
+    return owned;
 }

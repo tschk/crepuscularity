@@ -5,7 +5,7 @@ const ir = @import("view_ir");
 const host = @import("host.zig");
 const images = @import("images.zig");
 
-pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, identity: []const u8, scope: ?*const host.Scope) !zpui.AnyElement {
+pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, identity: []const u8, scope: ?*const host.Scope, callbacks: std.mem.Allocator) !zpui.AnyElement {
     const selected = try host.selectedAt(View, self, node, scope);
     var row = zpui.div().id(identity).role(.group).ariaLabel(node.bind.?).flex().flexRow().gap(zpui.px(4));
     const Payload = struct { node: *const ir.Node, scope: ?*const host.Scope, index: usize };
@@ -25,7 +25,7 @@ pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
         }
     };
     for (node.options, 0..) |option, index| {
-        const payload = try zpui.frameAllocator().create(Payload);
+        const payload = try callbacks.create(Payload);
         payload.* = .{ .node = node, .scope = scope, .index = index };
         var button = zpui.div().id(zpui.fmt("{s}/option/{d}", .{ identity, index })).role(.radio_button).ariaLabel(option.label).ariaToggled(index == selected)
             .focusable().tabIndex(if (index == selected) 0 else -1).cursorPointer().flex().flexRow().itemsCenter().gap(zpui.px(4)).px(zpui.px(8)).py(zpui.px(4)).rounded(zpui.px(4))
