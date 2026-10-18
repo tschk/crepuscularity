@@ -5,6 +5,617 @@ fn crepus() -> Command {
     Command::new(env!("CARGO_BIN_EXE_crepus"))
 }
 
+#[cfg(unix)]
+#[test]
+fn native_codegen_preserves_output_root_alias_and_internal_leaf_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("page.crepus"), "span \"Page\"").unwrap();
+    for (platform, extension) in [("swiftui", "swift"), ("compose", "kt")] {
+        let out = root.join(format!("out-{platform}"));
+        std::fs::create_dir(&out).unwrap();
+        let alias = root.join(format!("alias-{platform}"));
+        std::os::unix::fs::symlink(&out, &alias).unwrap();
+        let target = out.join(format!("internal.{extension}"));
+        std::fs::write(&target, "old generated source").unwrap();
+        let leaf = out.join(format!("View.{extension}"));
+        std::os::unix::fs::symlink(&target, &leaf).unwrap();
+        let result = crepus()
+            .current_dir(root)
+            .args([
+                "native",
+                "codegen",
+                "page.crepus",
+                "--platform",
+                platform,
+                "--out",
+            ])
+            .arg(&alias)
+            .args(["--view-name", "View"])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(leaf.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(std::fs::read_to_string(target).unwrap().contains("Page"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_codegen_rejects_escaping_leaf_symlinks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("page.crepus"), "span \"Page\"").unwrap();
+    for (platform, extension) in [("swiftui", "swift"), ("compose", "kt")] {
+        for exists in [true, false] {
+            let out = root.join(format!("out-{platform}-{exists}"));
+            std::fs::create_dir(&out).unwrap();
+            let victim = root.join(format!("authored-{platform}-{exists}.{extension}"));
+            if exists {
+                std::fs::write(&victim, "authored source").unwrap();
+            }
+            let leaf = out.join(format!("View.{extension}"));
+            std::os::unix::fs::symlink(&victim, &leaf).unwrap();
+            let result = crepus()
+                .current_dir(root)
+                .args([
+                    "native",
+                    "codegen",
+                    "page.crepus",
+                    "--platform",
+                    platform,
+                    "--out",
+                ])
+                .arg(&out)
+                .args(["--view-name", "View"])
+                .output()
+                .unwrap();
+            assert!(
+                !result.status.success(),
+                "accepted {platform} symlink, existing={exists}"
+            );
+            assert!(leaf.symlink_metadata().unwrap().file_type().is_symlink());
+            if exists {
+                assert_eq!(std::fs::read_to_string(&victim).unwrap(), "authored source");
+            } else {
+                assert!(!victim.exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn native_codegen_rejects_output_name_paths_before_writing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("page.crepus"), "span \"Page\"").unwrap();
+    for (platform, extension) in [("swiftui", "swift"), ("compose", "kt")] {
+        let victim = root.join(format!("Victim.{extension}"));
+        std::fs::write(&victim, "authored source").unwrap();
+        let absolute = root.join("Victim").to_string_lossy().into_owned();
+        for name in [
+            "../Victim",
+            absolute.as_str(),
+            "nested/View",
+            "..\\Victim",
+            "C:\\Victim",
+            "C:Victim",
+            ".",
+            "..",
+            "",
+        ] {
+            let out = root.join("generated");
+            let result = crepus()
+                .current_dir(root)
+                .args([
+                    "native",
+                    "codegen",
+                    "page.crepus",
+                    "--platform",
+                    platform,
+                    "--out",
+                ])
+                .arg(&out)
+                .args(["--view-name", name])
+                .output()
+                .unwrap();
+            assert!(
+                !result.status.success(),
+                "accepted {platform} name {name:?}"
+            );
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "authored source");
+            assert!(!out.exists(), "created output for invalid name {name:?}");
+        }
+    }
+}
+
+#[test]
+fn native_codegen_preserves_ordinary_output_filenames() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("page.crepus"), "span \"Page\"").unwrap();
+    for (platform, extension) in [("swiftui", "swift"), ("compose", "kt")] {
+        let result = crepus()
+            .current_dir(tmp.path())
+            .args([
+                "native",
+                "codegen",
+                "page.crepus",
+                "--platform",
+                platform,
+                "--out",
+                "generated",
+                "--view-name",
+                "Card-view 2",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(tmp
+            .path()
+            .join(format!("generated/Card-view 2.{extension}"))
+            .is_file());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_sync_preflights_all_destinations_before_writing() {
+    for kind in [
+        "default-leaf",
+        "default-parent",
+        "dangling-default",
+        "explicit-leaf",
+        "dangling-explicit",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("app");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(root.join("page.crepus"), "span \"Fresh\"").unwrap();
+        std::fs::write(root.join("fixture.json"), "keep earlier fixture").unwrap();
+        let victim = outside.join("fixture.json");
+        if !kind.starts_with("dangling-") {
+            std::fs::write(&victim, "keep outside").unwrap();
+        }
+        let mut command = crepus();
+        command
+            .current_dir(&root)
+            .args(["native", "sync", "page.crepus"]);
+        if kind == "default-parent" {
+            std::fs::create_dir_all(root.join("ios/Sources")).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("ios/Sources/NativeShell")).unwrap();
+        } else if kind == "default-leaf" || kind == "dangling-default" {
+            let parent = root.join("ios/Sources/NativeShell");
+            std::fs::create_dir_all(&parent).unwrap();
+            std::os::unix::fs::symlink(&victim, parent.join("fixture.json")).unwrap();
+        } else {
+            std::os::unix::fs::symlink(&victim, root.join("extra.json")).unwrap();
+            command.args(["--out", "extra.json"]);
+        }
+        let result = command.output().unwrap();
+        assert!(!result.status.success(), "accepted {kind}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("fixture.json")).unwrap(),
+            "keep earlier fixture"
+        );
+        if kind.starts_with("dangling-") {
+            assert!(!victim.exists());
+        } else {
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep outside");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_sync_preserves_explicit_external_outputs_and_internal_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("app");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("page.crepus"), "span \"Fresh\"").unwrap();
+    std::fs::write(root.join("internal.json"), "stale").unwrap();
+    std::os::unix::fs::symlink(root.join("internal.json"), root.join("fixture.json")).unwrap();
+    let absolute = tmp.path().join("absolute/new/fixture.json");
+    let result = crepus()
+        .current_dir(&root)
+        .args([
+            "native",
+            "sync",
+            "page.crepus",
+            "--out",
+            "../relative/new/fixture.json",
+            "--out",
+        ])
+        .arg(&absolute)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let expected = std::fs::read(root.join("internal.json")).unwrap();
+    assert!(root
+        .join("fixture.json")
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read(&absolute).unwrap(), expected);
+    assert_eq!(
+        std::fs::read(tmp.path().join("relative/new/fixture.json")).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn native_sync_repairs_stale_outputs_without_rewriting_matching_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("views")).unwrap();
+    std::fs::create_dir_all(root.join("ios/Sources/NativeShell")).unwrap();
+    std::fs::write(root.join("views/main.crepus"), "div\n  \"Fresh\"").unwrap();
+    let sync = |extra: bool| {
+        let mut command = crepus();
+        command
+            .current_dir(root)
+            .args(["native", "sync", "views/main.crepus", "--pretty"]);
+        if extra {
+            command.args(["--out", "extra.json"]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    sync(false);
+    let matching = root.join("fixture.json");
+    let expected = std::fs::read(&matching).unwrap();
+    let sentinel = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&matching)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(sentinel))
+        .unwrap();
+    let preserved = matching.metadata().unwrap().modified().unwrap();
+    let default = root.join("ios/Sources/NativeShell/fixture.json");
+    let extra = root.join("extra.json");
+    std::fs::write(&default, [0xff, 0xfe]).unwrap();
+    std::fs::write(&extra, "stale newly requested output").unwrap();
+    sync(true);
+    assert_eq!(std::fs::read(&default).unwrap(), expected);
+    assert_eq!(std::fs::read(&extra).unwrap(), expected);
+    assert_eq!(matching.metadata().unwrap().modified().unwrap(), preserved);
+}
+
+#[test]
+fn mobile_codegen_propagates_generation_failures() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("bad.crepus"), "include").unwrap();
+    std::fs::write(tmp.path().join("good.crepus"), "div\n  \"Good\"").unwrap();
+    std::fs::write(tmp.path().join("blocked"), "not a directory").unwrap();
+    for platform in ["ios", "android"] {
+        for (input, output) in [
+            ("missing.crepus", "generated"),
+            ("bad.crepus", "generated"),
+            ("good.crepus", "blocked"),
+        ] {
+            let result = crepus()
+                .current_dir(tmp.path())
+                .args([
+                    "mobile",
+                    "codegen",
+                    input,
+                    "--platform",
+                    platform,
+                    "--out",
+                    output,
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                !result.status.success(),
+                "{platform} {input} incorrectly succeeded"
+            );
+            assert!(
+                !result.stderr.is_empty(),
+                "missing failure diagnostic: {platform} {input}"
+            );
+        }
+        let result = crepus()
+            .current_dir(tmp.path())
+            .args([
+                "mobile",
+                "codegen",
+                "good.crepus",
+                "--platform",
+                platform,
+                "--out",
+                platform,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let extension = if platform == "ios" { "swift" } else { "kt" };
+        let source = std::fs::read_to_string(
+            tmp.path()
+                .join(platform)
+                .join(format!("CrepusGeneratedView.{extension}")),
+        )
+        .unwrap();
+        assert!(source.contains("Good"));
+        if platform == "android" {
+            assert!(source.starts_with("package dev.crepuscularity.nativeshell\n"));
+        }
+    }
+}
+
+#[test]
+fn mobile_scaffold_encodes_package_components_in_jni_exports() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (name, package, encoded) in [
+        ("phone-app", "phone_app", "phone_1app"),
+        ("phone_app", "phone_app", "phone_1app"),
+        ("éclair", "éclair", "_000e9clair"),
+    ] {
+        let result = crepus()
+            .current_dir(tmp.path())
+            .args(["mobile", "new", name])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let root = tmp.path().join(name);
+        let rust = std::fs::read_to_string(root.join("rust/src/lib.rs")).unwrap();
+        assert!(
+            rust.contains(&format!(
+                "fn Java_dev_crepuscularity_{encoded}_CrepusRustActions_dispatchAction("
+            )),
+            "{name}"
+        );
+        assert!(!rust.contains("Java_dev_crepuscularity_nativeshell_"));
+        let kotlin = std::fs::read_to_string(root.join(format!(
+            "android/app/src/main/java/dev/crepuscularity/{package}/CrepusRustActions.kt"
+        )))
+        .unwrap();
+        assert!(kotlin.contains(&format!("package dev.crepuscularity.{package}")));
+    }
+}
+
+#[test]
+fn mobile_scaffold_uses_destination_basename_for_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    for destination in [
+        std::path::PathBuf::from("nested/phone-app"),
+        tmp.path().join("absolute/phone-app"),
+    ] {
+        let result = crepus()
+            .current_dir(tmp.path())
+            .args(["mobile", "new"])
+            .arg(&destination)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let root = tmp.path().join(&destination);
+        let cargo = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .args(["read-manifest", "--manifest-path"])
+            .arg(root.join("rust/Cargo.toml"))
+            .output()
+            .unwrap();
+        assert!(
+            cargo.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cargo.stderr)
+        );
+        let manifest: serde_json::Value = serde_json::from_slice(&cargo.stdout).unwrap();
+        assert_eq!(manifest["name"], "phone_app_actions");
+        assert!(root.join("ios/App/PhoneAppApp.swift").is_file());
+        let kotlin =
+            std::fs::read_to_string(root.join(
+                "android/app/src/main/java/dev/crepuscularity/phone_app/CrepusRustActions.kt",
+            ))
+            .unwrap();
+        assert!(kotlin.contains("package dev.crepuscularity.phone_app"));
+        let rust = std::fs::read_to_string(root.join("rust/src/lib.rs")).unwrap();
+        assert!(
+            rust.contains("Java_dev_crepuscularity_phone_1app_CrepusRustActions_dispatchAction")
+        );
+    }
+}
+
+#[test]
+fn malformed_directives_exit_with_parse_error() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("bad.crepus");
+    for source in [
+        "include",
+        "embed child title={}",
+        "include child title=\"Unclosed",
+        "embed child title=1 title=2",
+    ] {
+        std::fs::write(&path, source).unwrap();
+        let output = crepus().args(["native", "ir"]).arg(&path).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{source}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("parse error"), "{stderr}");
+        assert!(output.stdout.is_empty(), "unexpected IR for {source}");
+    }
+}
+
+#[test]
+fn excessive_frontend_nesting_reports_parse_errors_without_aborting() {
+    let root = tempfile::tempdir().unwrap();
+    let markup = format!("{}leaf{}", "<div>".repeat(300), "</div>".repeat(300));
+    for filename in [
+        "Deep.svelte",
+        "Deep.vue",
+        "Deep.astro",
+        "Deep.ng.html",
+        "Deep.jsx",
+    ] {
+        let source = if filename.ends_with(".vue") {
+            format!("<template>{markup}</template>")
+        } else {
+            markup.clone()
+        };
+        let path = root.path().join(filename);
+        std::fs::write(&path, source).unwrap();
+        let output = crepus().args(["native", "ir"]).arg(path).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{filename}: {stderr}");
+        assert!(
+            stderr.contains("parse error") && stderr.contains("depth"),
+            "{filename}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn circular_native_includes_report_an_error_without_aborting() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("loop.crepus");
+    std::fs::write(&path, "div\n  include loop.crepus\n").unwrap();
+    let output = crepus().args(["native", "ir"]).arg(path).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("maximum include depth"));
+}
+
+#[test]
+fn stdin_json_filename_selects_template_frontend() {
+    let payload = serde_json::json!({
+        "filename": "App.svelte",
+        "template": "<script>const hidden = \"ignored\";</script><h1>Frontend content</h1>"
+    });
+    let mut child = crepus()
+        .args(["native", "ir", "--stdin-json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rendered = json.to_string();
+    assert!(rendered.contains("Frontend content"), "{rendered}");
+    assert!(!rendered.contains("ignored"), "{rendered}");
+}
+
+#[test]
+fn native_ir_file_selects_frontend_from_extension() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (filename, source, expected) in [
+        (
+            "Page.astro",
+            "---\nconst title = \"ignored\";\n---\n<h1>Hello</h1>",
+            "Hello",
+        ),
+        (
+            "app.component.html",
+            "<ul><li *ngFor=\"let item of items\">Item</li></ul>",
+            "Item",
+        ),
+    ] {
+        let path = tmp.path().join(filename);
+        std::fs::write(&path, source).unwrap();
+        let output = crepus().args(["native", "ir"]).arg(&path).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{filename}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let rendered = json.to_string();
+        assert!(rendered.contains(expected), "{filename}: {rendered}");
+        assert!(
+            !rendered.contains("ignored"),
+            "frontmatter rendered: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn native_codegen_and_mobile_sync_preserve_frontend_filename() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("Page.astro");
+    std::fs::write(
+        &source,
+        "---\nconst title = \"ignored\";\n---\n<h1>Frontend content</h1>",
+    )
+    .unwrap();
+    for (platform, extension) in [("swiftui", "swift"), ("compose", "kt")] {
+        let generated = tmp.path().join(platform);
+        let output = crepus()
+            .args(["native", "codegen"])
+            .arg(&source)
+            .args(["--platform", platform, "--out"])
+            .arg(&generated)
+            .args(["--view-name", "PageView"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text =
+            std::fs::read_to_string(generated.join(format!("PageView.{extension}"))).unwrap();
+        assert!(text.contains("Frontend content"), "{text}");
+        assert!(!text.contains("ignored"), "{text}");
+    }
+    let output = crepus()
+        .current_dir(tmp.path())
+        .args(["mobile", "sync", "Page.astro"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let fixture = std::fs::read_to_string(tmp.path().join("fixture.json")).unwrap();
+    assert!(fixture.contains("Frontend content"), "{fixture}");
+    assert!(!fixture.contains("ignored"), "{fixture}");
+}
+
 #[test]
 #[cfg_attr(
     windows,
@@ -213,7 +824,7 @@ fn native_codegen_writes_swiftui_source() {
 
     let generated = std::fs::read_to_string(out_dir.join("GreetingScreen.swift")).unwrap();
     assert!(generated.contains("public struct GreetingScreen: View"));
-    assert!(generated.contains("Text(\"Hello Ada\")"));
+    assert!(generated.contains(r#"Text("Hello " + CrepusActions.model.text("name"))"#));
     assert!(generated.contains("Button(action: { CrepusActions.perform(\"tap\") })"));
     assert!(generated.contains(".padding(16)"));
 }
@@ -258,7 +869,7 @@ fn native_codegen_writes_compose_source() {
     let generated = std::fs::read_to_string(out_dir.join("GreetingScreen.kt")).unwrap();
     assert!(generated.contains("@Composable"));
     assert!(generated.contains("fun GreetingScreen(modifier: Modifier = Modifier)"));
-    assert!(generated.contains("Text(\"Hello Ada\""));
+    assert!(generated.contains(r#"Text("Hello " + CrepusStateStore.text("name")"#));
     assert!(generated.contains("Button(onClick = { CrepusActions.perform(\"tap\") })"));
     assert!(generated.contains("modifier.padding(8.dp)"));
 }
@@ -1631,12 +2242,12 @@ fn mobile_codegen_writes_swiftui_and_compose_source() {
     assert!(
         std::fs::read_to_string(swift_out.join("GreetingScreen.swift"))
             .unwrap()
-            .contains("Hello Ada")
+            .contains(r#"Text("Hello " + CrepusActions.model.text("name"))"#)
     );
     assert!(
         std::fs::read_to_string(compose_out.join("GreetingScreen.kt"))
             .unwrap()
-            .contains("Hello Ada")
+            .contains(r#"Text("Hello " + CrepusStateStore.text("name")"#)
     );
 }
 
@@ -1671,4 +2282,335 @@ fn native_add_merges_overlapping_android_permissions() {
         1
     );
     assert!(!manifest.contains("android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion"));
+}
+
+#[test]
+fn picker_capability_installation_is_idempotent_in_both_orders() {
+    for capabilities in [
+        [
+            "image-picker",
+            "documentPicker",
+            "photo-library",
+            "camera",
+            "video",
+        ],
+        [
+            "video",
+            "camera",
+            "photo-library",
+            "documentPicker",
+            "image-picker",
+        ],
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("phone");
+        let output = crepus()
+            .current_dir(temp.path())
+            .args(["native", "new", "phone"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for capability in capabilities {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let paths = [
+            root.join(
+                "android/app/src/main/java/dev/crepuscularity/nativeshell/CrepusRustActions.kt",
+            ),
+            root.join("ios/Sources/NativeShell/CrepusRustActions.swift"),
+        ];
+        let before: Vec<_> = paths
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        for capability in capabilities {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        for (path, before) in paths.iter().zip(before) {
+            assert_eq!(std::fs::read(path).unwrap(), before, "{}", path.display());
+        }
+        let android = std::fs::read_to_string(&paths[0]).unwrap();
+        let ios = std::fs::read_to_string(&paths[1]).unwrap();
+        for action in ["import_files", "pick_media"] {
+            assert_eq!(android.matches(&format!("\"{action}\" ->")).count(), 1);
+            assert_eq!(ios.matches(&format!("case \"{action}\":")).count(), 1);
+        }
+    }
+}
+
+#[test]
+fn picker_capabilities_migrate_legacy_delegate_registry_to_current_output() {
+    for capability in ["image-picker", "camera", "video"] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut outputs = Vec::new();
+        for (name, legacy) in [("fresh", false), ("legacy", true)] {
+            let output = crepus()
+                .current_dir(temp.path())
+                .args(["native", "new", name])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let root = temp.path().join(name);
+            let path = root.join("ios/Sources/NativeShell/CrepusRustActions.swift");
+            if legacy {
+                let source = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .replace(
+                        "private var delegates: [NSObject]",
+                        "private var delegates: [FilePickerDelegate]",
+                    )
+                    .replace(
+                        "func retain(delegate: NSObject)",
+                        "func retain(delegate: FilePickerDelegate)",
+                    )
+                    .replace(
+                        "func clear(delegate: NSObject)",
+                        "func clear(delegate: FilePickerDelegate)",
+                    )
+                    .replace(
+                        "    fileprivate static func errorJson",
+                        "    private static func errorJson",
+                    )
+                    .replace(
+                        "    fileprivate static func stringify",
+                        "    private static func stringify",
+                    )
+                    .replace("\n\n    var isActive: Bool { !delegates.isEmpty }", "");
+                std::fs::write(&path, source).unwrap();
+            }
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            outputs.push(std::fs::read_to_string(path).unwrap());
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
+}
+
+#[test]
+fn capture_usage_descriptions_are_order_independent_and_preserve_custom_values() {
+    let keys = [
+        "INFOPLIST_KEY_NSCameraUsageDescription",
+        "INFOPLIST_KEY_NSMicrophoneUsageDescription",
+    ];
+    for capabilities in [
+        ["microphone", "video", "camera"],
+        ["camera", "video", "microphone"],
+        ["video", "camera", "microphone"],
+        ["video", "microphone", "camera"],
+        ["camera", "microphone", "video"],
+        ["microphone", "camera", "video"],
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let output = crepus()
+            .current_dir(temp.path())
+            .args(["native", "new", "phone"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let root = temp.path().join("phone");
+        let project = root.join("ios/project.yml");
+        let mut required = [false, false];
+        let mut custom = Vec::new();
+        for (index, capability) in capabilities.iter().enumerate() {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            required[0] |= *capability == "camera" || *capability == "video";
+            required[1] |= *capability == "microphone" || *capability == "video";
+            let mut source = std::fs::read_to_string(&project).unwrap();
+            for (key, required) in keys.iter().zip(required) {
+                assert_eq!(
+                    source.matches(&format!("{key}:")).count(),
+                    usize::from(required),
+                    "{capabilities:?} after {capability}: {key}"
+                );
+            }
+            if index == 0 {
+                for key in keys {
+                    if let Some(line) = source
+                        .lines()
+                        .find(|line| line.trim_start().starts_with(&format!("{key}:")))
+                        .map(str::to_owned)
+                    {
+                        let replacement = format!("        {key}: \"existing {key} purpose\"");
+                        source = source.replace(&line, &replacement);
+                        custom.push(replacement);
+                    }
+                }
+                std::fs::write(&project, &source).unwrap();
+            }
+            for line in &custom {
+                assert!(
+                    source.contains(line),
+                    "existing permission text changed after {capability}"
+                );
+            }
+        }
+        let before = std::fs::read(&project).unwrap();
+        for capability in capabilities {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert_eq!(std::fs::read(project).unwrap(), before);
+    }
+}
+
+#[test]
+fn bluetooth_usage_description_is_added_when_framework_is_already_linked() {
+    for capabilities in [["permissions", "bluetooth"], ["bluetooth", "permissions"]] {
+        let temp = tempfile::tempdir().unwrap();
+        let output = crepus()
+            .current_dir(temp.path())
+            .args(["native", "new", "phone"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let root = temp.path().join("phone");
+        let project = root.join("ios/project.yml");
+        let source = std::fs::read_to_string(&project).unwrap().replace(
+            "OTHER_LDFLAGS: \"-lcrepus_mobile_actions\"",
+            "OTHER_LDFLAGS: \"-lcrepus_mobile_actions -framework CoreBluetooth\"",
+        );
+        std::fs::write(&project, source).unwrap();
+        let key = "INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription";
+        let custom = format!("        {key}: \"existing Bluetooth purpose\"");
+        for (index, capability) in capabilities.iter().enumerate() {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let mut source = std::fs::read_to_string(&project).unwrap();
+            assert_eq!(source.matches(&format!("{key}:")).count(), 1);
+            assert_eq!(source.matches("-framework CoreBluetooth").count(), 1);
+            if index == 0 {
+                let line = source
+                    .lines()
+                    .find(|line| line.trim_start().starts_with(&format!("{key}:")))
+                    .unwrap()
+                    .to_owned();
+                source = source.replace(&line, &custom);
+                std::fs::write(&project, &source).unwrap();
+            }
+            assert!(source.contains(&custom));
+        }
+        let before = std::fs::read(&project).unwrap();
+        for capability in capabilities {
+            let output = crepus()
+                .args(["native", "add", capability, "--dir"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
+        assert_eq!(std::fs::read(project).unwrap(), before);
+    }
+}
+
+#[test]
+fn usage_description_detection_reads_keys_instead_of_comments_or_values() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = crepus()
+        .current_dir(temp.path())
+        .args(["native", "new", "phone"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let root = temp.path().join("phone");
+    let project = root.join("ios/project.yml");
+    let anchor = "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n";
+    let custom = "        \"INFOPLIST_KEY_NSMicrophoneUsageDescription\" : \"microphone text mentions INFOPLIST_KEY_NSCameraUsageDescription\"";
+    let source = std::fs::read_to_string(&project).unwrap().replace(anchor,
+        &format!("{anchor}{custom}\n        # INFOPLIST_KEY_NSCameraUsageDescription: documentation only\n"));
+    std::fs::write(&project, source).unwrap();
+    let output = crepus()
+        .args(["native", "add", "video", "--dir"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let source = std::fs::read_to_string(&project).unwrap();
+    assert_eq!(
+        source
+            .lines()
+            .filter(|line| line
+                .trim_start()
+                .starts_with("INFOPLIST_KEY_NSCameraUsageDescription:"))
+            .count(),
+        1
+    );
+    assert!(!source.lines().any(|line| line
+        .trim_start()
+        .starts_with("INFOPLIST_KEY_NSMicrophoneUsageDescription:")));
+    assert!(source.contains(custom));
+    let before = std::fs::read(&project).unwrap();
+    let output = crepus()
+        .args(["native", "add", "video", "--dir"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(std::fs::read(project).unwrap(), before);
 }

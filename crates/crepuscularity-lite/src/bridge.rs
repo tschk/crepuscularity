@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::bench_plugin::BenchPlugin;
 use crate::download_plugin::DownloadPlugin;
-use crate::host::{HostSnapshot, HostState};
+use crate::host::{HostRenderTree, HostSnapshot, HostState};
 use crate::host_queue::{HostCommandQueue, HostDeferred};
 use crate::inauguration_plugin::InaugurationPlugin;
 use crate::plugins::{AppPlugin, ClipboardPlugin, CorePlugin, FsPlugin, HostPlugin, WindowPlugin};
@@ -256,6 +256,10 @@ impl Bridge {
         self.host_state.snapshot()
     }
 
+    pub fn host_render_tree(&self) -> Option<Arc<HostRenderTree>> {
+        self.host_state.render_snapshot()
+    }
+
     pub fn host_state(&self) -> Arc<HostState> {
         self.host_state.clone()
     }
@@ -311,5 +315,81 @@ mod tests {
         let fetched = b.invoke_envelope("host", "storageGet", &json!({ "key": "channel" }));
         assert_eq!(fetched["ok"], true);
         assert_eq!(fetched["data"]["value"]["id"], "123");
+    }
+
+    #[cfg(feature = "v8")]
+    #[test]
+    fn abort_returns_while_native_callback_waits_and_worker_exits_after_release() {
+        use std::sync::{mpsc, Mutex};
+        use std::time::{Duration, Instant};
+
+        struct BlockingPlugin {
+            entered: mpsc::Sender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl NativePlugin for BlockingPlugin {
+            fn id(&self) -> &'static str {
+                "blocking-test"
+            }
+            fn capability(&self) -> Capability {
+                Capability::Core
+            }
+            fn methods(&self) -> &'static [&'static str] {
+                &["wait"]
+            }
+            fn invoke(&self, _: &str, _: &Value) -> Result<Value, BridgeError> {
+                self.entered
+                    .send(())
+                    .map_err(|e| BridgeError::new("test_disconnected", e.to_string()))?;
+                self.release
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .recv_timeout(Duration::from_secs(10))
+                    .map_err(|e| BridgeError::new("test_timeout", e.to_string()))?;
+                Ok(Value::Null)
+            }
+        }
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut bridge = Arc::try_unwrap(Bridge::compute_only_bridge()).ok().unwrap();
+        bridge.plugins.insert(
+            "blocking-test".into(),
+            Arc::new(BlockingPlugin {
+                entered: entered_tx,
+                release: Mutex::new(release_rx),
+            }),
+        );
+        let bridge = Arc::new(bridge);
+        let mut runtime = crate::V8ThreadRuntime::spawn(bridge.clone()).unwrap();
+        let reply = runtime
+            .handle
+            .eval_rpc(
+                "Crepus.invoke('blocking-test', 'wait', '{}'); 'finished'".into(),
+                false,
+                bridge,
+            )
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let worker = runtime.abort().unwrap();
+        drop(runtime);
+        assert!(
+            !worker.is_finished(),
+            "native callback must still be waiting"
+        );
+        release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !worker.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not stop after callback returned"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        worker.join().unwrap();
+        assert!(reply
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .is_err());
     }
 }

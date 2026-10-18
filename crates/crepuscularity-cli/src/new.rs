@@ -7,11 +7,14 @@ use crate::ui;
 
 pub fn run(name: &str) {
     let t0 = Instant::now();
+    crate::scaffold::validate_project_name(name).unwrap_or_else(|e| ui::error(e));
     let dir = Path::new(name);
 
     if dir.exists() {
         ui::error(&format!("'{}' already exists", name));
     }
+
+    crate::scaffold::create_project_dir(dir).unwrap_or_else(|e| ui::error(&e));
 
     fs::create_dir_all(dir.join("src")).unwrap_or_else(|e| {
         ui::error(&format!("could not create directories: {e}"));
@@ -48,7 +51,7 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-gpui = {{ git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"] }}
+gpui = {{ git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui", default-features = false, features = ["font-kit"] }}
 crepuscularity-gpui = {{ git = "https://github.com/tschk/crepuscularity", package = "crepuscularity-gpui" }}
 "#
     )
@@ -76,7 +79,7 @@ impl {pascal}View {{
 }}
 
 impl Render for {pascal}View {{
-    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl IntoElement {{
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {{
         let count = self.count;
         view! {{r#"
             div w-full h-full bg-zinc-950 text-white flex flex-col items-center justify-center gap-6
@@ -105,7 +108,8 @@ fn main() {{
 }
 
 pub(crate) fn to_pascal_case(s: &str) -> String {
-    s.split(&['-', '_', ' '][..])
+    let mut name: String = s
+        .split(&['-', '_', ' '][..])
         .filter(|p| !p.is_empty())
         .map(|p| {
             let mut c = p.chars();
@@ -114,5 +118,28 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
             }
         })
-        .collect()
+        .collect();
+    if name
+        .chars()
+        .next()
+        .is_some_and(|c| !unicode_ident::is_xid_start(c))
+    {
+        name.insert(0, '_');
+    }
+    name
+}
+
+#[cfg(test)]
+mod scaffold_dependency_tests {
+    use super::*;
+    #[test]
+    fn generated_gpui_source_matches_backend_pin() {
+        let generated: toml::Value = toml::from_str(&cargo_toml("fixture")).unwrap();
+        let backend: toml::Value =
+            toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
+        assert_eq!(
+            generated["dependencies"]["gpui"]["rev"],
+            backend["dependencies"]["gpui"]["rev"]
+        );
+    }
 }

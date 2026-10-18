@@ -59,34 +59,51 @@ fn convert(dir: &Path, out: &Path, target: TauriTargetArg) -> Result<(), String>
             staging.display()
         ));
     }
+    // Keep the scaffold entry separate when the source graph already owns main.crepus.
+    let is_main = |path: &str| {
+        Path::new(path)
+            .components()
+            .filter(|part| !matches!(part, std::path::Component::CurDir))
+            .eq(Path::new("main.crepus").components())
+    };
+    let direct_main = is_main(&bundle.entry);
+    let source_prefix = if !direct_main && bundle.files.keys().any(|path| is_main(path)) {
+        "__crepus_source/"
+    } else {
+        ""
+    };
     let result = (|| {
         crate::native::scaffold_native_app_at(&staging)?;
         apply_metadata(&staging, &metadata)?;
         for (path, source) in &bundle.files {
-            let destination = staging.join("views").join(path);
+            let destination = staging.join("views").join(source_prefix).join(path);
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             fs::write(destination, source).map_err(|e| e.to_string())?;
             if desktop {
-                let destination = staging.join("desktop/views").join(path);
+                let destination = staging.join("desktop/views").join(source_prefix).join(path);
                 if let Some(parent) = destination.parent() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 fs::write(destination, source).map_err(|e| e.to_string())?;
             }
         }
-        fs::write(
-            staging.join("views/main.crepus"),
-            format!("include {}\n", bundle.entry),
-        )
-        .map_err(|e| e.to_string())?;
+        if !direct_main {
+            let entry = format!("{source_prefix}{}", bundle.entry)
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t");
+            let wrapper = format!("include \"{entry}\"\n");
+            fs::write(staging.join("views/main.crepus"), &wrapper).map_err(|e| e.to_string())?;
+            if desktop {
+                fs::write(staging.join("desktop/views/main.crepus"), &wrapper)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         if desktop {
-            fs::write(
-                staging.join("desktop/views/main.crepus"),
-                format!("include {}\n", bundle.entry),
-            )
-            .map_err(|e| e.to_string())?;
             write_desktop_project(&staging.join("desktop"), &windows)?;
         }
         fs::write(staging.join("fixture.json"), &fixture).map_err(|e| e.to_string())?;
@@ -141,7 +158,10 @@ fn apply_metadata(
     replace(
         root.join("android/app/src/main/AndroidManifest.xml"),
         "android:label=\"NativeShell\"",
-        &format!("android:label=\"{product_name}\""),
+        &format!(
+            "android:label=\"{}\"",
+            crepuscularity_web::escape_html(product_name)
+        ),
     )?;
     if let Some(identifier) = &metadata.identifier {
         replace(
@@ -172,7 +192,7 @@ fn write_desktop_project(
     fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"crepus-tauri-desktop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngpui = {{ git = \"https://github.com/gpui-ce/gpui-ce\", package = \"gpui\", default-features = false }}\n\n[target.'cfg(target_os = \"macos\")'.dependencies]\ncrepuscularity-gpui = {{ git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"macos\"] }}\n\n[target.'cfg(target_os = \"linux\")'.dependencies]\ncrepuscularity-gpui = {{ git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"x11\"] }}\n\n[target.'cfg(target_os = \"windows\")'.dependencies]\ncrepuscularity-gpui = {{ git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"windows\"] }}\n",
+        "[package]\nname = \"crepus-tauri-desktop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngpui = { git = \"https://github.com/gpui-ce/gpui-ce\", rev = \"c738623ffbcec2aeddc44a645cc6b74646d5cf97\", package = \"gpui\", default-features = false }\n\n[target.'cfg(target_os = \"macos\")'.dependencies]\ncrepuscularity-gpui = { git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"macos\"] }\n\n[target.'cfg(target_os = \"linux\")'.dependencies]\ncrepuscularity-gpui = { git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"x11\"] }\n\n[target.'cfg(target_os = \"windows\")'.dependencies]\ncrepuscularity-gpui = { git = \"https://github.com/tschk/crepuscularity\", package = \"crepuscularity-gpui\", features = [\"windows\"] }\n",
     )
     .map_err(|e| e.to_string())?;
     let opens = windows
@@ -204,4 +224,23 @@ fn replace(path: impl AsRef<Path>, from: &str, to: &str) -> Result<(), String> {
     let path = path.as_ref();
     let source = fs::read_to_string(path).map_err(|e| e.to_string())?;
     fs::write(path, source.replace(from, to)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod scaffold_dependency_tests {
+    use super::*;
+    #[test]
+    fn desktop_manifest_is_valid_and_matches_backend_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        write_desktop_project(dir.path(), &[]).unwrap();
+        let generated: toml::Value =
+            toml::from_str(&std::fs::read_to_string(dir.path().join("Cargo.toml")).unwrap())
+                .unwrap();
+        let backend: toml::Value =
+            toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
+        assert_eq!(
+            generated["dependencies"]["gpui"]["rev"],
+            backend["dependencies"]["gpui"]["rev"]
+        );
+    }
 }

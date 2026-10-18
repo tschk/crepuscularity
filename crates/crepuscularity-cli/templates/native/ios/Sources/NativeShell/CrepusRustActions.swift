@@ -11,12 +11,10 @@ import AppKit
 @_silgen_name("crepus_mobile_dispatch")
 private func crepusMobileDispatch(_ action: UnsafePointer<CChar>, _ length: UInt) -> Bool
 
-@_silgen_name("crepus_mobile_dispatch_json")
-private func crepusMobileDispatchJson(_ action: UnsafePointer<CChar>, _ length: UInt, _ output: UnsafeMutablePointer<CChar>, _ outputLength: UInt) -> UInt
-@_silgen_name("crepus_mobile_dispatch_and_store_json")
-private func crepusMobileDispatchAndStoreJson(_ action: UnsafePointer<CChar>, _ length: UInt, _ output: UnsafeMutablePointer<CChar>, _ outputLength: UInt) -> UInt
-@_silgen_name("crepus_mobile_dispatch_change_json")
-private func crepusMobileDispatchChangeJson(_ action: UnsafePointer<CChar>, _ actionLength: UInt, _ bind: UnsafePointer<CChar>, _ bindLength: UInt, _ value: UnsafePointer<CChar>, _ valueLength: UInt, _ output: UnsafeMutablePointer<CChar>, _ outputLength: UInt) -> UInt
+@_silgen_name("crepus_mobile_dispatch_json_owned")
+private func crepusMobileDispatchJsonOwned(_ action: UnsafePointer<CChar>, _ length: UInt) -> UnsafeMutablePointer<CChar>?
+@_silgen_name("crepus_mobile_dispatch_change_json_owned")
+private func crepusMobileDispatchChangeJsonOwned(_ action: UnsafePointer<CChar>, _ actionLength: UInt, _ bind: UnsafePointer<CChar>, _ bindLength: UInt, _ value: UnsafePointer<CChar>, _ valueLength: UInt) -> UnsafeMutablePointer<CChar>?
 @_silgen_name("crepus_mobile_last_result")
 private func crepusMobileLastResult() -> UnsafeMutablePointer<CChar>?
 @_silgen_name("crepus_mobile_last_error")
@@ -37,63 +35,73 @@ private func crepusMobileEvalItemsJson(_ expr: UnsafePointer<CChar>, _ exprLengt
 @MainActor
 public enum CrepusRustActions {
     public static func install() {
-        CrepusActions.dispatch = { action in
-            if let host = dispatchHostAction(action) {
-                return host
-            }
-            return action.withCString { pointer in
-                let capacity = 4096
-                let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
-                defer { output.deallocate() }
-                let written = crepusMobileDispatchJson(pointer, UInt(strlen(pointer)), output, UInt(capacity))
-                if written >= capacity {
-                    return oversizedResultJson(action: action)
-                }
-                return String(cString: output)
-            }
-        }
+        CrepusActions.dispatch = defaultDispatch
         CrepusActions.resultSink = { result in
             CrepusStateStore.shared.applyResult(result)
         }
     }
 
+    private nonisolated static func defaultDispatch(_ action: String) -> String {
+        let host: String?
+        if Thread.isMainThread {
+            host = MainActor.assumeIsolated { dispatchHostAction(action) }
+        } else {
+            host = DispatchQueue.main.sync {
+                MainActor.assumeIsolated { dispatchHostAction(action) }
+            }
+        }
+        if let host { return host }
+        return action.withCString { pointer in
+            decodeOwnedResult(crepusMobileDispatchJsonOwned(pointer, UInt(action.utf8.count)))
+        }
+    }
+
     public static func dispatchStored(_ action: String) -> String {
         action.withCString { pointer in
-            let capacity = 4096
-            let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
-            defer { output.deallocate() }
-            let written = crepusMobileDispatchAndStoreJson(pointer, UInt(strlen(pointer)), output, UInt(capacity))
-            if written >= capacity {
-                return oversizedResultJson(action: action)
-            }
-            return String(cString: output)
+            decodeOwnedResult(crepusMobileDispatchJsonOwned(pointer, UInt(action.utf8.count)))
         }
     }
 
     public static func dispatchChangeStored(_ action: String, bind: String, value: Any) -> String {
-        guard let valueJson = encodeJsonValue(value) else {
+        guard let valueJson = encodeQueuedChangeValue(value) else {
             return "{\"ok\":false,\"error\":\"json encode failure\"}"
         }
+        return dispatchChangeJson(action, bind: bind, valueJson: valueJson)
+    }
+
+    static func encodeQueuedChangeValue(_ value: Any) -> String? {
+        if let number = value as? NSNumber, !number.doubleValue.isFinite { return nil }
+        guard JSONSerialization.isValidJSONObject([value]),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
+    }
+
+    nonisolated static func dispatchQueuedChange(_ action: String, bind: String, valueJson: String) -> String {
+        if action.isEmpty {
+            guard bind.split(separator: ".", maxSplits: 126, omittingEmptySubsequences: false).count <= 126 else {
+                return "{\"ok\":false,\"error\":\"binding path exceeds 126 segments\"}"
+            }
+            guard let data = valueJson.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+                  let result = try? JSONSerialization.data(withJSONObject: ["ok": true, "action": "bind", "bindings": [bind: value]]),
+                  let json = String(data: result, encoding: .utf8) else {
+                return "{\"ok\":false,\"error\":\"json encode failure\"}"
+            }
+            return json
+        }
+        return dispatchChangeJson(action, bind: bind, valueJson: valueJson)
+    }
+
+    private nonisolated static func dispatchChangeJson(_ action: String, bind: String, valueJson: String) -> String {
         return action.withCString { actionPointer in
             bind.withCString { bindPointer in
                 valueJson.withCString { valuePointer in
-                    let capacity = 4096
-                    let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
-                    defer { output.deallocate() }
-                    let written = crepusMobileDispatchChangeJson(
-                        actionPointer,
-                        UInt(strlen(actionPointer)),
-                        bindPointer,
-                        UInt(strlen(bindPointer)),
-                        valuePointer,
-                        UInt(strlen(valuePointer)),
-                        output,
-                        UInt(capacity)
-                    )
-                    if written >= capacity {
-                        return oversizedResultJson(action: action)
-                    }
-                    return String(cString: output)
+                    decodeOwnedResult(crepusMobileDispatchChangeJsonOwned(
+                        actionPointer, UInt(action.utf8.count),
+                        bindPointer, UInt(bind.utf8.count),
+                        valuePointer, UInt(valueJson.utf8.count)
+                    ))
                 }
             }
         }
@@ -116,50 +124,30 @@ public enum CrepusRustActions {
         return String(cString: pointer)
     }
 
-    private static func oversizedResultJson(action: String) -> String {
-        let payload: [String: Any] = [
-            "ok": false,
-            "action": action,
-            "error": "action result too large",
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: payload),
-           let json = String(data: data, encoding: .utf8) {
-            return json
-        }
-        return "{\"ok\":false,\"error\":\"action result too large\"}"
-    }
-
-    private static func encodeJsonValue(_ value: Any) -> String? {
-        switch value {
-        case let text as String:
-            guard let data = try? JSONSerialization.data(withJSONObject: [text]),
-                  let json = String(data: data, encoding: .utf8)
-            else {
-                return nil
-            }
-            return String(json.dropFirst().dropLast())
-        case let number as NSNumber:
-            return number.stringValue
-        case is NSNull:
-            return "null"
-        default:
-            guard JSONSerialization.isValidJSONObject(value),
-                  let data = try? JSONSerialization.data(withJSONObject: value),
-                  let json = String(data: data, encoding: .utf8)
-            else {
-                return nil
-            }
-            return json
-        }
+    private nonisolated static func decodeOwnedResult(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+        guard let pointer else { return "{\"ok\":false,\"error\":\"action result allocation failed\"}" }
+        defer { crepusMobileFreeString(pointer) }
+        return String(cString: pointer)
     }
 
     private static func dispatchHostAction(_ action: String) -> String? {
         if let named = dispatchNamedHostAction(action) {
             return named
         }
-        guard let data = action.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (root["kind"] as? String) == "plugin",
+        let root: [String: Any]
+        if let data = action.data(using: .utf8),
+           let request = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = request
+        } else if let separator = action.firstIndex(of: ".") {
+            root = [
+                "kind": "plugin",
+                "capability": String(action[..<separator]),
+                "method": String(action[action.index(after: separator)...])
+            ]
+        } else {
+            return nil
+        }
+        guard (root["kind"] as? String) == "plugin",
               let capability = root["capability"] as? String,
               let method = root["method"] as? String
         else {
@@ -207,7 +195,7 @@ public enum CrepusRustActions {
         return stringify(payload)
     }
 
-    private static func errorJson(action: String, error: String) -> String {
+    fileprivate static func errorJson(action: String, error: String) -> String {
         stringify([
             "ok": false,
             "action": action,
@@ -229,7 +217,7 @@ public enum CrepusRustActions {
         }
     }
 
-    private static func stringify(_ payload: [String: Any]) -> String {
+    fileprivate static func stringify(_ payload: [String: Any]) -> String {
         if let data = try? JSONSerialization.data(withJSONObject: payload),
            let json = String(data: data, encoding: .utf8) {
             return json
@@ -246,11 +234,65 @@ public final class CrepusStateStore: ObservableObject {
 
     public func applyResult(_ json: String) {
         let stored = json.withCString { pointer in
-            crepusMobileStoreResultJson(pointer, UInt(strlen(pointer)))
+            crepusMobileStoreResultJson(pointer, UInt(json.utf8.count))
         }
         if stored {
             revision &+= 1
         }
+    }
+
+    private struct Draft {
+        let sequence: UInt64
+        let value: Any
+    }
+    private var draftSequence: UInt64 = 0
+    private var drafts: [String: Draft] = [:]
+
+    func beginDraft(path: String, valueJson: String) -> UInt64? {
+        guard let data = valueJson.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return nil }
+        draftSequence &+= 1
+        drafts[path] = Draft(sequence: draftSequence, value: value)
+        revision &+= 1
+        return draftSequence
+    }
+
+    func finishDraft(path: String, sequence: UInt64) {
+        if drafts[path]?.sequence == sequence {
+            drafts.removeValue(forKey: path)
+        }
+        revision &+= 1
+    }
+
+    public func draftText(path: String, fallback: @autoclosure () -> String) -> String {
+        _ = revision
+        guard let value = drafts[path]?.value else { return fallback() }
+        if let text = value as? String { return text }
+        return text("__crepusDraftValue", scopeName: "__crepusDraftValue", scope: value)
+    }
+
+    public func draftBool(path: String, fallback: @autoclosure () -> Bool) -> Bool {
+        _ = revision
+        guard let value = drafts[path]?.value else { return fallback() }
+        switch value {
+        case is NSNull: return false
+        case let number as NSNumber: return number.doubleValue != 0
+        case let text as String: return !text.isEmpty
+        case let items as [Any]: return !items.isEmpty
+        case let object as [String: Any]: return !object.isEmpty
+        default: return false
+        }
+    }
+
+    public func draftNumber(path: String, fallback: @autoclosure () -> Double) -> Double {
+        _ = revision
+        guard let value = drafts[path]?.value else { return fallback() }
+        if value is String {
+            return number("__crepusDraftValue", scopeName: "__crepusDraftValue", scope: value)
+        }
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else { return 0 }
+        return number.doubleValue
     }
 
     public func text(_ expr: String, scopeName: String? = nil, scope: Any? = nil) -> String {
@@ -262,7 +304,7 @@ public final class CrepusStateStore: ObservableObject {
         _ = revision
         return expr.withCString { exprPointer in
             callOptionalArgs(scopeName, scopeJson(scope)) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
-                crepusMobileEvalBool(exprPointer, UInt(strlen(exprPointer)), scopeNamePointer, scopeNameLength, scopePointer, scopeLength)
+                crepusMobileEvalBool(exprPointer, UInt(expr.utf8.count), scopeNamePointer, scopeNameLength, scopePointer, scopeLength)
             }
         }
     }
@@ -271,7 +313,7 @@ public final class CrepusStateStore: ObservableObject {
         _ = revision
         return expr.withCString { exprPointer in
             callOptionalArgs(scopeName, scopeJson(scope)) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
-                crepusMobileEvalNumber(exprPointer, UInt(strlen(exprPointer)), scopeNamePointer, scopeNameLength, scopePointer, scopeLength)
+                crepusMobileEvalNumber(exprPointer, UInt(expr.utf8.count), scopeNamePointer, scopeNameLength, scopePointer, scopeLength)
             }
         }
     }
@@ -288,25 +330,8 @@ public final class CrepusStateStore: ObservableObject {
     }
 
     private func scopeJson(_ scope: Any?) -> String? {
-        guard let scope else {
-            return nil
-        }
-        switch scope {
-        case let text as String:
-            return "\"\(text.replacingOccurrences(of: "\"", with: "\\\""))\""
-        case let number as NSNumber:
-            return number.stringValue
-        case is NSNull:
-            return "null"
-        default:
-            guard JSONSerialization.isValidJSONObject(scope),
-                  let data = try? JSONSerialization.data(withJSONObject: scope),
-                  let json = String(data: data, encoding: .utf8)
-            else {
-                return nil
-            }
-            return json
-        }
+        guard let scope else { return nil }
+        return CrepusRustActions.encodeQueuedChangeValue(scope)
     }
 
     private func readString(
@@ -316,16 +341,20 @@ public final class CrepusStateStore: ObservableObject {
         reader: (UnsafePointer<CChar>, UInt, UnsafePointer<CChar>?, UInt, UnsafePointer<CChar>?, UInt, UnsafeMutablePointer<CChar>, UInt) -> UInt
     ) -> String {
         expr.withCString { exprPointer in
-            let capacity = 4096
-            let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
-            defer { output.deallocate() }
-            let written = callOptionalArgs(scopeName, scopeJson) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
-                reader(exprPointer, UInt(strlen(exprPointer)), scopeNamePointer, scopeNameLength, scopePointer, scopeLength, output, UInt(capacity))
+            var capacity = 4096
+            while true {
+                let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
+                defer { output.deallocate() }
+                let written = callOptionalArgs(scopeName, scopeJson) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
+                    reader(exprPointer, UInt(expr.utf8.count), scopeNamePointer, scopeNameLength, scopePointer, scopeLength, output, UInt(capacity))
+                }
+                if written < UInt(capacity) {
+                    return String(decoding: UnsafeRawBufferPointer(start: output, count: Int(written)), as: UTF8.self)
+                }
+                // Read-only evaluators report the full length even when the buffer is too small.
+                guard written < UInt(Int.max) else { return "" }
+                capacity = Int(written) + 1
             }
-            if written >= capacity {
-                return ""
-            }
-            return String(cString: output)
         }
     }
 
@@ -338,15 +367,15 @@ public final class CrepusStateStore: ObservableObject {
             return scopeName.withCString { scopeNamePointer in
                 if let scopeJson {
                     return scopeJson.withCString { scopePointer in
-                        body(scopeNamePointer, UInt(strlen(scopeNamePointer)), scopePointer, UInt(strlen(scopePointer)))
+                        body(scopeNamePointer, UInt(scopeName.utf8.count), scopePointer, UInt(scopeJson.utf8.count))
                     }
                 }
-                return body(scopeNamePointer, UInt(strlen(scopeNamePointer)), nil, 0)
+                return body(scopeNamePointer, UInt(scopeName.utf8.count), nil, 0)
             }
         }
         if let scopeJson {
             return scopeJson.withCString { scopePointer in
-                body(nil, 0, scopePointer, UInt(strlen(scopePointer)))
+                body(nil, 0, scopePointer, UInt(scopeJson.utf8.count))
             }
         }
         return body(nil, 0, nil, 0)
@@ -374,45 +403,81 @@ private struct HostActionError: LocalizedError {
 }
 
 #if canImport(UIKit)
+private let pickerImportQueue = DispatchQueue(label: "crepus.picker-import", qos: .userInitiated)
+
+@MainActor
 private final class FilePickerDelegate: NSObject, UIDocumentPickerDelegate {
     let action: String
+    private var importing = false
 
     init(action: String) {
         self.action = action
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        let files = urls.compactMap { pickedFileJson(url: $0) }
-        CrepusRustActions.emit(filePickerResultJson(action: action, files: files))
-        CrepusHostPicker.shared.clear(delegate: self)
+        guard !importing, !CrepusHostPicker.shared.importInFlight,
+              CrepusHostPicker.shared.contains(delegate: self) else { return }
+        importing = true
+        CrepusHostPicker.shared.importInFlight = true
+        let action = action
+        pickerImportQueue.async { [weak self] in
+            let files = urls.compactMap { pickedFileJson(url: $0) }
+            let result = filePickerResultJson(action: action, files: files, failedCount: urls.count - files.count)
+            let paths = files.compactMap { $0["filePath"] as? String }
+            DispatchQueue.main.async {
+                CrepusHostPicker.shared.importInFlight = false
+                guard let self, CrepusHostPicker.shared.contains(delegate: self) else {
+                    pickerImportQueue.async {
+                        for path in paths { try? FileManager.default.removeItem(atPath: path) }
+                    }
+                    return
+                }
+                CrepusHostPicker.shared.clear(delegate: self)
+                CrepusActions.resultSink(result)
+            }
+        }
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        CrepusRustActions.emit(filePickerResultJson(action: action, files: []))
+        guard CrepusHostPicker.shared.contains(delegate: self) else { return }
         CrepusHostPicker.shared.clear(delegate: self)
+        CrepusActions.resultSink(filePickerResultJson(action: action, files: []))
     }
 }
 
+@MainActor
 private final class CrepusHostPicker {
     static let shared = CrepusHostPicker()
-    private var delegates: [FilePickerDelegate] = []
+    private var delegates: [NSObject] = []
+    var importInFlight = false
 
-    func retain(delegate: FilePickerDelegate) {
+    var isActive: Bool { importInFlight || !delegates.isEmpty }
+
+    func retain(delegate: NSObject) {
         delegates.append(delegate)
     }
 
-    func clear(delegate: FilePickerDelegate) {
+    func contains(delegate: NSObject) -> Bool {
+        delegates.contains { $0 === delegate }
+    }
+
+    func clear(delegate: NSObject) {
         delegates.removeAll { $0 === delegate }
     }
 }
 
 private func presentFilePicker(action: String, contentTypes: [UTType], allowsMultiple: Bool) {
     Task { @MainActor in
-        guard let root = topViewController() else {
-            CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"missing root view controller\"}")
+        guard !CrepusHostPicker.shared.isActive else {
+            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "picker already active"))
             return
         }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes)
+        guard let root = topViewController() else {
+            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "missing root view controller"))
+            return
+        }
+        let allowedTypes = contentTypes.isEmpty ? [UTType.item] : contentTypes
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: allowedTypes)
         let delegate = FilePickerDelegate(action: action)
         picker.delegate = delegate
         picker.allowsMultipleSelection = allowsMultiple
@@ -435,6 +500,10 @@ private func topViewController() -> UIViewController? {
 }
 
 private func pickedFileJson(url: URL) -> [String: Any]? {
+    let accessing = url.startAccessingSecurityScopedResource()
+    defer {
+        if accessing { url.stopAccessingSecurityScopedResource() }
+    }
     let values = try? url.resourceValues(forKeys: [.nameKey, .contentTypeKey, .fileSizeKey])
     let name = values?.name ?? url.lastPathComponent
     guard let path = try? copyToCache(from: url, name: name) else { return nil }
@@ -452,24 +521,26 @@ private func copyToCache(from url: URL, name: String) throws -> URL {
     let path = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(ext.isEmpty ? url.pathExtension : ext)
-    let accessing = url.startAccessingSecurityScopedResource()
-    defer {
-        if accessing {
-            url.stopAccessingSecurityScopedResource()
-        }
+    do {
+        try FileManager.default.copyItem(at: url, to: path)
+        return path
+    } catch {
+        try? FileManager.default.removeItem(at: path)
+        throw error
     }
-    try FileManager.default.copyItem(at: url, to: path)
-    return path
 }
 
-private func filePickerResultJson(action: String, files: [[String: Any]]) -> String {
-    if let data = try? JSONSerialization.data(withJSONObject: [
-        "ok": true,
+private func filePickerResultJson(action: String, files: [[String: Any]], failedCount: Int = 0) -> String {
+    var result: [String: Any] = [
+        "ok": failedCount == 0,
         "action": action,
-        "value": [
-            "files": files,
-        ],
-    ]),
+        "value": ["files": files],
+    ]
+    if failedCount > 0 {
+        result["error"] = "could not import selected files"
+        result["failedCount"] = failedCount
+    }
+    if let data = try? JSONSerialization.data(withJSONObject: result),
        let json = String(data: data, encoding: .utf8) {
         return json
     }
@@ -500,10 +571,9 @@ private func fileExtension(_ type: String) -> String {
 
 private func mimeType(_ type: String) -> String {
     let type = type.lowercased()
-    if type.contains("png") { return "image/png" }
-    if type.contains("heic") || type.contains("heif") { return "image/heic" }
-    if type.contains("movie") || type.contains("video") || type.contains("mp4") || type.contains("mpeg-4") { return "video/mp4" }
-    return "image/jpeg"
+    return UTType(type)?.preferredMIMEType
+        ?? UTType(filenameExtension: type)?.preferredMIMEType
+        ?? "application/octet-stream"
 }
 
 #elseif canImport(AppKit)
