@@ -1,0 +1,13 @@
+[package]
+name = "crepus-zpui-fixture-exporter"
+version = "0.1.0"
+edition = "2021"
+license = "ISC"
+publish = false
+
+# Keep this compiler helper independent of the desktop workspace build.
+[workspace]
+
+[dependencies]
+crepuscularity-native = { path = "../../../../crates/crepuscularity-native" }
+crepuscularity-core = { path = "../../../../crates/crepuscularity-core" }

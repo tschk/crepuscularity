@@ -68,16 +68,20 @@ _HTML_INPUT_TYPES = frozenset({
 
 
 def render_ir(path: str | Path, context: dict[str, Any] | None = None, allowed_dir: str | Path | None = None) -> ViewIr:
-    args = [_crepus_bin(), "native", "ir", str(path)]
-    input_data = None
+    template_path = Path(path)
+    command_path = str(path)
     if context is not None or allowed_dir is not None:
-        resolved_path = Path(path).resolve()
+        template_path = template_path.resolve()
         resolved_allowed = Path(allowed_dir).resolve() if allowed_dir is not None else Path.cwd().resolve()
-        if not resolved_path.is_relative_to(resolved_allowed):
+        if not template_path.is_relative_to(resolved_allowed):
             raise ValueError("Path traversal detected")
+        command_path = str(template_path)
+
+    args = [_crepus_bin(), "native", "ir", command_path]
+    input_data = None
     if context is not None:
-        source = resolved_path.read_bytes().decode("utf-8")
-        payload = {"template": source, "context": context, "filename": str(path), "baseDir": str(Path(path).parent)}
+        source = template_path.read_bytes().decode("utf-8")
+        payload = {"template": source, "context": context, "filename": command_path, "baseDir": str(template_path.parent)}
         args = [_crepus_bin(), "native", "ir", "--stdin-json"]
         input_data = json.dumps(payload).encode("utf-8")
     proc = subprocess.run(args, input=input_data, capture_output=True, check=False)

@@ -185,6 +185,7 @@ impl Template {
     }
 
     pub fn components_mut(&mut self) -> &mut ComponentRegistry {
+        self.invalidate_render();
         &mut self.components
     }
 
@@ -211,6 +212,13 @@ impl Template {
             }
         }
         self
+    }
+
+    /// Invalidate cached rendering after changes outside the template context,
+    /// such as an included file on disk. The last successful frame remains
+    /// available if the next render fails.
+    pub fn invalidate(&mut self) {
+        self.invalidate_render();
     }
 
     pub(crate) fn invalidate_render(&mut self) {

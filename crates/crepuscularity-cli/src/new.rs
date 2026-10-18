@@ -51,8 +51,8 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-gpui = {{ git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui", default-features = false, features = ["font-kit"] }}
-crepuscularity-gpui = {{ git = "https://github.com/tschk/crepuscularity", package = "crepuscularity-gpui" }}
+gpui = {{ package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }}
+crepuscularity-gpui = {{ version = "0.5.10" }}
 "#
     )
 }
@@ -133,13 +133,14 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
 mod scaffold_dependency_tests {
     use super::*;
     #[test]
-    fn generated_gpui_source_matches_backend_pin() {
+    fn generated_gpui_source_matches_workspace_backend() {
         let generated: toml::Value = toml::from_str(&cargo_toml("fixture")).unwrap();
-        let backend: toml::Value =
-            toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
-        assert_eq!(
-            generated["dependencies"]["gpui"]["rev"],
-            backend["dependencies"]["gpui"]["rev"]
-        );
+        let workspace: toml::Value = toml::from_str(include_str!("../../../Cargo.toml")).unwrap();
+        for key in ["package", "version"] {
+            assert_eq!(
+                generated["dependencies"]["gpui"][key],
+                workspace["workspace"]["dependencies"]["gpui"][key]
+            );
+        }
     }
 }

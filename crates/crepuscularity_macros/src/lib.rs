@@ -161,8 +161,15 @@ fn expand_includes_text(
     source_path: &std::path::Path,
 ) -> (String, BTreeSet<PathBuf>) {
     let mut dependencies = BTreeSet::from([source_path.to_path_buf()]);
-    let expanded =
-        expand_includes_text_with_depth(template, base_dir, source_path, 0, &mut dependencies);
+    let mut cache = std::collections::HashMap::new();
+    let expanded = expand_includes_text_with_depth(
+        template,
+        base_dir,
+        source_path,
+        0,
+        &mut dependencies,
+        &mut cache,
+    );
     (expanded, dependencies)
 }
 
@@ -172,6 +179,7 @@ fn expand_includes_text_with_depth(
     source_path: &std::path::Path,
     depth: usize,
     dependencies: &mut BTreeSet<PathBuf>,
+    cache: &mut std::collections::HashMap<PathBuf, std::rc::Rc<String>>,
 ) -> String {
     if depth > 64 {
         panic!(
@@ -212,7 +220,7 @@ fn expand_includes_text_with_depth(
             }
         }
     }
-    let mut output = String::new();
+    let mut output = String::with_capacity(template.len() + 1024);
     let mut in_text = false;
     for line in template.lines() {
         let trimmed = line.trim_start();
@@ -262,17 +270,22 @@ fn expand_includes_text_with_depth(
             };
             let include_path = base_dir.join(file_str);
             let include_dir = include_path.parent().unwrap_or(base_dir).to_path_buf();
-            let included = std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to read included template file `{}`: {}",
-                    include_path.display(),
-                    e
-                )
-            });
+            let included = cache
+                .entry(include_path.clone())
+                .or_insert_with(|| {
+                    std::rc::Rc::new(std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to read included template file `{}`: {}",
+                            include_path.display(),
+                            e
+                        )
+                    }))
+                })
+                .clone();
             dependencies.insert(include_path.clone());
             let section = match component_name {
                 Some(name) => extract_component_section(&included, name),
-                None => included,
+                None => included.to_string(),
             };
             let expanded = expand_includes_text_with_depth(
                 &section,
@@ -280,6 +293,7 @@ fn expand_includes_text_with_depth(
                 &include_path,
                 depth + 1,
                 dependencies,
+                cache,
             );
             let indent = &line[..line.len() - line.trim_start().len()];
             for included_line in expanded.lines() {

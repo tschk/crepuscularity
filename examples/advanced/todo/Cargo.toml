@@ -10,6 +10,6 @@ name = "todo"
 path = "src/main.rs"
 
 [dependencies]
-gpui = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", default-features = false, features = ["font-kit"] }
-gpui_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97" }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
 crepuscularity-gpui = { path = "../../../crates/crepuscularity-gpui" }

@@ -33,11 +33,15 @@ crepuscularity/
     crepuscularity-flutter/      — Flutter View IR / .crepus renderer
     crepuscularity-components/   — Flutter/Svelte packages + catalog source (omi path deps)
   examples/
+    showcase/                — small single-file DSL demos (render target)
     web-site/                — reference site: index.crepus + runtime/
-    counter/                 — SSR counter
-    todo-web/                — SSR todo
-    weather-web/             — SSR weather
-    embedded-*/              — LVGL/STM32 examples
+    quicknote/               — in-repo MV3 browser extension
+    weather/                 — GPUI desktop app
+    ui-library/              — reusable component catalog demos
+    native-shells/           — SwiftUI/XcodeGen + Gradle View IR hosts
+    embedded-dashboard/      — host-sim RGB565 panel
+    advanced/                — benchmarks, SSR, embedded boards, LVGL, mobile, Tauri
+    examples.toml            — catalog by target (see examples/README.md)
 ```
 
 ## Parser Frontends

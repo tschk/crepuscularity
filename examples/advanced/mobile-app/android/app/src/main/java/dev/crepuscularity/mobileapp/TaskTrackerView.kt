@@ -192,7 +192,7 @@ fun TaskTrackerView(modifier: Modifier = Modifier) {
                                                 Text("Font size")
                                             }
                                             Column(modifier = Modifier.fillMaxWidth()) {
-                                                Slider(value = CrepusStateStore.number("font_size"), onValueChange = { CrepusActions.performChange(null, "font_size", JsonPrimitive(it.toDouble())) }, valueRange = 12.000f..24.000f)
+                                                Slider(value = CrepusStateStore.number("font_size"), onValueChange = { CrepusActions.performChange(null, "font_size", JsonPrimitive(it)) }, valueRange = 12.000f..24.000f)
                                             }
                                         }
                                     }

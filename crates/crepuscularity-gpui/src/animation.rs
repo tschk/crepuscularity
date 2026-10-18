@@ -114,4 +114,10 @@ mod tests {
             transition_id(ElementId::Name("7".into()), "width", duration, 0., 1.)
         );
     }
+
+    #[test]
+    fn test_div_factory() {
+        // Ensure the factory function can be called and returns a Div
+        let _ = div();
+    }
 }

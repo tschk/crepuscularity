@@ -17,7 +17,7 @@ include base from each entry’s directory, using the map root for root-level
 entries. The caller context’s base directory does not override that selection.
 
 None of this depends on the frameworks whose syntax it accepts. There is no
-`svelte`, `vue`, or JSX toolchain in any `Cargo.toml` — all six frontends are
+`svelte`, `vue`, `astro`, `@angular`, or JSX toolchain in any `Cargo.toml` — all six frontends are
 hand-written Rust.
 
 Markup frontends reject stray `/` or `=` where an attribute name is required;

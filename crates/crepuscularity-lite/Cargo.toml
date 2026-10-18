@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-lite"
-version = "0.4.14"
+version = "0.4.15"
 edition.workspace = true
 license.workspace = true
 description = "GPUI desktop shell with an embedded V8 runtime and a Rust native-capability bridge."

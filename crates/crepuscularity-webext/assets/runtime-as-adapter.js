@@ -32,7 +32,7 @@ export default async function init(input) {
 function __getString(ptr) {
   ptr >>>= 0;
   if (!ptr) return null;
-  if (!wasm.memory) throw new Error("AS memory is not exported");
+  if (!wasm || !wasm.memory) throw new Error("AS memory is not exported");
   const length = new DataView(wasm.memory.buffer).getUint32(ptr - 4, true) >>> 1;
   const units = new Uint16Array(wasm.memory.buffer, ptr, length);
   let text = "";
@@ -43,7 +43,7 @@ function __getString(ptr) {
 }
 
 function __newString(str) {
-  if (!wasm.__new || !wasm.__pin || !wasm.__unpin || !wasm.memory) {
+  if (!wasm || !wasm.__new || !wasm.__pin || !wasm.__unpin || !wasm.memory) {
     throw new Error("AS runtime not exported; compile with --exportRuntime");
   }
   const ptr = wasm.__new(str.length * 2, 2) >>> 0;
@@ -68,7 +68,7 @@ function jsonIn(value) {
 // ------------------------------------------------------------------
 
 export function runtime_version() {
-  return wasm.runtime_version ? __getString(wasm.runtime_version()) : "unknown";
+  return (wasm && wasm.runtime_version) ? __getString(wasm.runtime_version()) : "unknown";
 }
 
 export function browser_program() {

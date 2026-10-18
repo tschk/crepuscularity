@@ -873,10 +873,20 @@ createApp({ root: Root }).mount("#app");
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        let mut aliased_destination = false;
         for entry in &entries {
             let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
             scaffold::validate_copy_destination(&destination, relative)
                 .map_err(|e| e.to_string())?;
+            let mut candidate = destination.clone();
+            for component in relative.components() {
+                candidate.push(component.as_os_str());
+                if std::fs::symlink_metadata(&candidate)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    aliased_destination = true;
+                }
+            }
             let identity = entry.path().canonicalize().map_err(|e| e.to_string())?;
             if identity.starts_with(&destination) {
                 return Err(format!(
@@ -885,15 +895,30 @@ createApp({ root: Root }).mount("#app");
                 ));
             }
         }
-        for entry in entries {
-            let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
-            let output = dest.join(relative);
+        use rayon::prelude::*;
+        for entry in &entries {
             if entry.file_type().is_dir() {
-                std::fs::create_dir_all(output).map_err(|e| e.to_string())?;
-            } else if entry.file_type().is_file() {
-                std::fs::copy(entry.path(), output).map_err(|e| e.to_string())?;
+                let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(dest.join(relative)).map_err(|e| e.to_string())?;
             }
         }
+        let copy_file = |entry: &walkdir::DirEntry| {
+            let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
+            std::fs::copy(entry.path(), dest.join(relative)).map_err(|e| e.to_string())?;
+            Ok::<_, String>(())
+        };
+        if aliased_destination {
+            // Contained links may map multiple logical files to one output.
+            for entry in entries.iter().filter(|entry| entry.file_type().is_file()) {
+                copy_file(entry)?;
+            }
+        } else {
+            entries
+                .par_iter()
+                .filter(|entry| entry.file_type().is_file())
+                .try_for_each(copy_file)?;
+        }
+
         Ok(())
     }
 

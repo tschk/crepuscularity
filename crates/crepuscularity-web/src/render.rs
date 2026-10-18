@@ -754,39 +754,18 @@ pub(crate) fn push_bindings(
             continue;
         };
         if matches!(evaluated, TemplateValue::Bool(false) | TemplateValue::Null)
-            && matches!(
-                binding.prop.to_ascii_lowercase().as_str(),
-                "allowfullscreen"
-                    | "async"
-                    | "autofocus"
-                    | "autoplay"
-                    | "checked"
-                    | "controls"
-                    | "default"
-                    | "defer"
-                    | "disabled"
-                    | "download"
-                    | "formnovalidate"
-                    | "hidden"
-                    | "inert"
-                    | "ismap"
-                    | "itemscope"
-                    | "loop"
-                    | "multiple"
-                    | "muted"
-                    | "nomodule"
-                    | "novalidate"
-                    | "open"
-                    | "playsinline"
-                    | "readonly"
-                    | "required"
-                    | "reversed"
-                    | "selected"
-            )
+            && (is_boolean_html_attribute(&binding.prop)
+                || binding.prop.eq_ignore_ascii_case("hidden")
+                || binding.prop.eq_ignore_ascii_case("download"))
         {
             continue;
         }
-        let value = if binding.prop.eq_ignore_ascii_case("download")
+        let value = if binding.prop.eq_ignore_ascii_case("hidden")
+            && matches!(evaluated, TemplateValue::Bool(true))
+        {
+            "hidden".to_string()
+        } else if (binding.prop.eq_ignore_ascii_case("download")
+            || is_boolean_html_attribute(&binding.prop))
             && matches!(evaluated, TemplateValue::Bool(true))
         {
             String::new()
@@ -803,6 +782,38 @@ pub(crate) fn push_bindings(
         out.push('"');
     }
     Ok(())
+}
+
+fn is_boolean_html_attribute(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "allowfullscreen"
+            | "async"
+            | "autofocus"
+            | "autoplay"
+            | "checked"
+            | "controls"
+            | "default"
+            | "defer"
+            | "disabled"
+            | "disablepictureinpicture"
+            | "disableremoteplayback"
+            | "formnovalidate"
+            | "inert"
+            | "ismap"
+            | "itemscope"
+            | "loop"
+            | "multiple"
+            | "muted"
+            | "nomodule"
+            | "novalidate"
+            | "open"
+            | "playsinline"
+            | "readonly"
+            | "required"
+            | "reversed"
+            | "selected"
+    )
 }
 
 pub(crate) fn push_handlers_and_animations(
