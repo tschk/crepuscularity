@@ -42,6 +42,13 @@ pub fn build(b: *std.Build) void {
     const step = b.step("test", "Test the View IR boundary without a ZPUI backend");
     step.dependOn(&original_run.step);
     step.dependOn(&run.step);
+    const host_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "view_ir", .module = ir }},
+    }) });
+    step.dependOn(&b.addRunArtifact(host_tests).step);
 }
 
 fn rustTriple(target: std.Target) ?[]const u8 {
