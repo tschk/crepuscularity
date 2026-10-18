@@ -1,11 +1,12 @@
 //! Host-controlled ZPUI native/drawn form controls.
+const std = @import("std");
 const zpui = @import("zpui");
 const ir = @import("view_ir");
 const host = @import("host.zig");
 
-pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, identity: []const u8, scope: ?*const host.Scope) !zpui.AnyElement {
+pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.Context(View), node: *const ir.Node, identity: []const u8, scope: ?*const host.Scope, callbacks: std.mem.Allocator) !zpui.AnyElement {
     if (node.kind == .tabs) {
-        for (node.options) |option| if (option.icon != null) return @import("icon_tabs.zig").render(View, self, window, cx, node, identity, scope);
+        for (node.options) |option| if (option.icon != null) return @import("icon_tabs.zig").render(View, self, window, cx, node, identity, scope, callbacks);
     }
     const kind: zpui.elements.native_control.Kind = switch (node.kind) {
         .toggle => .switch_,
@@ -17,7 +18,7 @@ pub fn render(comptime View: type, self: *View, window: *zpui.Window, cx: *zpui.
     };
     if (window.measureNativeControl(.{ .kind = kind }) == null and zpui.elements.desktop_controls.controlLook(window, null) == null) return error.MissingControlBackend;
     const Payload = struct { node: *const ir.Node, scope: ?*const host.Scope };
-    const payload = try zpui.frameAllocator().create(Payload);
+    const payload = try callbacks.create(Payload);
     payload.* = .{ .node = node, .scope = scope };
     const Callback = struct {
         fn change(view: *View, data: *const Payload, event: *const zpui.NativeControlEvent, w: *zpui.Window, context: *zpui.Context(View)) void {

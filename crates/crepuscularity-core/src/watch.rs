@@ -24,46 +24,34 @@ pub const COOLDOWN_MS: u64 = 200;
 /// requests inside the extension sandbox.
 pub const EXTENSION_POLL_MS: u64 = 1500;
 
-/// Create a `notify` watcher rooted at the *directory* containing `path`.
+#[cfg(feature = "notify")]
+mod managed;
+
+#[cfg(feature = "notify")]
+pub use managed::SingleFileWatcher;
+
+/// Create a template watcher for the logical directory and resolved entry target.
+///
+/// A background monitor reconciles roots when entry or ancestor symlinks change.
+/// Native file events remain active; dropping the handle signals worker teardown
+/// without joining the monitor on the caller's thread.
 ///
 /// The watcher flips `*changed = true` when:
 /// - the watched template is modified / created / removed (covers
 ///   atomic-save editor patterns), or
-/// - any sibling/descendant `.crepus` file changes (`include`d components
+/// - any sibling/descendant supported template file changes (`include`d components
 ///   trigger reload), or
 /// - a `context.toml` next to the template is updated.
 ///
 /// `label` appears in error messages to distinguish the source (e.g.
 /// `"runtime"`, `"tui"`). Drop the returned handle to stop watching cleanly.
 #[cfg(feature = "notify")]
-use notify::Watcher;
-
-#[cfg(feature = "notify")]
 pub fn create_watcher(
     path: impl Into<std::path::PathBuf>,
     changed: std::sync::Arc<std::sync::Mutex<bool>>,
     label: &'static str,
 ) -> Result<Box<dyn notify::Watcher + Send>, String> {
-    let path: std::path::PathBuf = path.into();
-    let canonical_target = path.canonicalize().unwrap_or_else(|_| path.clone());
-    let watch_dir = canonical_target
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    let target = canonical_target.clone();
-    let root = watch_dir.clone();
-
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        handle_watcher_event(res, &changed, &target, &root, label)
-    })
-    .map_err(|e| format!("could not create file watcher: {e}"))?;
-
-    watcher
-        .watch(&watch_dir, notify::RecursiveMode::Recursive)
-        .map_err(|e| format!("failed to watch {}: {e}", watch_dir.display()))?;
-
-    Ok(Box::new(watcher))
+    managed::create(path.into(), changed, label)
 }
 
 #[cfg(feature = "notify")]
@@ -120,7 +108,19 @@ pub fn event_touches_relevant_path(
             continue;
         }
         match canon.extension().and_then(|e| e.to_str()) {
-            Some("crepus") => return true,
+            Some("crepus" | "vue" | "svelte" | "astro" | "ng" | "jsx" | "tsx" | "csx") => {
+                return true
+            }
+            Some("html")
+                if canon
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.ends_with(".ng.html") || name.ends_with(".component.html")
+                    }) =>
+            {
+                return true
+            }
             Some("toml") if canon.file_name().and_then(|n| n.to_str()) == Some("context.toml") => {
                 return true
             }
@@ -136,6 +136,33 @@ mod tests {
     use super::*;
     use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
     use notify::EventKind;
+
+    #[test]
+    fn included_frontends_trigger_reload() {
+        let root = std::path::Path::new("/crepus-watcher-test");
+        let target = root.join("entry.crepus");
+        for extension in [
+            "vue",
+            "svelte",
+            "astro",
+            "ng",
+            "ng.html",
+            "component.html",
+            "jsx",
+            "tsx",
+            "csx",
+        ] {
+            let event = notify::Event::new(EventKind::Remove(RemoveKind::Any))
+                .add_path(root.join(format!("child.{extension}")));
+            assert!(
+                event_touches_relevant_path(&event, &target, root),
+                "{extension}"
+            );
+        }
+        let event = notify::Event::new(EventKind::Modify(ModifyKind::Any))
+            .add_path(root.join("index.html"));
+        assert!(!event_touches_relevant_path(&event, &target, root));
+    }
 
     #[test]
     fn test_is_relevant_kind() {

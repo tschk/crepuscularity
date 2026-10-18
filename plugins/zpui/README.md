@@ -81,6 +81,13 @@ old frame has been replaced after a document update. Schedule replacement and
 retirement through the host's frame lifecycle rather than freeing a document
 inside one of its own click callbacks.
 
+Callback payloads and copied collection scopes belong to retained per-window,
+per-namespace storage, rather than the temporary frame arena. Successful renders
+retain the current and preceding generations through presentation; failed
+renders discard only their new allocations. Window/element disposal releases
+the storage. Hosts must still copy callback arguments they retain after a
+callback returns.
+
 Give each adapter instance a distinct namespace. Element IDs include that
 namespace, the node's tree position, and its optional source `style.id`.
 IDs distinguish siblings and instances; positional IDs do not promise to retain
@@ -238,3 +245,24 @@ and the separate notices for upstream vendored libraries and assets when
 distributing a linked application. This PR contains the independently written
 adapter and Crepuscularity fixtures. The Unicode dependency is MIT OR Apache-2.0;
 this distribution includes its MIT license and copyright notice under `native-text`.
+
+### Key-validation performance probe
+
+From this directory, run the standalone CPU-time probe on macOS/Linux:
+
+```sh
+zig test -OReleaseFast --dep host -Mroot=tests/key_scaling.zig \
+  --dep view_ir -Mhost=src/host.zig -Mview_ir=src/view_ir.zig \
+  -lc --test-filter 'manual collection'
+```
+
+It validates 1,000/2,000/4,000 unique keys and a duplicate at the last row,
+25 times each, checking the original slice and final row. On an Apple Silicon
+host with Zig 0.16.0, median CPU times from three runs were
+24.6/107.5/461.2 ms for the original unique-key scan and 0.37/0.63/1.47 ms
+for the hash-set version. Last-row duplicates changed from
+25.8/108.5/457.4 ms to 0.36/0.67/1.25 ms. These are validation measurements,
+not frame latency. Temporary hash storage is released after each call; allocation
+failure or a list beyond safe hash-table capacity uses the original scan and
+preserves its first-error behavior. The normal decoder test command also runs
+host tests covering that fallback and borrowed-slice/error compatibility.
