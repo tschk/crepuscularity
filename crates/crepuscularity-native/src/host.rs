@@ -269,56 +269,52 @@ mod tests {
         assert_eq!(parse_java_major("  "), None);
     }
 
-    // Workaround for 'ExecutableFileBusy': instead of returning the `NamedTempFile` (which holds a write handle),
-    // we return the path and use a guard to clean it up. Or we can just persist the file in a temp dir.
+    // Checked-in executables avoid writing a script immediately before executing it.
+    // Shell builtin printf also keeps these fixtures independent of external utilities.
     #[cfg(unix)]
-    struct FakeJavaGuard {
-        _dir: tempfile::TempDir,
-        path: std::path::PathBuf,
-    }
+    fn java_fixture(name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
 
-    #[cfg(unix)]
-    impl FakeJavaGuard {
-        fn new(output: &str) -> Self {
-            use std::io::Write;
-            use std::os::unix::fs::PermissionsExt;
-            let dir = tempfile::Builder::new()
-                .tempdir_in(std::env::current_dir().unwrap())
-                .unwrap();
-            let path = dir.path().join("fake_java");
-            let mut file = std::fs::File::create(&path).unwrap();
-            writeln!(file, "#!/bin/sh\ncat << 'EOF'\n{output}\nEOF").unwrap();
-            file.sync_all().unwrap();
-            drop(file);
-            let mut perms = std::fs::metadata(&path).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&path, perms).unwrap();
-            Self { _dir: dir, path }
-        }
-        fn path(&self) -> &std::path::Path {
-            &self.path
-        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/java")
+            .join(name);
+        let metadata = std::fs::metadata(&path)
+            .unwrap_or_else(|error| panic!("Java fixture {}: {error}", path.display()));
+        assert!(
+            metadata.is_file(),
+            "Java fixture {} must be a regular file",
+            path.display()
+        );
+        assert!(
+            metadata.permissions().mode() & 0o111 != 0,
+            "Java fixture {} must be executable",
+            path.display()
+        );
+        path
     }
 
     #[test]
     #[cfg(unix)]
     fn test_java_version_at_least_success() {
-        let fake_java = FakeJavaGuard::new("openjdk version \"17.0.2\" 2022-01-18");
-        assert!(java_version_at_least(fake_java.path(), 17));
+        let java = java_fixture("java17.sh");
+        assert!(
+            java_version_at_least(&java, 17),
+            "Java 17 fixture {} failed; metadata: {:?}",
+            java.display(),
+            std::fs::metadata(&java)
+        );
     }
 
     #[test]
     #[cfg(unix)]
     fn test_java_version_at_least_failure() {
-        let fake_java = FakeJavaGuard::new("openjdk version \"11.0.12\" 2021-07-20");
-        assert!(!java_version_at_least(fake_java.path(), 17));
+        assert!(!java_version_at_least(&java_fixture("java11.sh"), 17));
     }
 
     #[test]
     #[cfg(unix)]
     fn test_java_version_at_least_invalid_output() {
-        let fake_java = FakeJavaGuard::new("not a java version string");
-        assert!(!java_version_at_least(fake_java.path(), 17));
+        assert!(!java_version_at_least(&java_fixture("invalid.sh"), 17));
     }
 
     #[test]
