@@ -2,40 +2,66 @@
 
 use crate::ast::*;
 
-pub(crate) fn try_parse_include(line: &str) -> Option<IncludeNode> {
-    let rest = line.strip_prefix("include ")?;
-    // First token is the path (no spaces in path), rest are props
-    let (path, props_str) = match rest.find(' ') {
-        Some(pos) => (rest[..pos].trim().to_string(), rest[pos + 1..].trim()),
-        None => (rest.trim().to_string(), ""),
-    };
-    if path.is_empty() {
-        return None;
+pub(crate) fn try_parse_include(line: &str) -> Result<Option<IncludeNode>, &'static str> {
+    if line == "include" {
+        return Err("include directive requires a source path");
     }
-    let props = parse_props(props_str);
-    Some(IncludeNode {
+    let Some(rest) = line
+        .strip_prefix("include")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+    else {
+        return Ok(None);
+    };
+    let rest = rest.trim_start();
+    let (path, props_str) = extract_source_path(rest)?;
+    if path.is_empty() {
+        return Err("include directive requires a source path");
+    }
+    let props = parse_props(props_str)?;
+    Ok(Some(IncludeNode {
         path,
         props,
         slot: vec![],
-    })
+    }))
 }
 
-pub(crate) fn try_parse_embed(line: &str) -> Option<EmbedNode> {
-    let rest = line.strip_prefix("embed ")?;
-    let (src, props_str) = match rest.find(' ') {
-        Some(pos) => (rest[..pos].trim().to_string(), rest[pos + 1..].trim()),
-        None => (rest.trim().to_string(), ""),
-    };
-    if src.is_empty() {
-        return None;
+pub(crate) fn try_parse_embed(line: &str) -> Result<Option<EmbedNode>, &'static str> {
+    if line == "embed" {
+        return Err("embed directive requires a source path");
     }
-    let mut props = parse_props(props_str);
+    let Some(rest) = line
+        .strip_prefix("embed")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+    else {
+        return Ok(None);
+    };
+    let rest = rest.trim_start();
+    let (src, props_str) = extract_source_path(rest)?;
+    if src.is_empty() {
+        return Err("embed directive requires a source path");
+    }
+    let mut props = parse_props(props_str)?;
     let adapter = take_literal_prop(&mut props, "adapter");
-    Some(EmbedNode {
+    Ok(Some(EmbedNode {
         src,
         adapter,
         props,
-    })
+    }))
+}
+
+fn extract_source_path(source: &str) -> Result<(String, &str), &'static str> {
+    if source.starts_with(['"', '\'']) {
+        let (expression, rest) = extract_prop_value(source)?;
+        if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+            return Err("directive source path requires a whitespace separator");
+        }
+        return Ok((
+            unquote_expr_string(&expression).unwrap_or(expression),
+            rest.trim(),
+        ));
+    }
+    let end = source.find(char::is_whitespace).unwrap_or(source.len());
+    Ok((source[..end].to_string(), source[end..].trim()))
 }
 
 fn take_literal_prop(props: &mut Vec<(String, String)>, key: &str) -> Option<String> {
@@ -46,35 +72,47 @@ fn take_literal_prop(props: &mut Vec<(String, String)>, key: &str) -> Option<Str
 
 fn unquote_expr_string(value: &str) -> Option<String> {
     if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        Some(value[1..value.len() - 1].replace("\\\"", "\""))
+        Some(crate::parser::unescape_crepus_text_literal(
+            &value[1..value.len() - 1],
+        ))
     } else {
         None
     }
 }
 
-fn parse_props(s: &str) -> Vec<(String, String)> {
-    let mut props = Vec::new();
+fn parse_props(s: &str) -> Result<Vec<(String, String)>, &'static str> {
+    let mut props: Vec<(String, String)> = Vec::new();
     let mut remaining = s.trim();
 
     while !remaining.is_empty() {
         // Find key= (key is an identifier, no spaces)
         let eq_pos = match remaining.find('=') {
             Some(p) => p,
-            None => break,
+            None => return Err("directive prop must have a key and value"),
         };
         let key = remaining[..eq_pos].trim().to_string();
-        if key.is_empty() || key.contains(' ') {
-            break;
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err("invalid directive prop name");
         }
         remaining = remaining[eq_pos + 1..].trim_start();
+        if props.iter().any(|(name, _)| name == &key) {
+            return Err("duplicate directive prop");
+        }
 
         // Extract value
-        let (expr_str, rest) = extract_prop_value(remaining);
+        let (expr_str, rest) = extract_prop_value(remaining)?;
+        if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+            return Err("directive props require whitespace separators");
+        }
         props.push((key, expr_str));
         remaining = rest.trim_start();
     }
 
-    props
+    Ok(props)
 }
 
 /// Extract a prop value token from the start of `s`.
@@ -82,9 +120,9 @@ fn parse_props(s: &str) -> Vec<(String, String)> {
 /// - `"quoted"` → returns the string content wrapped in quotes for the evaluator
 /// - `{expr}` → returns the inner expr string
 /// - `bare_token` → returns the token as-is (treated as a variable name / literal)
-fn extract_prop_value(s: &str) -> (String, &str) {
+fn extract_prop_value(s: &str) -> Result<(String, &str), &'static str> {
     if s.is_empty() {
-        return (String::new(), s);
+        return Err("missing directive prop value");
     }
 
     if s.starts_with('"') || s.starts_with('\'') {
@@ -99,39 +137,28 @@ fn extract_prop_value(s: &str) -> (String, &str) {
                 escaped = true;
             } else if byte == quote {
                 let content = &s[1..i];
-                let escaped_content = content.replace('\\', "\\\\").replace('"', "\\\"");
-                let expr = format!("\"{}\"", escaped_content);
+                let expr = crate::parser::quote_expression_string(content);
                 let rest = if i < s.len() { &s[i + 1..] } else { "" };
-                return (expr, rest);
+                return Ok((expr, rest));
             }
             i += 1;
         }
 
-        let content = &s[1..];
-        let escaped_content = content.replace('\\', "\\\\").replace('"', "\\\"");
-        let expr = format!("\"{}\"", escaped_content);
-        return (expr, "");
+        return Err("unclosed quoted directive prop value");
     }
 
     if s.starts_with('{') {
-        let mut depth = 0usize;
-        for (i, c) in s.char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let expr = s[1..i].trim().to_string();
-                        return (expr, &s[i + 1..]);
-                    }
-                }
-                _ => {}
+        if let Some(close) = crate::parser::match_delimiter(s, '{', '}') {
+            let expression = s[1..close].trim();
+            if expression.is_empty() {
+                return Err("empty directive prop expression");
             }
+            return Ok((expression.to_string(), &s[close + 1..]));
         }
-        return (s.to_string(), "");
+        return Err("unclosed braced directive prop value");
     }
 
-    // Bare token: ends at next space
-    let end = s.find(' ').unwrap_or(s.len());
-    (s[..end].to_string(), &s[end..])
+    // Bare token: ends at the next whitespace separator.
+    let end = s.find(char::is_whitespace).unwrap_or(s.len());
+    Ok((s[..end].to_string(), &s[end..]))
 }

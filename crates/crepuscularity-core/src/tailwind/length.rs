@@ -31,42 +31,64 @@ pub fn parse_length_token(value: &str) -> Option<LengthToken> {
         _ => {}
     }
     if let Some((num, den)) = value.split_once('/') {
-        let n: f32 = num.parse().ok()?;
-        let d: f32 = den.parse().ok()?;
+        let n = parse_finite(num)?;
+        let d = parse_finite(den)?;
         if d == 0.0 {
             return None;
         }
-        return Some(LengthToken::Fraction(n / d));
+        let fraction = n / d;
+        return fraction
+            .is_finite()
+            .then_some(LengthToken::Fraction(fraction));
     }
-    value
-        .parse::<f32>()
-        .ok()
-        .map(|n| LengthToken::Rems(n * 0.25))
+    parse_finite(value).map(|n| LengthToken::Rems(n * 0.25))
 }
 
 /// Parse the inside of an arbitrary `[...]` value: `12px`, `1.5rem`, `50%`, `12`.
 pub fn parse_arbitrary_length_token(inner: &str) -> Option<LengthToken> {
     if let Some(rest) = inner.strip_suffix("px") {
-        if let Ok(n) = rest.parse::<f32>() {
-            return Some(LengthToken::Px(n));
-        }
+        return parse_finite(rest).map(LengthToken::Px);
     }
     if let Some(rest) = inner.strip_suffix("rem") {
-        if let Ok(n) = rest.parse::<f32>() {
-            return Some(LengthToken::Rems(n));
-        }
+        return parse_finite(rest).map(LengthToken::Rems);
     }
     if let Some(rest) = inner.strip_suffix('%') {
-        if let Ok(n) = rest.parse::<f32>() {
-            return Some(LengthToken::Fraction(n / 100.0));
-        }
+        return parse_finite(rest).map(|n| LengthToken::Fraction(n / 100.0));
     }
-    inner.parse::<f32>().ok().map(LengthToken::Px)
+    parse_finite(inner).map(LengthToken::Px)
+}
+
+fn parse_finite(value: &str) -> Option<f32> {
+    value.parse::<f32>().ok().filter(|value| value.is_finite())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_nonfinite_values_and_fraction_overflow() {
+        for value in [
+            "NaN",
+            "inf",
+            "-inf",
+            "1e100",
+            "NaN/2",
+            "1/inf",
+            "3e38/1e-38",
+        ] {
+            assert_eq!(parse_length_token(value), None, "{value}");
+        }
+        for value in ["NaNpx", "infrem", "-inf%", "1e100px", "NaN"] {
+            assert_eq!(parse_arbitrary_length_token(value), None, "{value}");
+            assert_eq!(parse_length_token(&format!("[{value}]")), None);
+        }
+        assert_eq!(parse_length_token("-2"), Some(LengthToken::Rems(-0.5)));
+        assert_eq!(
+            parse_arbitrary_length_token("-12px"),
+            Some(LengthToken::Px(-12.0))
+        );
+    }
 
     #[test]
     fn keywords() {

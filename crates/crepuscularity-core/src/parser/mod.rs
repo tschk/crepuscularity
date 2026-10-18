@@ -11,13 +11,25 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 
+pub use astro::{
+    parse_astro_module_template, parse_astro_module_template_with_expression_validator,
+    split_astro_source, AstroFrontmatter, AstroSource,
+};
 pub use indent::{parse_when_attribute_suffix, unescape_crepus_text_literal};
-pub use vue::{parse_vue_sfc, VueScriptBlock, VueSfc, VueStyleBlock};
+pub use vue::parse_vue_native_file;
+pub use vue::{
+    parse_vue_sfc, parse_vue_sfc_with_generics, parse_vue_sfc_with_metadata, VueScriptBlock,
+    VueSfc, VueSfcMetadata, VueStyleBlock,
+};
 
 pub(crate) use indent::{collect_lines, parse_nodes};
 pub(crate) use jsx::parse_jsx_template;
 pub(crate) use svelte::parse_svelte_template;
-pub use svelte::{parse_svelte_component, SvelteComponent};
+pub use svelte::entities as svelte_entities;
+pub use svelte::{
+    parse_svelte_component, parse_svelte_module, parse_svelte_module_with_boundary,
+    parse_svelte_module_with_styles_and_boundary, SvelteComponent, SvelteModule, SvelteSnippet,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RawParseError {
@@ -25,14 +37,33 @@ pub(crate) struct RawParseError {
     pub byte_offset: Option<usize>,
 }
 
+/// Encode a literal value as a string expression without interpreting escapes.
+pub(crate) fn quote_expression_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Protect known literal class tokens from the shared interpolation representation.
+pub(crate) fn literal_class_token(value: &str) -> String {
+    if value.contains('{') {
+        format!("{{{}}}", quote_expression_string(value))
+    } else {
+        value.to_owned()
+    }
+}
+
 /// Byte index of the delimiter matching the one at the start of `src`,
 /// ignoring delimiters that appear inside string literals.
 pub(crate) fn match_delimiter(src: &str, open: char, close: char) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
+    let mut escaped = false;
     for (i, c) in src.char_indices() {
         if let Some(q) = quote {
-            if c == q {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
                 quote = None;
             }
             continue;
@@ -50,6 +81,43 @@ pub(crate) fn match_delimiter(src: &str, open: char, close: char) -> Option<usiz
         }
     }
     None
+}
+
+/// Run `f` over every top-level byte position of `src`, skipping string
+/// literals and bracketed groups.
+pub(crate) fn scan_top_level(src: &str, mut f: impl FnMut(usize, char) -> bool) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in src.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' | '`' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth -= 1,
+            _ if depth == 0 && f(i, c) => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A diagnostic prefix that never splits a UTF-8 character.
+pub(crate) fn diagnostic_prefix(src: &str, max_chars: usize) -> &str {
+    let end = src
+        .char_indices()
+        .nth(max_chars)
+        .map_or(src.len(), |(i, _)| i);
+    &src[..end]
 }
 
 pub(crate) fn subslice_byte_offset(full: &str, tail: &str) -> usize {
@@ -128,6 +196,16 @@ pub fn parse_component_file(content: &str) -> Result<ComponentFile, crate::error
 
 pub(crate) fn parse_component_file_inner(content: &str) -> Result<ComponentFile, RawParseError> {
     let (frontmatter_str, body, body_byte_in_file) = split_frontmatter_parts(content);
+    let trimmed = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(content)
+        .trim_start();
+    if frontmatter_str.is_none() && trimmed.starts_with("+++") {
+        return Err(RawParseError {
+            message: "unclosed component frontmatter".to_string(),
+            byte_offset: Some(subslice_byte_offset(content, trimmed)),
+        });
+    }
 
     let mut meta_map: HashMap<String, ComponentMeta> = HashMap::new();
     if let Some(toml_src) = frontmatter_str {
@@ -143,13 +221,30 @@ pub(crate) fn parse_component_file_inner(content: &str) -> Result<ComponentFile,
                 if let toml::Value::Table(comp_table) = comp_val {
                     let mut meta = ComponentMeta::default();
 
-                    if let Some(toml::Value::String(desc)) = comp_table.get("description") {
-                        meta.description = Some(desc.clone());
+                    if let Some(description) = comp_table.get("description") {
+                        let desc = description.as_str().ok_or_else(|| RawParseError {
+                            message: format!(
+                                "component {comp_name}.description must be a TOML string"
+                            ),
+                            byte_offset: Some(toml_block_start),
+                        })?;
+                        meta.description = Some(desc.to_string());
                     }
 
-                    if let Some(toml::Value::Table(defs)) = comp_table.get("defaults") {
+                    if let Some(defaults) = comp_table.get("defaults") {
+                        let defs = defaults.as_table().ok_or_else(|| RawParseError {
+                            message: format!("component {comp_name}.defaults must be a TOML table"),
+                            byte_offset: Some(toml_block_start),
+                        })?;
                         for (k, v) in defs {
-                            meta.defaults.insert(k.clone(), toml_value_to_expr(v));
+                            let expression =
+                                toml_value_to_expr(v).map_err(|message| RawParseError {
+                                    message: format!(
+                                        "invalid component default {comp_name}.{k}: {message}"
+                                    ),
+                                    byte_offset: Some(toml_block_start),
+                                })?;
+                            meta.defaults.insert(k.clone(), expression);
                         }
                     }
 
@@ -163,6 +258,12 @@ pub(crate) fn parse_component_file_inner(content: &str) -> Result<ComponentFile,
     let mut components = HashMap::new();
 
     for (name, section_content, sec_start_in_body) in sections {
+        if components.contains_key(&name) {
+            return Err(RawParseError {
+                message: format!("duplicate component name {name:?}"),
+                byte_offset: Some(body_byte_in_file + sec_start_in_body),
+            });
+        }
         let nodes = parse_template_raw(&section_content).map_err(|mut e| {
             if let Some(off) = e.byte_offset {
                 e.byte_offset = Some(body_byte_in_file + sec_start_in_body + off);
@@ -180,12 +281,19 @@ pub(crate) fn parse_component_file_inner(content: &str) -> Result<ComponentFile,
 }
 
 pub fn split_frontmatter_parts(content: &str) -> (Option<&str>, &str, usize) {
-    let trimmed = content.trim_start();
+    let trimmed = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(content)
+        .trim_start();
     if !trimmed.starts_with("+++") {
         return (None, content, 0);
     }
     let after_open = &trimmed[3..];
-    if let Some(close_pos) = after_open.find("\n+++") {
+    if let Some(close_pos) = after_open
+        .match_indices("\n+++")
+        .map(|(position, _)| position)
+        .find(|&position| after_open[position + 1..].lines().next() == Some("+++"))
+    {
         let raw_toml = &after_open[..close_pos];
         let rest = &after_open[close_pos + 4..];
         let body_start = subslice_byte_offset(content, rest);
@@ -201,6 +309,7 @@ pub fn split_component_body_sections(body: &str) -> Vec<(String, String, usize)>
     let mut current_lines: Vec<&str> = Vec::new();
     let mut content_start_byte: Option<usize> = None;
     let mut pending_content_start = 0usize;
+    let mut in_text = false;
 
     let mut byte_pos = 0usize;
     while byte_pos <= body.len() {
@@ -218,9 +327,40 @@ pub fn split_component_body_sections(body: &str) -> Vec<(String, String, usize)>
         };
 
         let line_content = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        let trimmed = line_content.trim();
+        let trimmed = if line_start == 0 {
+            line_content
+                .strip_prefix('\u{feff}')
+                .unwrap_or(line_content)
+        } else {
+            line_content
+        }
+        .trim();
 
-        if let Some(name) = trimmed.strip_prefix("--- ") {
+        let literal_line = current_name.is_some() && (in_text || trimmed.starts_with('"'));
+        if literal_line {
+            let text = if in_text { trimmed } else { &trimmed[1..] };
+            in_text = true;
+            let mut escaped = false;
+            for character in text.chars() {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    in_text = false;
+                    break;
+                }
+            }
+        }
+        let section_name = if literal_line {
+            None
+        } else {
+            trimmed
+                .strip_prefix("---")
+                .filter(|rest| rest.starts_with(char::is_whitespace))
+        };
+
+        if let Some(name) = section_name {
             if let Some(prev) = current_name.take() {
                 let joined = current_lines.join("\n");
                 let start = content_start_byte.unwrap_or(pending_content_start);
@@ -248,14 +388,26 @@ pub fn split_component_body_sections(body: &str) -> Vec<(String, String, usize)>
 }
 
 /// Convert a TOML scalar to an expression string usable by the evaluator.
-fn toml_value_to_expr(v: &toml::Value) -> String {
-    match v {
-        toml::Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+fn toml_value_to_expr(v: &toml::Value) -> Result<String, &'static str> {
+    Ok(match v {
+        toml::Value::String(s) => quote_expression_string(s),
         toml::Value::Integer(i) => i.to_string(),
-        toml::Value::Float(f) => f.to_string(),
+        toml::Value::Float(f) => {
+            if !f.is_finite() {
+                return Err("float values must be finite");
+            }
+            let literal = f.to_string();
+            // Display omits the decimal point for integral floats. Preserve
+            // their type so large finite values don't become i64 literals.
+            if !literal.contains('.') {
+                format!("{literal}.0")
+            } else {
+                literal
+            }
+        }
         toml::Value::Boolean(b) => b.to_string(),
-        _ => "\"\"".to_string(),
-    }
+        _ => return Err("only string, integer, float, and boolean values are supported"),
+    })
 }
 
 #[tracing::instrument(skip(template), fields(len = template.len()))]
@@ -263,8 +415,8 @@ pub fn parse_template(template: &str) -> Result<Vec<Node>, crate::error::CrepusE
     parse_template_with_path(template, None)
 }
 
-/// Parse a template, optionally using the file path to force JSX mode.
-/// This is used by the CLI to detect `.csx` / `.jsx` / `.tsx` files.
+/// Parse a template, using the optional file path to select its frontend.
+/// Without a frontend-specific path, content selects JSX or indentation syntax.
 pub fn parse_template_with_path(
     template: &str,
     path: Option<&std::path::Path>,
@@ -273,11 +425,61 @@ pub fn parse_template_with_path(
         .map_err(|e| crate::error::CrepusError::parse(e.message))
 }
 
+/// Keep inline spaces while removing formatting indentation at line boundaries.
+pub(crate) fn markup_text_region(text: &str, nested: bool) -> &str {
+    if !nested {
+        return text.trim();
+    }
+    let trimmed_start = text.trim_start();
+    let leading = &text[..text.len() - trimmed_start.len()];
+    let trimmed_end = text.trim_end();
+    let trailing = &text[trimmed_end.len()..];
+    let first = if leading.contains(['\n', '\r']) {
+        leading.len()
+    } else {
+        0
+    };
+    let last = if trailing.contains(['\n', '\r']) {
+        trimmed_end.len()
+    } else {
+        text.len()
+    };
+    if first >= last {
+        &text[..0]
+    } else {
+        &text[first..last]
+    }
+}
+
+/// Spaces before a tag/block belong to nested markup, but root padding does not.
+pub(crate) fn markup_space_prefix(src: &str, nested: bool) -> Option<crate::ast::Node> {
+    let prefix = &src[..src.len() - src.trim_start().len()];
+    (nested && !prefix.is_empty() && !prefix.contains(['\n', '\r']))
+        .then(|| crate::ast::Node::Text(vec![crate::ast::TextPart::Literal(prefix.into())]))
+}
+
 pub(crate) fn parse_template_raw(template: &str) -> Result<Vec<Node>, RawParseError> {
     parse_template_raw_with_path(template, None)
 }
 
 pub(crate) fn parse_template_raw_with_path(
+    template: &str,
+    path: Option<&std::path::Path>,
+) -> Result<Vec<Node>, RawParseError> {
+    // Vue's SFC splitter already handles one leading BOM.
+    let source = if is_vue_mode(path) {
+        template
+    } else {
+        template.strip_prefix('\u{feff}').unwrap_or(template)
+    };
+    let offset = template.len() - source.len();
+    parse_template_raw_with_path_inner(source, path).map_err(|mut error| {
+        error.byte_offset = error.byte_offset.map(|byte| byte.saturating_add(offset));
+        error
+    })
+}
+
+fn parse_template_raw_with_path_inner(
     template: &str,
     path: Option<&std::path::Path>,
 ) -> Result<Vec<Node>, RawParseError> {
@@ -293,11 +495,28 @@ pub(crate) fn parse_template_raw_with_path(
         parse_jsx_template(template)
     } else {
         let dec = crate::preprocess::strip_indent_decorators(template);
-        let lines = collect_lines(&dec.body);
-        let (mut nodes, _) = parse_nodes(&lines, 0, 0);
+        let lines = collect_lines(&dec.body)?;
+        let (mut nodes, consumed) = parse_nodes(&lines, 0, 0)?;
+        if consumed < lines.len() {
+            return Err(RawParseError {
+                message: format!("unexpected control-flow line '{}'", lines[consumed].1),
+                byte_offset: None,
+            });
+        }
         crate::preprocess::expand_class_aliases_in_nodes(&mut nodes, &dec.class_aliases);
         Ok(nodes)
     }
+}
+
+/// Whether dispatch selects a markup frontend rather than indentation syntax.
+/// Use this before interpreting DSL component-section delimiters, which can be
+/// ordinary text in markup templates.
+pub fn is_markup_mode(template: &str, path: Option<&std::path::Path>) -> bool {
+    is_vue_mode(path)
+        || is_svelte_mode(path)
+        || is_astro_mode(path)
+        || is_angular_mode(path)
+        || is_jsx_mode(template.strip_prefix('\u{feff}').unwrap_or(template), path)
 }
 
 /// Returns true when the file path has the `.svelte` extension, activating the
@@ -351,7 +570,7 @@ pub(crate) fn is_angular_mode(path: Option<&std::path::Path>) -> bool {
 /// Returns true when the first non-blank, non-comment, non-`$:` line starts with `<`
 /// or when the file path has a JSX extension (`.csx`, `.jsx`, `.tsx`).
 /// This activates the JSX/HTML tag-based input syntax.
-pub(crate) fn is_jsx_mode(template: &str, path: Option<&std::path::Path>) -> bool {
+pub fn is_jsx_mode(template: &str, path: Option<&std::path::Path>) -> bool {
     if let Some(path) = path {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             let ext = ext.to_lowercase();
@@ -361,19 +580,69 @@ pub(crate) fn is_jsx_mode(template: &str, path: Option<&std::path::Path>) -> boo
         }
     }
 
-    for line in template.lines() {
-        let t = line.trim();
-        if t.is_empty() || t.starts_with('#') || t.starts_with("$:") {
-            continue;
+    skip_jsx_preamble(template).starts_with('<')
+}
+
+/// Return the template body after leading blank, hash-comment, and `$:` lines.
+pub fn skip_jsx_preamble(template: &str) -> &str {
+    let mut offset = 0;
+    for line in template.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("$:") {
+            return template[offset..].trim_start();
         }
-        return t.starts_with('<');
+        offset += line.len();
     }
-    false
+    &template[template.len()..]
 }
 #[cfg(test)]
 mod tests {
     use super::indent::strip_structural_indent;
     use super::*;
+
+    #[test]
+    fn quoted_delimiters_survive_frontend_dispatch() {
+        for filename in ["App.jsx", "App.svelte", "App.astro"] {
+            let nodes = parse_template_with_path(
+                r#"<p title={"}"} />"#,
+                Some(std::path::Path::new(filename)),
+            )
+            .expect("quoted brace in attribute");
+            let Node::Element(el) = &nodes[0] else {
+                panic!("expected element");
+            };
+            assert!(el
+                .bindings
+                .iter()
+                .any(|binding| binding.prop == "title" && binding.value == r#""}""#));
+        }
+        let condition = r#"value == "a\")b""#;
+        let source = format!("@if ({condition}) {{ <p /> }}");
+        let nodes = parse_template_with_path(&source, Some(std::path::Path::new("App.ng")))
+            .expect("escaped quote in Angular block head");
+        assert!(matches!(&nodes[0], Node::If(block) if block.condition == condition));
+    }
+
+    #[test]
+    fn unicode_in_malformed_markup_returns_errors() {
+        let tail = format!("</{}>", "界".repeat(20));
+        for (source, filename) in [
+            (format!("<template>{tail}</template>"), "page.vue"),
+            (tail.clone(), "page.astro"),
+            (tail.clone(), "page.component.html"),
+            (format!("<div>{tail}"), "page.jsx"),
+            (format!("{{#if ok}}{tail}"), "page.svelte"),
+            (format!("@if (ok) {{{tail}"), "page.component.html"),
+            (format!("{{<div />{tail}}}"), "page.astro"),
+        ] {
+            assert!(
+                parse_template_with_path(&source, Some(std::path::Path::new(filename))).is_err(),
+                "expected parse error for {filename}: {source}"
+            );
+        }
+        let source = "界".repeat(10);
+        assert!(jsx::attrs::jsx_brace_expr(&source, &source).is_err());
+    }
 
     #[test]
     fn strip_structural_indent_basic() {

@@ -10,7 +10,7 @@ readme = "../../README.md"
 
 [features]
 default = []
-# `Div::letter_spacing`, `Div::text_transform`, and `gpui::TextTransform` (needs GPUI newer than crates.io 0.2.2; this repo uses a patched vendor tree).
+# Text-run style APIs require the GPUI revision pinned by this workspace.
 gpui_text_run_styles = []
 
 [lib]

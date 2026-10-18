@@ -250,3 +250,289 @@ fn plain_html_paths_do_not_use_the_angular_frontend() {
     let nodes = err.expect("jsx frontend should handle plain html");
     assert_eq!(element(&nodes[0]).tag, "div");
 }
+
+#[test]
+fn ng_model_requires_nonempty_binding_expressions() {
+    for attribute in [
+        "[(ngModel)]",
+        "[(ngModel)]=\"\"",
+        "[(ngModel)]=\"   \"",
+        "[(ngModel)]={}",
+    ] {
+        let error = parse_err(&format!("<input {attribute} />"));
+        assert!(
+            error.contains("[(ngModel)]` requires an expression"),
+            "{error}"
+        );
+    }
+    for expression in ["query", "form.query"] {
+        let nodes = parse(&format!("<input [(ngModel)]=\"{expression}\" />"));
+        assert_eq!(element(&nodes[0]).bindings[0].value, expression);
+    }
+}
+
+#[test]
+fn property_bindings_require_names_and_expressions() {
+    for attribute in [
+        "[title]",
+        "[title]=\"\"",
+        "[class.active]=\"   \"",
+        "[ngClass]={}",
+        "[innerHTML]=\"\"",
+        "[]=\"value\"",
+    ] {
+        let error = parse_err(&format!("<div {attribute} />"));
+        assert!(
+            error.contains("property name and a nonempty expression"),
+            "{error}"
+        );
+    }
+    let error = parse_err(r#"<div [attr.]="value" />"#);
+    assert!(error.contains("missing an attribute name"), "{error}");
+    for property in [
+        "title",
+        "attr.title",
+        "class.active",
+        "ngClass",
+        "innerText",
+    ] {
+        for expression in ["''", "0", "false"] {
+            parse(&format!("<div [{property}]=\"{expression}\" />"));
+        }
+    }
+}
+
+#[test]
+fn content_bindings_cannot_override_each_other() {
+    let properties = ["innerHTML", "innerText", "textContent"];
+    for first in properties {
+        for second in properties {
+            let source = format!("<div [{first}]=\"first\" [{second}]=\"second\" />");
+            let error = parse_err(&source);
+            assert!(
+                error.contains("only one content binding"),
+                "{first}/{second}: {error}"
+            );
+        }
+        let nodes = parse(&format!("<div [{first}]=\"content\" />"));
+        let children = &element(&nodes[0]).children;
+        if first == "innerHTML" {
+            assert!(matches!(&children[0], Node::RawHtml(expr) if expr == "content"));
+        } else {
+            assert!(
+                matches!(&children[0], Node::Text(parts) if matches!(&parts[0], TextPart::Expr(expr) if expr == "content"))
+            );
+        }
+    }
+}
+
+#[test]
+fn duplicate_structural_directives_are_parse_errors() {
+    for (attributes, expected) in [
+        (
+            r#"*ngIf="first" *ngIf="second""#,
+            "only one *ngIf directive",
+        ),
+        (
+            r#"*ngFor="let item of items" *ngFor="let other of others""#,
+            "only one *ngFor directive",
+        ),
+    ] {
+        let error = parse_err(&format!("<div {attributes} />"));
+        assert!(error.contains(expected), "{error}");
+    }
+    parse(r#"<div *ngIf="visible"><span *ngIf="enabled" /></div>"#);
+    parse(r#"<div *ngFor="let item of items"><span *ngFor="let other of others" /></div>"#);
+}
+
+#[test]
+fn attribute_interpolation_rejects_empty_expressions() {
+    for value in ["{{}}", "{{   }}", "  {{ }}  "] {
+        let error = parse_err(&format!("<input title=\"{value}\" />"));
+        assert!(
+            error.contains("attribute interpolation requires an expression"),
+            "{error}"
+        );
+    }
+    for expression in ["''", "0", "false", "name"] {
+        let nodes = parse(&format!("<input title=\"{{{{ {expression} }}}}\" />"));
+        assert_eq!(element(&nodes[0]).bindings[0].value, expression);
+    }
+    let nodes = parse(r#"<input title="" />"#);
+    assert_eq!(element(&nodes[0]).bindings[0].value, "\"\"");
+}
+
+#[test]
+fn loop_tracking_keywords_cannot_hide_unsupported_clauses() {
+    for clause in ["tracker: name", "trackByAlias: name", "tracking item.id"] {
+        let error = parse_err(&format!("<div *ngFor=\"let item of items; {clause}\" />"));
+        assert!(error.contains("not supported"), "{error}");
+    }
+    let error = parse_err(r#"<div *ngFor="let item of items; trackBy:" />"#);
+    assert!(error.contains("tracking requires an expression"), "{error}");
+    parse(r#"<div *ngFor="let item of items; trackBy: byId" />"#);
+    parse("@for (item of items; track item.id) { <div /> }");
+}
+
+#[test]
+fn loop_head_semicolons_inside_escaped_strings_are_not_clauses() {
+    for iterator in [r#"'snow\';雪'"#, r#""snow\";雪""#, r#"'backslash\\'"#] {
+        let head = format!("item of {iterator}; track item.id");
+        let (pattern, parsed_iterator) = super::builders::parse_for_head(&head).unwrap();
+        assert_eq!(pattern, "item");
+        assert_eq!(parsed_iterator, iterator);
+    }
+    let error =
+        super::builders::parse_for_head(r#"item of 'snow\';雪'; unsupported alias"#).unwrap_err();
+    assert!(error.message.contains("unsupported alias"), "{error:?}");
+}
+
+#[test]
+fn angular_for_blocks_preserve_quoted_semicolons_in_iterators() {
+    for iterator in [r#"'snow\';雪'"#, r#""snow\";雪""#] {
+        let source =
+            format!("@for (item of {iterator}; track item.id) {{ <span>{{{{ item }}}}</span> }}");
+        let nodes = parse(&source);
+        let Node::For(block) = &nodes[0] else {
+            panic!("expected loop")
+        };
+        assert_eq!(block.pattern, "item");
+        assert_eq!(block.iterator, iterator);
+    }
+    let error = parse_err(r#"@for (item of 'snow\';雪'; unsupported alias) { <span /> }"#);
+    assert!(error.contains("unsupported alias"), "{error}");
+}
+
+#[test]
+fn event_bindings_require_handler_expressions() {
+    for attribute in ["(click)", "(click)=\"\"", "(click)=\"   \"", "(click)={}"] {
+        let error = parse_err(&format!("<button {attribute} />"));
+        assert!(error.contains("requires a handler expression"), "{error}");
+    }
+    for handler in ["save", "save()", "form.save()"] {
+        let nodes = parse(&format!("<button (click)=\"{handler}\" />"));
+        assert_eq!(element(&nodes[0]).event_handlers[0].handler, handler);
+    }
+}
+
+#[test]
+fn id_aliases_cannot_emit_duplicate_attributes() {
+    for first in [r#"id="first""#, r#"[id]="first""#, r#"[attr.id]="first""#] {
+        for second in [
+            r#"id="second""#,
+            r#"[id]="second""#,
+            r#"[attr.id]="second""#,
+        ] {
+            let error = parse_err(&format!("<div {first} {second} />"));
+            assert!(
+                error.contains("only one id attribute or binding"),
+                "{error}"
+            );
+        }
+        parse(&format!("<div {first} />"));
+    }
+}
+
+#[test]
+fn interpolated_ids_use_attribute_binding_rules() {
+    let nodes = parse(r#"<div id="{{ name }}" />"#);
+    let element = element(&nodes[0]);
+    assert!(element.id.is_none());
+    assert_eq!(element.bindings[0].prop, "id");
+    assert_eq!(element.bindings[0].value, "name");
+    assert!(parse_err(r#"<div id="{{ }}" />"#).contains("requires an expression"));
+    assert!(parse_err(r#"<div id="prefix-{{ name }}" />"#).contains("interpolation mixed"));
+}
+
+#[test]
+fn interpolated_classes_use_attribute_binding_rules() {
+    let nodes = parse(r#"<div class="{{ theme }}" />"#);
+    assert_eq!(element(&nodes[0]).classes, ["{theme}"]);
+    assert!(parse_err(r#"<div class="{{ }}" />"#).contains("requires an expression"));
+    assert!(parse_err(r#"<div class="base {{ theme }}" />"#).contains("interpolation mixed"));
+}
+
+#[test]
+fn global_event_targets_fail_instead_of_becoming_local_event_names() {
+    for filename in ["app.component.html", "app.ng.html", "app.ng"] {
+        for event in ["window:resize", "document:click", "body:keydown"] {
+            let source = format!("<button ({event})=\"handle()\">Action</button>");
+            let error = parse_template_with_path(&source, Some(Path::new(filename)))
+                .expect_err("global target listeners need an explicit unsupported boundary")
+                .to_string();
+            assert!(
+                error.contains("global event target"),
+                "{filename}: {event}: {error}"
+            );
+        }
+        for event in ["click", "keydown", "custom-event"] {
+            let source = format!("<button ({event})=\"handle()\">Action</button>");
+            let nodes = parse_template_with_path(&source, Some(Path::new(filename))).unwrap();
+            let handler = &element(&nodes[0]).event_handlers[0];
+            assert_eq!(handler.event, event);
+            assert_eq!(handler.handler, "handle()");
+        }
+    }
+}
+
+#[test]
+fn else_if_chains_obey_the_angular_nesting_limit() {
+    let short = "@if (false) {<p>first</p>} @else if (true) {<p>second</p>} @else {<p>last</p>}";
+    let nodes = parse(short);
+    let Node::If(first) = &nodes[0] else {
+        panic!("expected initial condition");
+    };
+    let Some([Node::If(second)]) = first.else_children.as_deref() else {
+        panic!("expected nested else-if");
+    };
+    let ctx = crate::TemplateContext::new();
+    assert!(!ctx.eval_condition(&first.condition).unwrap());
+    assert!(ctx.eval_condition(&second.condition).unwrap());
+    assert_eq!(
+        text_of(&element(&second.then_children[0]).children[0]),
+        "second"
+    );
+
+    let mut source = "@if (false) {}".to_string();
+    for _ in 0..=super::MAX_ANGULAR_DEPTH {
+        source.push_str(" @else if (false) {}");
+    }
+    source.push_str(" @else {<p>last</p>}");
+    assert!(parse_err(&source).contains("maximum Angular nesting depth"));
+}
+
+#[test]
+fn if_alias_detection_ignores_quoted_condition_contents() {
+    let ctx = crate::TemplateContext::new();
+    for condition in [
+        r#"' as ' == ' as '"#,
+        r#"" as " == " as ""#,
+        r#"'; as alias' == '; as alias'"#,
+        r#"true || ' as '"#,
+        r#"(true || ' as ')"#,
+    ] {
+        let nodes = parse(&format!("@if ({condition}) {{<p>yes</p>}}"));
+        let Node::If(block) = &nodes[0] else {
+            panic!("expected condition");
+        };
+        assert_eq!(block.condition, condition);
+        assert!(ctx.eval_condition(&block.condition).unwrap(), "{condition}");
+    }
+}
+
+#[test]
+fn if_aliases_remain_unsupported_with_whitespace_variants() {
+    for condition in [
+        "true; as value",
+        "true;as value",
+        "true; as\tvalue",
+        "true;\nas value",
+        "true;\tas\nvalue",
+    ] {
+        let error = parse_err(&format!("@if ({condition}) {{<p>{{{{ value }}}}</p>}}"));
+        assert!(
+            error.contains("aliases are not supported"),
+            "{condition:?}: {error}"
+        );
+    }
+}

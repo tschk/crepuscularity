@@ -2,6 +2,15 @@
 
 use super::colors::lookup_named_color;
 
+/// Parse a finite opacity percentage into a clamped 0–1 value.
+pub fn parse_opacity_percentage(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0.0, 100.0) / 100.0)
+}
+
 /// Tailwind spacing scale: `1` → 4 px unless arbitrary `[Npx]`.
 pub fn parse_spacing_px(rest: &str) -> Option<u16> {
     if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
@@ -148,14 +157,20 @@ pub const SIZE_FIT: f32 = -2.0;
 pub fn parse_spacing_pt(rest: &str) -> Option<f32> {
     if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
         let stripped = inner.strip_suffix("px").unwrap_or(inner);
-        return stripped.parse::<f32>().ok();
+        return stripped
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite());
     }
     match rest {
         "px" => return Some(1.0),
         "0" => return Some(0.0),
         _ => {}
     }
-    rest.parse::<f32>().ok().map(|f| f * 4.0)
+    rest.parse::<f32>()
+        .ok()
+        .map(|f| f * 4.0)
+        .filter(|value| value.is_finite())
 }
 
 /// Parse `"1/2"` → `Some(0.5)`, `"2/3"` → `Some(0.667)`.
@@ -163,10 +178,11 @@ pub fn parse_fraction(s: &str) -> Option<f32> {
     let (num, den) = s.split_once('/')?;
     let n: f32 = num.parse().ok()?;
     let d: f32 = den.parse().ok()?;
-    if d == 0.0 {
+    if !n.is_finite() || !d.is_finite() || d == 0.0 {
         return None;
     }
-    Some(n / d)
+    let fraction = n / d;
+    fraction.is_finite().then_some(fraction)
 }
 
 /// Width/height token in points, or a sentinel.
@@ -184,7 +200,11 @@ pub fn parse_size_pt(rest: &str) -> Option<f32> {
     }
     if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
         let stripped = inner.strip_suffix("px").unwrap_or(inner);
-        return stripped.parse::<f32>().ok().map(|v| v.max(0.0));
+        return stripped
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|v| v.max(0.0));
     }
     // Fractions are deliberately not encoded here. This value shares a field
     // with the SIZE_FILL / SIZE_FIT sentinels, and a fraction has no point
@@ -201,7 +221,7 @@ pub fn parse_size_pt(rest: &str) -> Option<f32> {
 // ── CSS colour strings ───────────────────────────────────────────────────────
 
 /// Resolve a colour token to a CSS-ish hex string: named palette, bare hex,
-/// `#hex`, or `family-shade/opacity` (encoded as `"{hex}%{alpha:02x}"`).
+/// `#hex`, or `family-shade/opacity` (encoded as CSS `#RRGGBBAA`).
 pub fn resolve_css_color(s: &str) -> Option<String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "black" => return Some("#000000".to_string()),
@@ -212,8 +232,16 @@ pub fn resolve_css_color(s: &str) -> Option<String> {
     if let Some((color_part, opacity_part)) = s.split_once('/') {
         if let Some(hex) = lookup_named_color(color_part) {
             if let Ok(pct) = opacity_part.parse::<u8>() {
+                if pct > 100 {
+                    return None;
+                }
+                let hex = match hex {
+                    "#fff" => "#ffffff",
+                    "#000" => "#000000",
+                    _ => hex,
+                };
                 let alpha = (pct as f32 / 100.0 * 255.0).round() as u8;
-                return Some(format!("{}%{:02x}", hex, alpha));
+                return Some(format!("{}{alpha:02x}", hex));
             }
         }
     }
@@ -223,24 +251,31 @@ pub fn resolve_css_color(s: &str) -> Option<String> {
     parse_css_hex_color(s)
 }
 
-/// Accept a 6- or 8-digit hex colour, with or without a `#` / `0x` prefix.
+/// Accept 3-, 4-, 6-, or 8-digit hex, with or without `#` / `0x`; expand short hex.
 pub fn parse_css_hex_color(s: &str) -> Option<String> {
     let t = s.trim();
     let hex = t
         .strip_prefix('#')
         .or_else(|| t.strip_prefix("0x"))
         .unwrap_or(t);
-    if (hex.len() == 6 || hex.len() == 8) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Some(format!("#{}", hex));
+    if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
     }
-    None
+    match hex.len() {
+        3 | 4 => {
+            let expanded: String = hex.chars().flat_map(|digit| [digit, digit]).collect();
+            Some(format!("#{expanded}"))
+        }
+        6 | 8 => Some(format!("#{hex}")),
+        _ => None,
+    }
 }
 
 /// Resolve an arbitrary-value bracket colour: `[#0f0f0f]`, `[red-500]`, `[rebeccapurple]`.
 pub fn resolve_arbitrary_css_color(rest: &str) -> Option<String> {
     let inner = rest.strip_prefix('[')?.strip_suffix(']')?;
     resolve_css_color(inner).or_else(|| {
-        if inner.chars().all(|c| c.is_alphabetic() || c == '-') {
+        if !inner.is_empty() && inner.chars().all(|c| c.is_alphabetic() || c == '-') {
             Some(inner.to_string())
         } else {
             None
@@ -250,12 +285,9 @@ pub fn resolve_arbitrary_css_color(rest: &str) -> Option<String> {
 
 /// Resolve `red-500`, `#fff`, `bg-[#0f0]`, or `red-500/50` to RGB bytes.
 pub fn parse_color_rgb(name: &str) -> Option<[u8; 3]> {
-    let name = name.trim();
-    if let Some((color_part, _opacity)) = name.split_once('/') {
-        return parse_color_rgb(color_part);
-    }
-    if let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        return parse_color_rgb(inner);
+    let mut name = name.split_once('/').map_or(name, |(color, _)| color).trim();
+    while let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        name = inner.trim();
     }
     if let Some(hex) = lookup_named_color(name) {
         return parse_named_hex_rgb(hex);
@@ -279,10 +311,10 @@ fn parse_named_hex_rgb(s: &str) -> Option<[u8; 3]> {
 
 fn parse_hex_rgb(s: &str) -> Option<[u8; 3]> {
     let t = s.trim().trim_start_matches('#').trim_start_matches("0x");
-    if t.len() < 6 {
+    let t = t.get(..6)?;
+    if !t.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
-    let t = &t[..6];
     Some([
         u8::from_str_radix(&t[0..2], 16).ok()?,
         u8::from_str_radix(&t[2..4], 16).ok()?,
@@ -446,14 +478,26 @@ mod tests {
         assert_eq!(resolve_css_color("red-500").as_deref(), Some("#fb2c36"));
         assert_eq!(
             resolve_css_color("red-500/50").as_deref(),
-            Some("#fb2c36%80")
+            Some("#fb2c3680")
         );
+        assert_eq!(resolve_css_color("white/50").as_deref(), Some("#ffffff80"));
+        assert_eq!(resolve_css_color("black/0").as_deref(), Some("#00000000"));
+        assert_eq!(
+            resolve_css_color("red-500/100").as_deref(),
+            Some("#fb2c36ff")
+        );
+        assert_eq!(resolve_css_color("red-500/101"), None);
         assert_eq!(resolve_css_color("#aabbcc").as_deref(), Some("#aabbcc"));
         assert_eq!(
             resolve_css_color("0xaabbccdd").as_deref(),
             Some("#aabbccdd")
         );
-        assert_eq!(resolve_css_color("#abc"), None);
+        assert_eq!(resolve_css_color("#abc").as_deref(), Some("#aabbcc"));
+        assert_eq!(resolve_css_color("#AbC8").as_deref(), Some("#AAbbCC88"));
+        assert_eq!(resolve_css_color("0xf00").as_deref(), Some("#ff0000"));
+        for invalid in ["#界", "#+abc", "##abc", "#ab", "#abcde"] {
+            assert_eq!(resolve_css_color(invalid), None);
+        }
         assert_eq!(resolve_css_color("nope"), None);
     }
 
@@ -520,5 +564,64 @@ mod tests {
         // 0x prefix
         assert_eq!(parse_color_rgb("0xzzzzzz"), None);
         assert_eq!(parse_color_rgb("0x123"), None);
+    }
+}
+
+#[cfg(test)]
+mod opacity_tests {
+    use super::parse_opacity_percentage;
+
+    #[test]
+    fn opacity_is_finite_and_clamped() {
+        for (source, expected) in [("-10", 0.0), ("50", 0.5), ("150", 1.0)] {
+            assert_eq!(parse_opacity_percentage(source), Some(expected));
+        }
+        for source in ["NaN", "inf", "-inf", "1e100", "invalid"] {
+            assert_eq!(parse_opacity_percentage(source), None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod finite_dimension_tests {
+    use super::*;
+    #[test]
+    fn dimensions_reject_nonfinite_inputs_and_arithmetic_overflow() {
+        for token in [
+            "NaN", "inf", "-inf", "1e39", "1e38", "[NaN]", "[infpx]", "[1e39px]",
+        ] {
+            assert_eq!(parse_spacing_pt(token), None, "{token}");
+            assert_eq!(parse_size_pt(token), None, "{token}");
+        }
+        for token in ["NaN/1", "1/inf", "inf/1", "1e38/1e-38", "1/0", "1/-0"] {
+            assert_eq!(parse_fraction(token), None, "{token}");
+        }
+        assert_eq!(parse_spacing_pt("-2"), Some(-8.0));
+        assert_eq!(parse_spacing_pt("[-2px]"), Some(-2.0));
+        assert_eq!(parse_size_pt("[-2px]"), Some(0.0));
+        assert_eq!(parse_size_pt("full"), Some(SIZE_FILL));
+        assert_eq!(parse_size_pt("auto"), Some(SIZE_FIT));
+        assert_eq!(parse_fraction("-1/2"), Some(-0.5));
+    }
+}
+
+#[cfg(test)]
+mod color_boundary_tests {
+    use super::*;
+    #[test]
+    fn invalid_unicode_hex_and_empty_arbitrary_colors_are_rejected() {
+        for color in ["#aé1234", "#12345é", "#雪123", "0x🙂abc"] {
+            assert_eq!(parse_color_rgb(color), None, "{color}");
+        }
+        assert_eq!(resolve_arbitrary_css_color("[]"), None);
+    }
+    #[test]
+    fn deeply_wrapped_rgb_colors_do_not_recurse() {
+        let color = format!("{}#123456{}", "[".repeat(20_000), "]".repeat(20_000));
+        assert_eq!(parse_color_rgb(&color), Some([0x12, 0x34, 0x56]));
+        assert_eq!(
+            parse_color_rgb(" [ #123456 ] /50"),
+            Some([0x12, 0x34, 0x56])
+        );
     }
 }
