@@ -38,9 +38,49 @@ fn resolve_identity(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn resolve_with_links(path: &Path, links: &mut usize) -> Result<PathBuf, String> {
-    let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
-    let mut resolved = PathBuf::new();
-    for component in absolute.components() {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    resolve_from(path, links, &cwd)
+}
+
+fn resolve_from(path: &Path, links: &mut usize, base: &Path) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err("empty output path".into());
+    }
+    // Windows absolute() normalizes `..`; a verbatim PathBuf can do so on push too.
+    // Resolve only the starting prefix, then walk the original components ourselves.
+    let mut components = path.components().peekable();
+    let mut resolved = match components.peek().copied() {
+        Some(Component::Prefix(prefix)) => {
+            components.next();
+            let mut root = PathBuf::from(prefix.as_os_str());
+            if matches!(components.peek(), Some(Component::RootDir)) {
+                root.push(components.next().unwrap().as_os_str());
+                root
+            } else {
+                // Drive-relative C:foo uses that drive's native current directory.
+                std::path::absolute(root).map_err(|error| error.to_string())?
+            }
+        }
+        Some(Component::RootDir) => {
+            let root = components.next().unwrap();
+            let mut start = PathBuf::new();
+            if let Some(Component::Prefix(prefix)) = base.components().next() {
+                start.push(prefix.as_os_str());
+            }
+            start.push(root.as_os_str());
+            start
+        }
+        _ => base.to_path_buf(),
+    };
+    // The seed has already been resolved independently of the input tail. Normalize
+    // its native spelling (notably Windows verbatim prefixes) even if the next
+    // component is missing, or there are no remaining components at all.
+    match resolved.canonicalize() {
+        Ok(canonical) => resolved = canonical,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    for component in components {
         match component {
             Component::Prefix(_) => {
                 resolved.push(component.as_os_str());
@@ -77,12 +117,9 @@ fn resolve_with_links(path: &Path, links: &mut usize) -> Result<PathBuf, String>
                 }
                 let target = std::fs::read_link(&resolved)
                     .map_err(|error| format!("cannot read link {}: {error}", resolved.display()))?;
-                let target = if target.is_absolute() {
-                    target
-                } else {
-                    resolved.parent().unwrap_or(Path::new("")).join(target)
-                };
-                resolved = resolve_with_links(&target, links)?;
+                // Do not join a relative target containing `..` onto a verbatim
+                // parent: that would normalize before ancestor validation as well.
+                resolved = resolve_from(&target, links, resolved.parent().unwrap_or(base))?;
             }
             Ok(_) => {
                 resolved = resolved
@@ -99,6 +136,75 @@ fn resolve_with_links(path: &Path, links: &mut usize) -> Result<PathBuf, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_shapes_preserve_file_before_parent_validation() {
+        let cwd = std::env::current_dir().unwrap();
+        let directory = tempfile::tempdir_in(&cwd).unwrap();
+        let relative = directory.path().strip_prefix(&cwd).unwrap();
+        let file = directory.path().join("sentinel");
+        std::fs::write(&file, "unchanged").unwrap();
+        let rooted_file: PathBuf = file.components().skip(1).collect();
+        let Some(Component::Prefix(prefix)) = cwd.components().next() else {
+            panic!("Windows current directory must have a prefix");
+        };
+        let mut inputs = vec![
+            PathBuf::from(format!("{}\\sentinel\\..\\other", relative.display())),
+            PathBuf::from(format!("{}\\..\\other", file.display())),
+            PathBuf::from(format!("{}\\..\\other", rooted_file.display())),
+        ];
+        if let std::path::Prefix::Disk(drive) | std::path::Prefix::VerbatimDisk(drive) =
+            prefix.kind()
+        {
+            inputs.push(PathBuf::from(format!(
+                "{}:{}\\sentinel\\..\\other",
+                char::from(drive),
+                relative.display()
+            )));
+        }
+        for input in inputs {
+            let error = resolve_identity(&input).unwrap_err();
+            assert!(
+                error.contains("not a directory"),
+                "{}: {error}",
+                input.display()
+            );
+        }
+        let expected = directory.path().canonicalize().unwrap().join("other");
+        let relative_other = relative.join("other");
+        assert_eq!(resolve_identity(&relative_other).unwrap(), expected);
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "unchanged");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_missing_cwd_child_and_bare_cwd_share_canonical_identity() {
+        let cwd = std::env::current_dir().unwrap();
+        let directory = tempfile::tempdir_in(&cwd).unwrap();
+        let missing_name = format!(
+            "{}-missing",
+            directory.path().file_name().unwrap().to_string_lossy()
+        );
+        let relative = PathBuf::from(missing_name);
+        let absolute = cwd.join(&relative);
+        assert!(!absolute.exists());
+        assert_eq!(
+            resolve_identity(&relative).unwrap(),
+            resolve_identity(&absolute).unwrap()
+        );
+        assert!(validate_output_paths([
+            ("relative", relative.as_path()),
+            ("absolute", absolute.as_path())
+        ])
+        .is_err());
+        assert_eq!(
+            resolve_identity(Path::new(".")).unwrap(),
+            cwd.canonicalize().unwrap()
+        );
+        assert_eq!(resolve_identity(&cwd).unwrap(), cwd.canonicalize().unwrap());
+        assert!(!absolute.exists());
+    }
 
     #[test]
     fn planned_file_ancestors_collide_in_both_orders() {
