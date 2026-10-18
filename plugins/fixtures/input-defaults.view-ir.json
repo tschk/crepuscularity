@@ -1,0 +1,145 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "formValue": "Ada <&\"雪"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "formValue": ""
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": ""
+    },
+    {
+      "kind": "input",
+      "bind": "title",
+      "placeholder": "",
+      "style": {
+        "formValue": "ignored"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true,
+      "style": {
+        "formValue": "Notes <&\"雪"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true,
+      "style": {
+        "formValue": "\n\nfirst\r\nsecond\rthird"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true,
+      "style": {
+        "formValue": "\r\nleading"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "title",
+      "placeholder": "",
+      "multiline": true,
+      "style": {
+        "formValue": "ignored"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true,
+      "style": {
+        "formValue": ""
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "secure": true,
+      "style": {
+        "formValue": "secret<&\""
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "0",
+      "placeholder": "",
+      "style": {
+        "formValue": "ignored"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "Hint\r\nnext",
+      "style": {
+        "inputType": "hidden",
+        "formName": "field\r\nkey",
+        "formValue": "\r\nA\rB\n雪&\""
+      }
+    },
+    {
+      "kind": "button",
+      "label": "Action",
+      "onClick": "save\r\nvalue"
+    },
+    {
+      "kind": "link",
+      "href": "/path\r\nnext",
+      "target": "frame\rname",
+      "rel": "tag\r\nother",
+      "children": [
+        {
+          "kind": "text",
+          "content": "Link"
+        }
+      ]
+    },
+    {
+      "kind": "image",
+      "src": "/image\r.png",
+      "alt": "Alt\r\ntext"
+    },
+    {
+      "kind": "picker",
+      "bind": "choice\rkey",
+      "options": [
+        {
+          "value": "first\r\nsecond",
+          "label": "Choice"
+        }
+      ]
+    }
+  ],
+  "expectedHtml": "<input data-bind=\"\" placeholder=\"\" value=\"Ada &lt;&amp;&quot;雪\"><input data-bind=\"\" placeholder=\"\" value=\"\"><input data-bind=\"\" placeholder=\"\"><input data-bind=\"title\" placeholder=\"\"><textarea data-bind=\"\" placeholder=\"\">Notes &lt;&amp;&quot;雪</textarea><textarea data-bind=\"\" placeholder=\"\">\n\n\nfirst&#13;\nsecond&#13;third</textarea><textarea data-bind=\"\" placeholder=\"\">&#13;\nleading</textarea><textarea data-bind=\"title\" placeholder=\"\"></textarea><textarea data-bind=\"\" placeholder=\"\"></textarea><textarea data-bind=\"\" placeholder=\"\"></textarea><input type=\"password\" data-bind=\"\" placeholder=\"\" value=\"secret&lt;&amp;&quot;\"><input data-bind=\"0\" placeholder=\"\"><input type=\"hidden\" data-bind=\"\" placeholder=\"Hint&#13;\nnext\" name=\"field&#13;\nkey\" value=\"&#13;\nA&#13;B\n雪&amp;&quot;\"><button data-onclick=\"save&#13;\nvalue\">Action</button><a href=\"/path&#13;\nnext\" target=\"frame&#13;name\" rel=\"tag&#13;\nother\">Link</a><img src=\"/image&#13;.png\" alt=\"Alt&#13;\ntext\"><select data-bind=\"choice&#13;key\"><option value=\"first&#13;\nsecond\">Choice</option></select>"
+}

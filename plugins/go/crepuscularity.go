@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 type ViewIr struct {
@@ -70,36 +71,47 @@ func RenderIR(path string, context map[string]any) (ViewIr, error) {
 	}
 	evalAllowed = filepath.Clean(evalAllowed)
 	evalPath = filepath.Clean(evalPath)
-	if !strings.HasPrefix(evalPath, evalAllowed+string(filepath.Separator)) && evalPath != evalAllowed {
+	relative, err := filepath.Rel(evalAllowed, evalPath)
+	if err != nil {
+		return ViewIr{}, err
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return ViewIr{}, fmt.Errorf("path traversal denied")
 	}
 
+	source, err := os.ReadFile(absPath)
+	if err != nil {
+		return ViewIr{}, err
+	}
+	if !utf8.Valid(source) {
+		return ViewIr{}, fmt.Errorf("%s: template is not valid UTF-8", path)
+	}
 	payload, err := json.Marshal(map[string]any{
-		"template": mustRead(absPath),
+		"template": string(source),
+		"filename": path,
 		"context":  context,
+		"baseDir":  filepath.Dir(absPath),
 	})
 	if err != nil {
 		return ViewIr{}, err
 	}
 	cmd := exec.Command(crepusBin(), "native", "ir", "--stdin-json")
 	cmd.Stdin = bytes.NewReader(payload)
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return ViewIr{}, fmt.Errorf("%w: %s", err, string(out))
+		return ViewIr{}, fmt.Errorf("%w: %s%s", err, stderr.String(), string(out))
+	}
+	// encoding/json otherwise replaces malformed bytes inside strings.
+	if !utf8.Valid(out) {
+		return ViewIr{}, fmt.Errorf("crepus CLI response is not valid UTF-8")
 	}
 	var ir ViewIr
 	if err := json.Unmarshal(out, &ir); err != nil {
 		return ViewIr{}, err
 	}
 	return ir, nil
-}
-
-func mustRead(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
 }
 
 func RenderHTML(path string, context map[string]any) (string, error) {
@@ -150,6 +162,10 @@ func (session *ViewSession) Dispatch(event Event) (ViewIr, error) {
 	return session.RenderIR()
 }
 
+func escapeAttr(value string) string {
+	return strings.ReplaceAll(html.EscapeString(value), "\r", "&#13;")
+}
+
 func renderNode(node map[string]any) string {
 	switch node["kind"] {
 	case "text":
@@ -157,9 +173,9 @@ func renderNode(node map[string]any) string {
 	case "stack", "scroll":
 		var out strings.Builder
 		out.WriteString(`<div data-crepus-kind="`)
-		out.WriteString(html.EscapeString(fmt.Sprint(node["kind"])))
+		out.WriteString(escapeAttr(fmt.Sprint(node["kind"])))
 		out.WriteString(`" data-axis="`)
-		out.WriteString(html.EscapeString(fmt.Sprint(node["axis"])))
+		out.WriteString(escapeAttr(fmt.Sprint(node["axis"])))
 		out.WriteString(`">`)
 		for _, child := range nodeList(node["children"]) {
 			out.WriteString(renderNode(child))
@@ -169,11 +185,29 @@ func renderNode(node map[string]any) string {
 	case "button":
 		label := html.EscapeString(fmt.Sprint(node["label"]))
 		if node["onClick"] != nil {
-			return `<button data-onclick="` + html.EscapeString(fmt.Sprint(node["onClick"])) + `">` + label + `</button>`
+			return `<button data-onclick="` + escapeAttr(fmt.Sprint(node["onClick"])) + `">` + label + `</button>`
 		}
 		return "<button>" + label + "</button>"
+	case "link":
+		href, _ := node["href"].(string)
+		var out strings.Builder
+		out.WriteString("<a")
+		if safeLinkHref(href) {
+			out.WriteString(` href="` + escapeAttr(href) + `"`)
+		}
+		for _, name := range []string{"target", "rel"} {
+			if value, ok := node[name].(string); ok {
+				out.WriteString(" " + name + `="` + escapeAttr(value) + `"`)
+			}
+		}
+		out.WriteString(">")
+		for _, child := range nodeList(node["children"]) {
+			out.WriteString(renderNode(child))
+		}
+		out.WriteString("</a>")
+		return out.String()
 	case "image":
-		return `<img src="` + html.EscapeString(fmt.Sprint(node["src"])) + `" alt="` + html.EscapeString(fmt.Sprint(node["alt"])) + `">`
+		return `<img src="` + escapeAttr(fmt.Sprint(node["src"])) + `" alt="` + escapeAttr(fmt.Sprint(node["alt"])) + `">`
 	case "slotRotate":
 		phrases := valueList(node["phrases"])
 		if len(phrases) == 0 {
@@ -181,20 +215,54 @@ func renderNode(node map[string]any) string {
 		}
 		return `<span data-crepus-kind="slotRotate">` + html.EscapeString(fmt.Sprint(phrases[0])) + `</span>`
 	case "input":
-		bind := html.EscapeString(fmt.Sprint(node["bind"]))
-		placeholder := html.EscapeString(fmt.Sprint(node["placeholder"]))
-		if node["multiline"] == true {
-			return `<textarea data-bind="` + bind + `" placeholder="` + placeholder + `"></textarea>`
+		bindValue, _ := node["bind"].(string)
+		placeholderValue, _ := node["placeholder"].(string)
+		bind := escapeAttr(bindValue)
+		placeholder := escapeAttr(placeholderValue)
+		style, _ := node["style"].(map[string]any)
+		metadata := ""
+		if name, ok := style["formName"].(string); ok {
+			metadata += ` name="` + escapeAttr(name) + `"`
 		}
-		return `<input data-bind="` + bind + `" placeholder="` + placeholder + `">`
+		if style["required"] == true {
+			metadata += " required"
+		}
+		value := style["formValue"]
+		if bindValue != "" {
+			value = nil
+		}
+		initial := ""
+		if value != nil {
+			initial = escapeAttr(fmt.Sprint(value))
+		}
+		if node["multiline"] == true {
+			// HTML drops one initial LF; encoded CR avoids newline normalization.
+			if strings.HasPrefix(initial, "\n") {
+				initial = "\n" + initial
+			}
+			return `<textarea data-bind="` + bind + `" placeholder="` + placeholder + `"` + metadata + `>` + initial + `</textarea>`
+		}
+		inputType, _ := style["inputType"].(string)
+		if node["secure"] == true {
+			inputType = "password"
+		}
+		typeAttribute := ""
+		switch inputType {
+		case "text", "search", "tel", "url", "email", "password", "number", "date", "datetime-local", "month", "time", "week", "color", "hidden":
+			typeAttribute = ` type="` + inputType + `"`
+		}
+		if value != nil {
+			initial = ` value="` + initial + `"`
+		}
+		return `<input` + typeAttribute + ` data-bind="` + bind + `" placeholder="` + placeholder + `"` + metadata + initial + `>`
 	case "picker":
 		var out strings.Builder
 		out.WriteString(`<select data-bind="`)
-		out.WriteString(html.EscapeString(fmt.Sprint(node["bind"])))
+		out.WriteString(escapeAttr(fmt.Sprint(node["bind"])))
 		out.WriteString(`">`)
 		for _, option := range nodeList(node["options"]) {
 			out.WriteString(`<option value="`)
-			out.WriteString(html.EscapeString(fmt.Sprint(option["value"])))
+			out.WriteString(escapeAttr(fmt.Sprint(option["value"])))
 			out.WriteString(`">`)
 			out.WriteString(html.EscapeString(fmt.Sprint(option["label"])))
 			out.WriteString(`</option>`)
@@ -223,4 +291,20 @@ func nodeList(value any) []map[string]any {
 func valueList(value any) []any {
 	raw, _ := value.([]any)
 	return raw
+}
+
+func safeLinkHref(value string) bool {
+	// Match browser scheme parsing; HTML escaping keeps entity literals inert.
+	value = strings.TrimLeftFunc(value, func(c rune) bool { return c <= 32 })
+	value = strings.Map(func(c rune) rune {
+		if c == '\t' || c == '\r' || c == '\n' {
+			return -1
+		}
+		if c >= 'A' && c <= 'Z' {
+			return c + ('a' - 'A')
+		}
+		return c
+	}, value)
+	scheme, _, found := strings.Cut(value, ":")
+	return !found || (scheme != "javascript" && scheme != "vbscript" && scheme != "data")
 }

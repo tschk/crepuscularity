@@ -14,7 +14,8 @@ from typing import Any, Callable
 def _default_lib() -> str:
     root = Path(__file__).resolve().parents[2]
     suffix = {"darwin": "dylib", "linux": "so", "win32": "dll"}.get(sys.platform, "so")
-    name = "libcrepuscularity_abi." + suffix
+    prefix = "" if sys.platform == "win32" else "lib"
+    name = prefix + "crepuscularity_abi." + suffix
     return str(root / "target" / "debug" / name)
 
 

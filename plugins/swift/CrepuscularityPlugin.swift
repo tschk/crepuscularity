@@ -37,14 +37,30 @@ public func renderIr(path: String) throws -> ViewIr {
     let bin = ProcessInfo.processInfo.environment["CREPUS_BIN"] ?? "crepus"
     let process = Process()
     let output = Pipe()
+    let diagnosticDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("crepus-stderr-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: diagnosticDirectory, withIntermediateDirectories: false,
+                                           attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: diagnosticDirectory) }
+    let diagnosticURL = diagnosticDirectory.appendingPathComponent("stderr")
+    try Data().write(to: diagnosticURL, options: .withoutOverwriting)
+    let diagnosticHandle = try FileHandle(forUpdating: diagnosticURL)
+    defer { try? diagnosticHandle.close() }
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [bin, "native", "ir", path]
     process.standardOutput = output
+    // A regular stderr file cannot fill a pipe while stdout is drained.
+    process.standardError = diagnosticHandle
     try process.run()
-    process.waitUntilExit()
     let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    try? diagnosticHandle.seek(toOffset: 0)
+    let diagnosticData = (try? diagnosticHandle.readToEnd()) ?? Data()
+    try? FileHandle.standardError.write(contentsOf: diagnosticData)
     if process.terminationStatus != 0 {
-        throw NSError(domain: "Crepuscularity", code: Int(process.terminationStatus))
+        let diagnostic = String(decoding: diagnosticData, as: UTF8.self)
+        throw NSError(domain: "Crepuscularity", code: Int(process.terminationStatus),
+                      userInfo: diagnostic.isEmpty ? nil : [NSLocalizedDescriptionKey: diagnostic])
     }
     return try JSONDecoder().decode(ViewIr.self, from: data)
 }
@@ -81,11 +97,11 @@ private func renderNode(_ node: ViewIr.Node) -> String {
         } else {
             children = ""
         }
-        return "<div data-crepus-kind=\"\(escapeHtml(kind))\" data-axis=\"\(escapeHtml(axis))\">\(children)</div>"
+        return "<div data-crepus-kind=\"\(escapeAttribute(kind))\" data-axis=\"\(escapeAttribute(axis))\">\(children)</div>"
     case "button":
         if case let .string(label)? = node["label"] {
             if case let .string(onClick)? = node["onClick"] {
-                return "<button data-onclick=\"\(escapeHtml(onClick))\">\(escapeHtml(label))</button>"
+                return "<button data-onclick=\"\(escapeAttribute(onClick))\">\(escapeHtml(label))</button>"
             }
             return "<button>\(escapeHtml(label))</button>"
         }
@@ -93,6 +109,10 @@ private func renderNode(_ node: ViewIr.Node) -> String {
     default:
         return ""
     }
+}
+
+private func escapeAttribute(_ value: String) -> String {
+    escapeHtml(value).replacingOccurrences(of: "\r", with: "&#13;")
 }
 
 private func escapeHtml(_ value: String) -> String {
