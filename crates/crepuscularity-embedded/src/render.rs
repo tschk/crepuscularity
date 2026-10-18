@@ -1,5 +1,6 @@
 //! AST + context → [`EmbeddedDocument`], then layout and framebuffer paint.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crepuscularity_core::ast::*;
@@ -96,7 +97,14 @@ pub fn render_file_to_framebuffer(
         .map_err(|e| CrepusError::render(format!("read {}: {}", path.display(), e)))?;
     let mut child_ctx = ctx.clone();
     child_ctx.base_dir = path.parent().map(|p| p.to_path_buf());
-    render_template_to_framebuffer(&content, &child_ctx, screen, fb)
+    let nodes = crepuscularity_core::parse_template_with_path(&content, Some(path))?;
+    render_parsed_nodes_to_framebuffer(&nodes, &child_ctx, screen, fb)
+}
+
+struct SlotFrame<'a> {
+    nodes: &'a [Node],
+    context: &'a TemplateContext,
+    caller_slot: Option<&'a SlotFrame<'a>>,
 }
 
 pub fn render_nodes_to_document(
@@ -105,7 +113,12 @@ pub fn render_nodes_to_document(
     screen: ScreenSize,
 ) -> Result<EmbeddedDocument, CrepusError> {
     Ok(EmbeddedDocument::new(
-        render_nodes_list(nodes, ctx)?,
+        render_nodes_list(
+            nodes,
+            ctx,
+            &mut include_expand::IncludeCache::default(),
+            None,
+        )?,
         screen,
     ))
 }
@@ -113,34 +126,51 @@ pub fn render_nodes_to_document(
 fn render_nodes_list(
     nodes: &[Node],
     ctx: &TemplateContext,
+    cache: &mut include_expand::IncludeCache,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Result<Vec<EmbeddedNode>, CrepusError> {
-    let mut ctx = ctx.clone();
+    let mut ctx = Cow::Borrowed(ctx);
     let mut out = Vec::new();
     for node in nodes {
         if let Node::LetDecl(decl) = node {
             if !(decl.is_default && ctx.vars.contains_key(&decl.name)) {
                 let val = eval_expr(&decl.expr, &ctx)?;
-                if let Some(v) = ctx.vars.get_mut(&decl.name) {
-                    *v = val;
-                } else {
-                    ctx.vars.insert(decl.name.clone(), val);
-                }
+                ctx.to_mut().vars.insert(decl.name.clone(), val);
             }
             continue;
         }
         if let Node::Include(inc) = node {
-            let (inner, inner_ctx) = include_expand::expand_include(inc, &ctx)?;
-            out.extend(render_nodes_list(&inner, &inner_ctx)?);
+            let (inner, inner_ctx, _include_guard) =
+                include_expand::expand_include(inc, &ctx, cache)?;
+            // Includes render synchronously, so their slots can borrow the caller.
+            let frame = SlotFrame {
+                nodes: &inc.slot,
+                context: &ctx,
+                caller_slot: slot,
+            };
+            let child_slot = (!inc.slot.is_empty()).then_some(&frame);
+            out.extend(render_nodes_list(&inner, &inner_ctx, cache, child_slot)?);
             continue;
         }
-        out.push(render_node(node, &ctx)?);
+        let mut rendered = render_node(node, &ctx, cache, slot)?;
+        if matches!(node, Node::If(_) | Node::For(_) | Node::Match(_))
+            && rendered.children.iter().all(|child| child.style.hidden)
+        {
+            rendered.style.hidden = true;
+        }
+        out.push(rendered);
     }
     Ok(out)
 }
 
-fn render_node(node: &Node, ctx: &TemplateContext) -> Result<EmbeddedNode, CrepusError> {
+fn render_node(
+    node: &Node,
+    ctx: &TemplateContext,
+    cache: &mut include_expand::IncludeCache,
+    slot: Option<&SlotFrame<'_>>,
+) -> Result<EmbeddedNode, CrepusError> {
     match node {
-        Node::Element(el) => render_element(el, ctx),
+        Node::Element(el) => render_element(el, ctx, cache, slot),
         Node::Text(parts) => Ok(text_node(render_text_inline(parts, ctx)?)),
         Node::If(block) => {
             let body = if ctx.eval_condition(&block.condition)? {
@@ -151,28 +181,51 @@ fn render_node(node: &Node, ctx: &TemplateContext) -> Result<EmbeddedNode, Crepu
             Ok(container(
                 "if",
                 EmbeddedStyle::default(),
-                render_nodes_list(body, ctx)?,
+                render_nodes_list(body, ctx, cache, slot)?,
                 None,
                 None,
             ))
         }
         Node::For(block) => {
             let mut children = Vec::new();
-            let items = ctx.get_list_ref(&block.iterator);
+            let items = match eval_expr(&block.iterator, ctx)? {
+                TemplateValue::List(items) => items,
+                _ => Vec::new(),
+            };
             let pattern = block.pattern.trim();
             let has_pattern = !pattern.is_empty();
+            let mut loop_ctx = ctx.clone();
+            let mut overwritten = Vec::new();
             for item_ctx in items {
-                let s = if has_pattern {
-                    item_ctx.get_str("value")
-                } else {
-                    String::new()
-                };
-                let mut vars = item_ctx.vars.clone();
-                if has_pattern && !s.is_empty() {
-                    vars.insert(pattern.to_string(), TemplateValue::Str(s));
+                for (key, value) in &item_ctx.vars {
+                    overwritten.push((
+                        key.clone(),
+                        loop_ctx.vars.insert(key.clone(), value.clone()),
+                    ));
                 }
-                let loop_ctx = ctx.child_with_vars(vars);
-                children.extend(render_nodes_list(&block.body, &loop_ctx)?);
+                if has_pattern {
+                    let value = item_ctx
+                        .get("value")
+                        .cloned()
+                        .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()));
+                    overwritten.push((
+                        pattern.to_string(),
+                        loop_ctx.vars.insert(pattern.to_string(), value),
+                    ));
+                }
+                let rendered = render_nodes_list(&block.body, &loop_ctx, cache, slot);
+                // Reverse restores duplicate writes when an item field is also the alias.
+                for (key, value) in overwritten.drain(..).rev() {
+                    match value {
+                        Some(value) => {
+                            loop_ctx.vars.insert(key, value);
+                        }
+                        None => {
+                            loop_ctx.vars.remove(&key);
+                        }
+                    }
+                }
+                children.extend(rendered?);
             }
             Ok(container(
                 "for",
@@ -182,7 +235,7 @@ fn render_node(node: &Node, ctx: &TemplateContext) -> Result<EmbeddedNode, Crepu
                 None,
             ))
         }
-        Node::Match(block) => render_match(block, ctx),
+        Node::Match(block) => render_match(block, ctx, cache, slot),
         Node::LetDecl(_) => Ok(container(
             "let",
             EmbeddedStyle::default(),
@@ -191,32 +244,36 @@ fn render_node(node: &Node, ctx: &TemplateContext) -> Result<EmbeddedNode, Crepu
             None,
         )),
         Node::Include(_) => Err(CrepusError::render("include not expanded")),
-        Node::Embed(_) => Ok(container(
-            "embed",
-            EmbeddedStyle::default(),
-            vec![],
-            None,
-            None,
-        )),
+        Node::Embed(embed) => Err(CrepusError::render(format!(
+            "embed '{}' is not supported by the embedded target; guard web islands with is_web",
+            embed.src
+        ))),
         Node::RawText(expr) => Ok(text_node(value_to_str(&eval_expr(expr, ctx)?))),
         Node::RawHtml(expr) => Ok(text_node(value_to_str(&eval_expr(expr, ctx)?))),
     }
 }
 
-fn render_match(block: &MatchBlock, ctx: &TemplateContext) -> Result<EmbeddedNode, CrepusError> {
+fn render_match(
+    block: &MatchBlock,
+    ctx: &TemplateContext,
+    cache: &mut include_expand::IncludeCache,
+    slot: Option<&SlotFrame<'_>>,
+) -> Result<EmbeddedNode, CrepusError> {
     let value = value_to_str(&eval_expr(&block.expr, ctx)?);
     for arm in &block.arms {
         let pattern = arm.pattern.trim();
-        if pattern == "_"
-            || (pattern.starts_with('"')
-                && pattern.ends_with('"')
-                && value == pattern[1..pattern.len() - 1])
-            || value == pattern
-        {
+        let matches = if pattern == "_" {
+            true
+        } else if let Some(literal) = pattern.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            value == crepuscularity_core::parser::unescape_crepus_text_literal(literal)
+        } else {
+            value == pattern
+        };
+        if matches {
             return Ok(container(
                 "match",
                 EmbeddedStyle::default(),
-                render_nodes_list(&arm.body, ctx)?,
+                render_nodes_list(&arm.body, ctx, cache, slot)?,
                 None,
                 None,
             ));
@@ -231,31 +288,67 @@ fn render_match(block: &MatchBlock, ctx: &TemplateContext) -> Result<EmbeddedNod
     ))
 }
 
-fn render_element(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedNode, CrepusError> {
+fn render_element(
+    el: &Element,
+    ctx: &TemplateContext,
+    cache: &mut include_expand::IncludeCache,
+    slot: Option<&SlotFrame<'_>>,
+) -> Result<EmbeddedNode, CrepusError> {
+    let id = if let Some(id) = &el.id {
+        Some(id.clone())
+    } else {
+        el.bindings
+            .iter()
+            .find(|binding| binding.prop == "id")
+            .map(|binding| {
+                crepuscularity_core::eval::eval_binding(binding, ctx)
+                    .map(|value| value.map(|value| value_to_str(&value)))
+            })
+            .transpose()?
+            .flatten()
+    };
     if el.tag == "slot" {
-        let children = if let Some((nodes, slot_ctx)) = &ctx.slot {
-            render_nodes_list(nodes, slot_ctx)?
+        let children = if let Some(frame) = slot {
+            render_nodes_list(frame.nodes, frame.context, cache, frame.caller_slot)?
+        } else if let Some((nodes, slot_ctx)) = &ctx.slot {
+            render_nodes_list(nodes, slot_ctx, cache, None)?
         } else {
-            render_nodes_list(&el.children, ctx)?
+            render_nodes_list(&el.children, ctx, cache, slot)?
         };
         return Ok(container(
             &el.tag,
             style(el, ctx)?,
             children,
-            el.id.clone(),
+            id.clone(),
             None,
         ));
     }
 
     if el.tag == "button" {
+        for binding in &el.bindings {
+            if binding.prop.eq_ignore_ascii_case("disabled") {
+                let value = crepuscularity_core::eval::eval_binding(binding, ctx)?;
+                if !matches!(
+                    value,
+                    None | Some(TemplateValue::Bool(false) | TemplateValue::Null)
+                ) {
+                    return Err(CrepusError::render(
+                        "disabled buttons are not supported by the embedded target",
+                    ));
+                }
+            }
+        }
+        let children = render_nodes_list(&el.children, ctx, cache, slot)?;
         let on_click = el
             .event_handlers
             .iter()
             .find(|e| e.event == "click")
             .map(|e| e.handler.clone());
-        let label = collect_primary_text(&el.children, ctx)?;
+        let label = collect_primary_text(&children)
+            .unwrap_or_default()
+            .to_owned();
         let mut n = text_node(label);
-        n.id = el.id.clone();
+        n.id = id.clone();
         n.tag = "button".into();
         n.style = style(el, ctx)?;
         n.on_click = on_click;
@@ -265,7 +358,7 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedNode, C
     if el.tag == "span" && el.children.len() == 1 {
         if let Node::Text(parts) = &el.children[0] {
             let mut n = text_node(render_text_inline(parts, ctx)?);
-            n.id = el.id.clone();
+            n.id = id.clone();
             n.tag = el.tag.clone();
             n.style = style(el, ctx)?;
             return Ok(n);
@@ -275,36 +368,65 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedNode, C
     Ok(container(
         &el.tag,
         style(el, ctx)?,
-        render_nodes_list(&el.children, ctx)?,
-        el.id.clone(),
+        render_nodes_list(&el.children, ctx, cache, slot)?,
+        id.clone(),
         None,
     ))
 }
 
-fn collect_primary_text(children: &[Node], ctx: &TemplateContext) -> Result<String, CrepusError> {
+fn collect_primary_text(children: &[EmbeddedNode]) -> Option<&str> {
     for child in children {
-        match child {
-            Node::Text(parts) => return render_text_inline(parts, ctx),
-            Node::Element(el) if el.tag == "span" => {
-                return collect_primary_text(&el.children, ctx);
+        if child.style.hidden || child.style.invisible || child.style.opacity_percent == Some(0) {
+            continue;
+        }
+        if matches!(
+            child.tag.as_str(),
+            "text" | "span" | "if" | "for" | "match" | "slot"
+        ) {
+            if let Some(text) = child
+                .text
+                .as_deref()
+                .or_else(|| collect_primary_text(&child.children))
+            {
+                return Some(text);
             }
-            _ => {}
         }
     }
-    Ok(String::new())
+    None
 }
 
 fn style(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedStyle, CrepusError> {
     let mut classes = Vec::new();
     for c in &el.classes {
-        classes.push(ctx.interpolate(c)?);
+        classes.extend(ctx.interpolate(c)?.split_whitespace().map(str::to_string));
     }
     for cc in &el.conditional_classes {
         if ctx.eval_condition(&cc.condition)? {
-            classes.push(ctx.interpolate(&cc.class)?);
+            classes.extend(
+                ctx.interpolate(&cc.class)?
+                    .split_whitespace()
+                    .map(str::to_string),
+            );
         }
     }
-    Ok(style_from_classes_with_context(&classes, Some(ctx)))
+    for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute && binding.prop == "class" {
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                classes.extend(value_to_str(&value).split_whitespace().map(str::to_string));
+            }
+        }
+    }
+    let mut style = style_from_classes_with_context(&classes, Some(ctx));
+    for binding in &el.bindings {
+        if binding.prop.eq_ignore_ascii_case("hidden") {
+            let value = crepuscularity_core::eval::eval_binding(binding, ctx)?;
+            style.hidden |= !matches!(
+                value,
+                None | Some(TemplateValue::Bool(false) | TemplateValue::Null)
+            );
+        }
+    }
+    Ok(style)
 }
 
 fn container(

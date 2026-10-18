@@ -86,14 +86,14 @@ impl Rgb565Buffer {
 
     pub fn clear(&mut self, color: Color) {
         let v = color.to_rgb565().0;
-        for p in &mut self.pixels {
-            *p = v;
-        }
+        self.pixels.fill(v);
     }
 }
 
 impl Rgb888Buffer {
+    /// Return packed RGB bytes in red, green, blue channel order.
     pub fn as_rgb888_bytes(&self) -> &[u8] {
+        // SAFETY: repr(C) Rgb888 contains three initialized u8 fields with no padding.
         unsafe { core::slice::from_raw_parts(self.pixels.as_ptr().cast(), self.pixels.len() * 3) }
     }
 
@@ -106,9 +106,7 @@ impl Rgb888Buffer {
 
     pub fn clear(&mut self, color: Color) {
         let v = color.to_rgb888();
-        for p in &mut self.pixels {
-            *p = v;
-        }
+        self.pixels.fill(v);
     }
 }
 
@@ -126,9 +124,7 @@ impl Framebuffer for Rgb565View<'_> {
     }
     fn fill(&mut self, color: Color) {
         let v = color.to_rgb565().0;
-        for p in self.pixels.iter_mut() {
-            *p = v;
-        }
+        self.pixels.fill(v);
     }
     fn as_rgb565_bytes(&self) -> Option<&[u8]> {
         Some(self.as_bytes())
@@ -165,11 +161,8 @@ impl Rgb888Buffer {
             std::fs::File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
         write!(f, "P6\n{} {}\n255\n", self.size.width, self.size.height)
             .map_err(|e| format!("write: {e}"))?;
-        for px in &self.pixels {
-            f.write_all(&[px.r, px.g, px.b])
-                .map_err(|e| format!("write: {e}"))?;
-        }
-        Ok(())
+        f.write_all(self.as_rgb888_bytes())
+            .map_err(|e| format!("write: {e}"))
     }
 }
 
@@ -187,5 +180,59 @@ impl Framebuffer for Rgb888Buffer {
     }
     fn fill(&mut self, color: Color) {
         self.clear(color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framebuffer_views_validate_lengths_and_clip_pixel_writes() {
+        let size = ScreenSize::new(2, 2);
+        for len in [0, 1, 3, 5] {
+            let mut pixels = [0u16; 5];
+            assert!(Rgb565View::new(size, &mut pixels[..len]).is_err());
+        }
+        let mut pixels = [0u16; 4];
+        let mut view = Rgb565View::new(size, &mut pixels).unwrap();
+        let mut owned = Rgb565Buffer::new(size, Color::rgb(0, 0, 0));
+        let mut rgb888 = Rgb888Buffer::new(size, Color::rgb(0, 0, 0));
+        let red = Color::rgb(255, 0, 0);
+        for fb in [&mut view as &mut dyn Framebuffer, &mut owned, &mut rgb888] {
+            fb.set_pixel(1, 1, red);
+            for (x, y) in [(2, 0), (0, 2), (u16::MAX, u16::MAX)] {
+                fb.set_pixel(x, y, Color::rgb(255, 255, 255));
+            }
+        }
+        assert_eq!(view.pixels_mut(), &[0, 0, 0, red.to_rgb565().0]);
+        assert_eq!(owned.pixels(), &[0, 0, 0, red.to_rgb565().0]);
+        assert_eq!(view.as_bytes(), owned.as_rgb565_bytes().unwrap());
+        assert_eq!(
+            rgb888.as_rgb888_bytes(),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0]
+        );
+
+        for fb in [&mut view as &mut dyn Framebuffer, &mut owned, &mut rgb888] {
+            fb.fill(Color::rgb(0, 0, 0));
+        }
+        assert_eq!(view.pixels_mut(), &[0; 4]);
+        assert_eq!(owned.pixels(), &[0; 4]);
+        assert_eq!(rgb888.as_rgb888_bytes(), &[0; 12]);
+
+        let mut empty = [];
+        let mut view = Rgb565View::new(ScreenSize::new(0, 0), &mut empty).unwrap();
+        view.fill(red);
+        view.set_pixel(0, 0, red);
+        assert!(view.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn rgb888_byte_export_preserves_channel_and_pixel_order() {
+        assert_eq!(core::mem::size_of::<Rgb888>(), 3);
+        assert_eq!(core::mem::align_of::<Rgb888>(), 1);
+        let mut fb = Rgb888Buffer::new(ScreenSize::new(2, 1), Color::rgb(1, 2, 3));
+        fb.set_pixel(1, 0, Color::rgb(4, 5, 6));
+        assert_eq!(fb.as_rgb888_bytes(), &[1, 2, 3, 4, 5, 6]);
     }
 }
