@@ -13,8 +13,8 @@ use crepuscularity_lite::{parse_hex_color, prepare_guest_source, Bridge, V8Threa
 use gpui::AnyElement;
 use gpui::ClickEvent;
 use gpui::{
-    bounds, div, point, prelude::*, px, rgb, size, AnyWindowHandle, App, Application, Context,
-    Entity, FontWeight, KeyDownEvent, Render, Window, WindowBounds, WindowOptions,
+    bounds, div, point, prelude::*, px, rgb, size, AnyWindowHandle, App, Context, Entity,
+    FontWeight, KeyDownEvent, Render, Window, WindowBounds, WindowOptions,
 };
 use serde_json::{json, Value};
 
