@@ -58,57 +58,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_parent_dir() {
+    fn rejects_parent_dir() -> Result<(), String> {
         let root = Path::new("/tmp/sandbox-test-root");
-        let err = resolve_under_sandbox(root, "../etc/passwd").err().unwrap();
-        assert_eq!(err.code, "path_escape");
+        match resolve_under_sandbox(root, "../etc/passwd") {
+            Err(err) => {
+                assert_eq!(err.code, "path_escape");
+                Ok(())
+            }
+            Ok(_) => Err("expected an error, but got Ok".into()),
+        }
     }
 
     #[test]
-    fn rejects_absolute_path() {
+    fn rejects_absolute_path() -> Result<(), String> {
         let root = Path::new("/tmp/sandbox");
         #[cfg(not(windows))]
         let abs_path = "/etc/passwd";
         #[cfg(windows)]
         let abs_path = "C:\\etc\\passwd";
-        let err = resolve_under_sandbox(root, abs_path).err().unwrap();
-        assert_eq!(err.code, "path_not_relative");
+        match resolve_under_sandbox(root, abs_path) {
+            Err(err) => {
+                assert_eq!(err.code, "path_not_relative");
+                Ok(())
+            }
+            Ok(_) => Err("expected an error, but got Ok".into()),
+        }
     }
 
     #[test]
-    fn handles_current_dir() {
+    fn handles_current_dir() -> Result<(), BridgeError> {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "./a/./b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "./a/./b/c.txt")?;
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
+        Ok(())
     }
 
     #[test]
-    fn accepts_nested() {
+    fn accepts_nested() -> Result<(), BridgeError> {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "a/b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "a/b/c.txt")?;
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
+        Ok(())
     }
 
     #[test]
-    fn rejects_preexisting_symlink() {
+    fn rejects_preexisting_symlink() -> Result<(), std::io::Error> {
         let root = std::env::temp_dir().join(format!(
             "crepus-lite-sandbox-symlink-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root)?;
         let outside = std::env::temp_dir().join(format!(
             "crepus-lite-sandbox-outside-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&outside);
-        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&outside)?;
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link"))?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside, root.join("link")).unwrap();
+        std::os::windows::fs::symlink_dir(&outside, root.join("link"))?;
         assert!(resolve_under_sandbox(&root, "link/file.txt").is_err());
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
+        Ok(())
     }
 }
