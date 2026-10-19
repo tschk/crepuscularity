@@ -102,7 +102,12 @@ fn compile_csharp(generated: &Path, check: &Path, output: &Path) {
     );
 }
 
-fn assert_csharp_output(header: Option<PathBuf>, functions: usize, extra_checks: &str) {
+fn assert_csharp_output(
+    header: Option<PathBuf>,
+    functions: usize,
+    extra_checks: &str,
+    compile_external: bool,
+) {
     let library = header
         .as_deref()
         .and_then(Path::file_stem)
@@ -140,6 +145,69 @@ fn assert_csharp_output(header: Option<PathBuf>, functions: usize, extra_checks:
             "{import}"
         );
     }
+    let plain = generated.replace('@', "");
+    for (name, result) in [
+        ("crepus_session_new", "IntPtr"),
+        ("crepus_session_free", "void"),
+        ("crepus_session_set_template_string", "int"),
+        ("crepus_session_set_component", "int"),
+        ("crepus_session_set_files_json", "int"),
+        ("crepus_session_set_context_json", "int"),
+        ("crepus_session_apply_context_patch_json", "int"),
+        ("crepus_session_set_event_callback", "int"),
+        ("crepus_session_render_ir_json", "IntPtr"),
+        ("crepus_session_dispatch_event_json", "IntPtr"),
+        ("crepus_session_take_last_error", "IntPtr"),
+        ("crepus_last_error", "IntPtr"),
+        ("crepus_string_free", "void"),
+    ] {
+        assert!(
+            plain.contains(&format!("extern {result} {name}(")),
+            "{generated}"
+        );
+    }
+    assert!(
+        plain.contains(
+            "public delegate void CrepusEventCallback(IntPtr event_json, IntPtr userdata)"
+        ),
+        "{generated}"
+    );
+    assert!(plain.contains("CrepusEventCallback?"), "{generated}");
+    if !named_argument_check.is_empty() {
+        assert!(plain.contains("crepus_session_set_event_callback(IntPtr session, CrepusEventCallback? callback, IntPtr userdata)"), "{generated}");
+    }
+    for (name, ty) in [
+        ("crepus_float", "float"),
+        ("crepus_double", "double"),
+        ("crepus_unsigned", "uint"),
+        ("crepus_signed_wide", "long"),
+        ("crepus_unsigned_wide", "ulong"),
+    ] {
+        if extra_checks.contains(name) {
+            assert!(
+                plain.contains(&format!("extern {ty} {name}({ty} p0)")),
+                "{generated}"
+            );
+        }
+    }
+    if extra_checks.contains("ExtraStatus") {
+        assert!(
+            plain.contains("extern IntPtr crepus_extra(IntPtr p0)"),
+            "{generated}"
+        );
+        assert!(
+            plain.contains("extern int crepus_extra_status(int p0)"),
+            "{generated}"
+        );
+    } else if extra_checks.contains("crepus_extra") {
+        assert!(
+            plain.contains("extern int crepus_extra(int p0)"),
+            "{generated}"
+        );
+    }
+    if !compile_external {
+        return;
+    }
     let check = output.0.join("Check.cs");
     std::fs::write(&check, format!(r#"#nullable enable
 using System;
@@ -165,13 +233,22 @@ internal static class Check {{
     compile_csharp(&files[0].path, &check, &output.0.join("Generated.dll"));
 }
 
-#[test]
-fn generated_csharp_compiles_with_all_abi_function_signatures() {
-    assert_csharp_output(None, 13, "");
+fn generated_csharp_compiles_with_all_abi_function_signatures_case(compile_external: bool) {
+    assert_csharp_output(None, 13, "", compile_external);
 }
 
 #[test]
-fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions() {
+fn generated_csharp_compiles_with_all_abi_function_signatures() {
+    generated_csharp_compiles_with_all_abi_function_signatures_case(false);
+}
+
+#[test]
+#[ignore = "requires installed .NET 8 SDK"]
+fn generated_csharp_compiles_with_all_abi_function_signatures_compiler_check() {
+    generated_csharp_compiles_with_all_abi_function_signatures_case(true);
+}
+
+fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions_case(compile_external: bool) {
     let output = TempOutput::new();
     let header = output.0.join("custom.h");
     let original = std::fs::read_to_string(
@@ -182,11 +259,21 @@ fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions() {
     let custom = original.replace("#ifdef __cplusplus\n}", "const char *crepus_extra(const void *userdata);\nint32_t crepus_extra_status(int32_t value);\nvoid CallingConvention(void);\n\n#ifdef __cplusplus\n}");
     assert_ne!(custom, original);
     std::fs::write(&header, custom).unwrap();
-    assert_csharp_output(Some(header), 16, "static readonly Func<IntPtr, IntPtr> Extra = EquilibriumImports.crepus_extra;\nstatic readonly Func<int, int> ExtraStatus = EquilibriumImports.crepus_extra_status;");
+    assert_csharp_output(Some(header), 16, "static readonly Func<IntPtr, IntPtr> Extra = EquilibriumImports.crepus_extra;\nstatic readonly Func<int, int> ExtraStatus = EquilibriumImports.crepus_extra_status;", compile_external);
 }
 
 #[test]
-fn csharp_fixed_width_scalars_keep_their_native_calling_types() {
+fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions() {
+    overridden_csharp_header_keeps_extra_pointer_and_scalar_functions_case(false);
+}
+
+#[test]
+#[ignore = "requires installed .NET 8 SDK"]
+fn overridden_csharp_header_keeps_extra_pointer_and_scalar_functions_compiler_check() {
+    overridden_csharp_header_keeps_extra_pointer_and_scalar_functions_case(true);
+}
+
+fn csharp_fixed_width_scalars_keep_their_native_calling_types_case(compile_external: bool) {
     let output = TempOutput::new();
     let header = output.0.join("scalars.h");
     let original = std::fs::read_to_string(
@@ -197,7 +284,18 @@ fn csharp_fixed_width_scalars_keep_their_native_calling_types() {
     let custom = original.replace("#ifdef __cplusplus\n}", "uint32_t crepus_unsigned(uint32_t value);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\nint64_t crepus_signed_wide(int64_t value);\nuint64_t crepus_unsigned_wide(uint64_t value);\n\n#ifdef __cplusplus\n}");
     assert_ne!(custom, original);
     std::fs::write(&header, custom).unwrap();
-    assert_csharp_output(Some(header), 18, "static readonly Func<uint,uint> Unsigned = EquilibriumImports.crepus_unsigned;\nstatic readonly Func<float,float> Float = EquilibriumImports.crepus_float;\nstatic readonly Func<double,double> Double = EquilibriumImports.crepus_double;\nstatic readonly Func<long,long> SignedWide = EquilibriumImports.crepus_signed_wide;\nstatic readonly Func<ulong,ulong> UnsignedWide = EquilibriumImports.crepus_unsigned_wide;");
+    assert_csharp_output(Some(header), 18, "static readonly Func<uint,uint> Unsigned = EquilibriumImports.crepus_unsigned;\nstatic readonly Func<float,float> Float = EquilibriumImports.crepus_float;\nstatic readonly Func<double,double> Double = EquilibriumImports.crepus_double;\nstatic readonly Func<long,long> SignedWide = EquilibriumImports.crepus_signed_wide;\nstatic readonly Func<ulong,ulong> UnsignedWide = EquilibriumImports.crepus_unsigned_wide;", compile_external);
+}
+
+#[test]
+fn csharp_fixed_width_scalars_keep_their_native_calling_types() {
+    csharp_fixed_width_scalars_keep_their_native_calling_types_case(false);
+}
+
+#[test]
+#[ignore = "requires installed .NET 8 SDK"]
+fn csharp_fixed_width_scalars_keep_their_native_calling_types_compiler_check() {
+    csharp_fixed_width_scalars_keep_their_native_calling_types_case(true);
 }
 
 #[test]
@@ -252,8 +350,9 @@ fn csharp_rejects_unsupported_declarations_before_writing_bindings() {
 }
 
 #[cfg(unix)]
-#[test]
-fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy() {
+fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy_case(
+    compile_external: bool,
+) {
     let output = TempOutput::new();
     let header = output.0.join("custom\"abi.h");
     let original = std::fs::read_to_string(
@@ -284,5 +383,19 @@ fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy() {
         Some(header),
         14,
         "static readonly Func<int, int> Extra = EquilibriumImports.crepus_extra;",
+        compile_external,
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy() {
+    quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy_case(false);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires installed .NET 8 SDK"]
+fn quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy_compiler_check() {
+    quoted_header_name_uses_typed_escaping_without_relaxing_canonical_policy_case(true);
 }

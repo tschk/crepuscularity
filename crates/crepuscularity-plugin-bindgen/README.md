@@ -16,6 +16,15 @@ parameters. Unsupported declarations, warnings, and required companion files fai
 before any generated outputs are replaced. Filesystem write errors can still
 leave partially written output.
 
+The typed header reader accepts a bounded C declaration subset, not arbitrary C
+headers. Zero-argument prototypes must use `(void)`; old-style empty `()` lists
+are rejected. Concrete struct/union/enum definitions and enum ABI references are
+unsupported. Qualified non-function typedefs and globals are rejected before
+qualifiers could be lost. Safe plain aliases and the checked opaque
+`CrepusSession`/`CrepusEventCallback` forms remain admitted, subject to each
+backend's supported type mappings. Named function parameters and their supported
+nested pointer qualifiers are preserved.
+
 Typed generators admit the bundled include guard, `<stdint.h>`/`<stddef.h>`
 includes, and C++ linkage wrappers. Other preprocessor directives and trigraphs
 are rejected rather than evaluated. V retains its checked canonical Crepus
@@ -66,3 +75,10 @@ cargo test -p crepuscularity-plugin-bindgen -- --ignored --test-threads=1
 ```
 
 Use the platform's actual library filename in `CREPUS_ABI_LIB`.
+
+C# signature/source assertions also run without .NET in the default suite. Their
+`*_compiler_check` companions are explicitly ignored and require the .NET 8 SDK;
+the all-ignored command above includes them. The V opt-in checks include bindings
+redirected to an output directory outside the source repository; redirected
+bindings use absolute source include/library paths rather than assuming the
+staging directory has the repository layout.

@@ -8,10 +8,7 @@ impl Drop for Output {
     }
 }
 
-#[test]
-#[cfg(target_os = "macos")]
-#[ignore = "requires installed V and C compilers"]
-fn generated_v_compiles_with_spaced_header_and_library_directories() {
+fn v_path_fixture(staged: bool, compile_external: bool) {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -19,31 +16,46 @@ fn generated_v_compiles_with_spaced_header_and_library_directories() {
     let output =
         Output(std::env::temp_dir().join(format!("crepus-v-path-{}-{stamp}", std::process::id())));
     let root = output.0.join("project with spaces");
-    let include = root.join("crates/abi/include");
+    let include = root.join(if staged {
+        "crates/crepuscularity-abi/include"
+    } else {
+        "crates/abi/include"
+    });
+    let destination = if staged {
+        output.0.join("outside repository staging")
+    } else {
+        root.clone()
+    };
     let library = root.join("target/debug");
     std::fs::create_dir_all(&include).unwrap();
     std::fs::create_dir_all(&library).unwrap();
-    let header = include.join("custom_abi.h");
+    let header = include.join(if staged {
+        "crepuscularity_abi.h"
+    } else {
+        "custom_abi.h"
+    });
     std::fs::copy(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../crepuscularity-abi/include/crepuscularity_abi.h"),
         &header,
     )
     .unwrap();
-    let c = root.join("empty.c");
-    std::fs::write(&c, "void crepus_bindgen_probe(void) {}\n").unwrap();
-    let compiled = Command::new("cc")
-        .arg("-dynamiclib")
-        .arg(&c)
-        .arg("-o")
-        .arg(library.join("libcrepuscularity_abi.dylib"))
-        .output()
-        .unwrap();
-    assert!(
-        compiled.status.success(),
-        "{}",
-        String::from_utf8_lossy(&compiled.stderr)
-    );
+    if compile_external {
+        let c = root.join("empty.c");
+        std::fs::write(&c, "void crepus_bindgen_probe(void) {}\n").unwrap();
+        let compiled = Command::new("cc")
+            .arg("-dynamiclib")
+            .arg(&c)
+            .arg("-o")
+            .arg(library.join("libcrepuscularity_abi.dylib"))
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
     let manifest = root.join("plugins.toml");
     std::fs::write(
         &manifest,
@@ -54,11 +66,28 @@ fn generated_v_compiles_with_spaced_header_and_library_directories() {
         repo_root: root.clone(),
         manifest_path: manifest,
         abi_header: Some(header),
-        out_dir: Some(root.clone()),
+        out_dir: Some(destination.clone()),
     })
     .unwrap();
     let source = std::fs::read_to_string(&files[0].path).unwrap();
-    let main = root.join("main.v");
+    assert_eq!(files[0].path, destination.join("v/abi_generated.v"));
+    assert!(
+        source.contains(&format!("#flag -I {}", include.display())),
+        "{source}"
+    );
+    assert!(
+        source.contains(&format!(
+            "#flag -L {} -lcrepuscularity_abi",
+            library.display()
+        )),
+        "{source}"
+    );
+    assert!(!source.contains("@VMODROOT"), "{source}");
+    if !compile_external {
+        return;
+    }
+
+    let main = destination.join("main.v");
     std::fs::write(
         &main,
         source.replacen("module crepuscularity", "module main", 1) + "\nfn main() {}\n",
@@ -66,7 +95,7 @@ fn generated_v_compiles_with_spaced_header_and_library_directories() {
     .unwrap();
     let compiled = Command::new("v")
         .args(["-gc", "none", "-o"])
-        .arg(root.join("probe"))
+        .arg(destination.join("probe"))
         .arg(main)
         .output()
         .unwrap();
@@ -76,6 +105,25 @@ fn generated_v_compiles_with_spaced_header_and_library_directories() {
         String::from_utf8_lossy(&compiled.stdout),
         String::from_utf8_lossy(&compiled.stderr)
     );
+}
+
+#[test]
+fn staged_v_bindings_resolve_the_actual_source_repository_paths() {
+    v_path_fixture(true, false);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires installed V and C compilers"]
+fn generated_v_compiles_with_spaced_header_and_library_directories() {
+    v_path_fixture(false, true);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires installed V and C compilers"]
+fn staged_v_bindings_compile_outside_the_source_repository() {
+    v_path_fixture(true, true);
 }
 
 #[test]

@@ -257,3 +257,118 @@ fn raw_crlf_custom_headers_preserve_extra_exports_for_all_typed_backends() {
         );
     }
 }
+
+#[test]
+fn rust_keyword_c_exports_keep_their_identity_across_typed_targets() {
+    let output = Output::new();
+    let header = output.0.join("keywords.h");
+    std::fs::write(
+        &header,
+        "int32_t match(int32_t type);\nconst char *async(const void *type);\n",
+    )
+    .unwrap();
+    let files = generate_all(&options(&output.0.join("generated"), header, &LANGUAGES)).unwrap();
+    assert_eq!(files.len(), LANGUAGES.len());
+    for file in files {
+        let code = std::fs::read_to_string(&file.path).unwrap();
+        assert!(
+            code.contains("match"),
+            "{} dropped match: {code}",
+            file.language
+        );
+        assert!(
+            code.contains("async"),
+            "{} dropped async: {code}",
+            file.language
+        );
+        if file.language == "rust" {
+            let syntax = syn::parse_file(&code).unwrap();
+            let mut names = Vec::new();
+            for item in syntax.items {
+                if let syn::Item::ForeignMod(module) = item {
+                    for item in module.items {
+                        if let syn::ForeignItem::Fn(function) = item {
+                            names.push(function.sig.ident.to_string());
+                        }
+                    }
+                }
+            }
+            assert_eq!(names, ["r#match", "r#async"]);
+            assert!(code.contains("*const c_char"), "{code}");
+            assert!(code.contains("*const c_void"), "{code}");
+        } else {
+            assert!(
+                !code.contains("r#"),
+                "{} leaked Rust syntax: {code}",
+                file.language
+            );
+        }
+    }
+}
+
+#[test]
+fn ambiguous_parameters_and_unsupported_layouts_fail_before_any_output() {
+    let baseline = std::fs::read_to_string(
+        root().join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    for (declaration, diagnostic) in [
+        ("int32_t probe();", "use (void)"),
+        ("int32_t probe( /* no prototype */ );", "use (void)"),
+        ("typedef void (*Callback)();", "use (void)"),
+        (
+            "typedef struct Foo { const char *name; } Foo;",
+            "unsupported concrete",
+        ),
+        ("struct Foo { char const *name; };", "unsupported concrete"),
+        (
+            "union Foo { int32_t number; float decimal; };",
+            "unsupported concrete",
+        ),
+        ("typedef const char *Name;", "qualified non-function"),
+        ("typedef char*const Name;", "qualified non-function"),
+        ("const char *global_name;", "qualified non-function"),
+        ("enum Mode { A = 0, B = 1 };", "unsupported concrete"),
+        (
+            "typedef enum Mode { A = 0, B = 1 } Mode;\nMode probe(void);",
+            "unsupported concrete",
+        ),
+        ("typedef enum Mode Mode;", "unsupported concrete"),
+    ] {
+        for language in LANGUAGES {
+            let output = Output::new();
+            let header = output.0.join("custom.h");
+            std::fs::write(&header, format!("{baseline}\n{declaration}\n")).unwrap();
+            let dir = output.0.join("generated");
+            let error = generate_all(&options(&dir, header, &[language])).unwrap_err();
+            assert!(
+                error.contains(diagnostic),
+                "{language}/{declaration}: {error}"
+            );
+            let entries: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert_eq!(
+                entries,
+                [std::ffi::OsString::from("plugins.toml")],
+                "{language}/{declaration} wrote output"
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_void_parameter_list_remains_admitted() {
+    let output = Output::new();
+    let header = output.0.join("void.h");
+    std::fs::write(&header, "int32_t probe(void);\n").unwrap();
+    let files = generate_all(&options(&output.0.join("generated"), header, &LANGUAGES)).unwrap();
+    assert_eq!(files.len(), LANGUAGES.len());
+    for file in files {
+        assert!(std::fs::read_to_string(&file.path)
+            .unwrap()
+            .contains("probe"));
+    }
+}

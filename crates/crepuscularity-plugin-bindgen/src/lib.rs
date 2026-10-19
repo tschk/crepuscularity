@@ -130,7 +130,7 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             let checked = crepus_abi::check_header(&header)?;
             if let Some(lang) = equilibrium_language(&pkg.language) {
                 if checked.canonical && pkg.language == "v" {
-                    generate_v_imports(&header)?
+                    generate_v_imports(&header, Some(&pkg_dir))?
                 } else if checked.canonical {
                     crepus_abi::generate(&header, lang)?
                 } else {
@@ -257,7 +257,7 @@ import "C"
 "#
         ))),
         "python" => Ok(generate_python_ctypes()),
-        "v" => generate_v_imports(header),
+        "v" => generate_v_imports(header, None),
         "java" => Ok(generate_java_jni(include_name)),
         "kotlin" => Ok(generate_kotlin_ffi(include_name)),
         "swift" => Ok(generate_swift_module(include_name)),
@@ -270,32 +270,47 @@ import "C"
     }
 }
 
-fn generate_v_imports(header: &Path) -> Result<String, String> {
+fn generate_v_imports(header: &Path, package_dir: Option<&Path>) -> Result<String, String> {
     if header.to_str().is_none() {
         return Err("V ABI header path must be UTF-8".into());
     }
-    let (include_dir, library_dir) =
-        if header.ends_with("crates/crepuscularity-abi/include/crepuscularity_abi.h") {
-            (
-                "@VMODROOT/../../crates/crepuscularity-abi/include".to_owned(),
-                "@VMODROOT/../../target/debug".to_owned(),
-            )
-        } else {
-            (
-                header
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .display()
-                    .to_string(),
-                header
+    let header = std::path::absolute(header)
+        .map_err(|error| format!("resolve V ABI header path: {error}"))?;
+    let canonical_layout =
+        header.ends_with("crates/crepuscularity-abi/include/crepuscularity_abi.h");
+    let in_repository_package = match package_dir {
+        None => true,
+        Some(package) => {
+            std::path::absolute(package)
+                .map_err(|error| format!("resolve V package path: {error}"))?
+                == header
                     .ancestors()
                     .nth(4)
                     .unwrap_or_else(|| Path::new("."))
-                    .join("target/debug")
-                    .display()
-                    .to_string(),
-            )
-        };
+                    .join("plugins/v")
+        }
+    };
+    let (include_dir, library_dir) = if canonical_layout && in_repository_package {
+        (
+            "@VMODROOT/../../crates/crepuscularity-abi/include".to_owned(),
+            "@VMODROOT/../../target/debug".to_owned(),
+        )
+    } else {
+        (
+            header
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .display()
+                .to_string(),
+            header
+                .ancestors()
+                .nth(4)
+                .unwrap_or_else(|| Path::new("."))
+                .join("target/debug")
+                .display()
+                .to_string(),
+        )
+    };
     let include_name = header
         .file_name()
         .and_then(|name| name.to_str())
@@ -675,12 +690,13 @@ assert lib.freed == before
         let body = &checked[checked.find("module crepuscularity").unwrap()..];
         assert_eq!(
             generate_v_imports(
-                &root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h")
+                &root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
+                Some(&root.join("plugins/v")),
             )
             .unwrap(),
             body
         );
-        let custom = generate_v_imports(Path::new("/custom/include/custom_abi.h")).unwrap();
+        let custom = generate_v_imports(Path::new("/custom/include/custom_abi.h"), None).unwrap();
         assert!(custom.contains("#flag -I /custom/include"));
         assert!(custom.contains("#include \"custom_abi.h\""));
     }
