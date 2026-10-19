@@ -321,6 +321,73 @@ fn generated_flex_basis_supports_lengths_fractions_and_auto() {
 }
 
 #[test]
+fn generated_arbitrary_line_heights_match_runtime_units_and_validation() {
+    let cases = [
+        (
+            view! { "div leading-[20px] leading-[-1px] leading-[50%] leading-[auto] leading-[NaNpx]" },
+            gpui::div().line_height(gpui::px(20.0)),
+        ),
+        (
+            view! { "div leading-[1.25rem]" },
+            gpui::div().line_height(gpui::rems(1.25)),
+        ),
+        (
+            view! { "div leading-[0px]" },
+            gpui::div().line_height(gpui::px(0.0)),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ =
+        view! { "div hover:leading-[20px] focus:leading-[1.25rem] class:leading-[24px]={enabled}" };
+}
+
+#[test]
+fn generated_line_clamps_validate_counts_and_apply_overflow() {
+    let mut actual = view! { "div line-clamp-3 line-clamp-0 line-clamp--1 line-clamp-1.5 line-clamp-184467440737095516160" };
+    let mut expected = gpui::div().line_clamp(3);
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let enabled = true;
+    let mut actual = view! { "div line-clamp-3 class:line-clamp-2={enabled}" };
+    let mut expected = gpui::div().line_clamp(2);
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let _ = view! { "div hover:line-clamp-2 focus:line-clamp-3 active:line-clamp-4" };
+}
+
+#[test]
+fn generated_font_styles_support_standard_aliases_and_resets() {
+    let cases = [
+        (view! { "div italic" }, gpui::div().italic()),
+        (view! { "div font-italic" }, gpui::div().italic()),
+        (view! { "div italic not-italic" }, gpui::div().not_italic()),
+        (
+            view! { "div font-bold font-extralight" },
+            gpui::div().font_weight(gpui::FontWeight::EXTRA_LIGHT),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ =
+        view! { "div hover:italic focus:not-italic active:font-extralight class:italic={enabled}" };
+}
+
+#[test]
 fn generated_flex_shorthands_and_reverse_layouts_replace_prior_values() {
     let cases = [
         (view! { "div flex-none flex-auto" }, gpui::div().flex_auto()),
@@ -555,4 +622,101 @@ fn generated_visible_overflow_resets_only_requested_axes() {
     }
     let enabled = true;
     let _ = view! { "div hover:overflow-visible focus:overflow-x-visible class:overflow-y-visible={enabled}" };
+}
+
+#[test]
+fn unsupported_gpui_utilities_do_not_generate_nonexistent_methods() {
+    let mut actual = view! { "div relative p-2 fixed sticky select-none pointer-events-none hover:fixed focus:sticky" };
+    let mut expected = gpui::div().relative().p_2();
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[test]
+fn generated_text_decorations_match_native_styles_and_resets() {
+    let cases = [
+        (
+            view! { "div underline line-through underline" },
+            gpui::div().underline().line_through().underline(),
+        ),
+        (
+            view! { "div underline line-through line-through" },
+            gpui::div().underline().line_through().line_through(),
+        ),
+        (
+            view! { "div underline line-through no-underline" },
+            gpui::div()
+                .underline()
+                .line_through()
+                .text_decoration_none(),
+        ),
+        (
+            view! { "div underline line-through decoration-solid" },
+            gpui::div()
+                .underline()
+                .line_through()
+                .text_decoration_solid(),
+        ),
+        (
+            view! { "div underline line-through decoration-wavy" },
+            gpui::div()
+                .underline()
+                .line_through()
+                .text_decoration_wavy(),
+        ),
+        (
+            view! { "div underline line-through decoration-0" },
+            gpui::div().underline().line_through().text_decoration_0(),
+        ),
+        (
+            view! { "div underline line-through decoration-1" },
+            gpui::div().underline().line_through().text_decoration_1(),
+        ),
+        (
+            view! { "div underline line-through decoration-2" },
+            gpui::div().underline().line_through().text_decoration_2(),
+        ),
+        (
+            view! { "div underline line-through decoration-4" },
+            gpui::div().underline().line_through().text_decoration_4(),
+        ),
+        (
+            view! { "div underline line-through decoration-8" },
+            gpui::div().underline().line_through().text_decoration_8(),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ = view! { "div hover:underline focus:decoration-wavy active:no-underline class:line-through={enabled}" };
+}
+
+#[test]
+fn generated_text_overflow_and_whitespace_match_supported_gpui_styles() {
+    let cases = [
+        (view! { "div text-ellipsis" }, gpui::div().text_ellipsis()),
+        (
+            view! { "div whitespace-nowrap whitespace-normal whitespace-pre" },
+            gpui::div().whitespace_normal(),
+        ),
+        (
+            view! { "div truncate whitespace-normal" },
+            gpui::div().truncate().whitespace_normal(),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ =
+        view! { "div hover:text-ellipsis focus:whitespace-normal class:text-ellipsis={enabled}" };
 }
