@@ -4,7 +4,7 @@
 //! `JsValue`: it avoids a `serde-wasm-bindgen` dependency and `JSON.parse` on a
 //! single string beats field-by-field reflection for trees of any real size.
 
-use crepuscularity_core::context::TemplateContext;
+use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_native::{render_template_to_ir, render_template_to_ir_with_path, IR_VERSION};
 use wasm_bindgen::prelude::*;
 
@@ -30,7 +30,8 @@ pub fn parse_template_json(
     let path = filename.as_deref().map(std::path::Path::new);
     let ir = render_template_to_ir_with_path(source, &ctx, path)
         .map_err(|e| JsError::new(&format!("lower template to View IR: {e}")))?;
-    serde_json::to_string(&ir).map_err(|e| JsError::new(&format!("serialize View IR: {e}")))
+    crepuscularity_native::to_json_owned(ir)
+        .map_err(|e| JsError::new(&format!("serialize View IR: {e}")))
 }
 
 /// Parse `.crepus` source into View IR, serialized as JSON.
@@ -42,7 +43,8 @@ pub fn parse_crepus_json(source: &str, context_json: Option<String>) -> Result<S
     let ctx = build_context(context_json)?;
     let ir = render_template_to_ir(source, &ctx)
         .map_err(|e| JsError::new(&format!("lower .crepus to View IR: {e}")))?;
-    serde_json::to_string(&ir).map_err(|e| JsError::new(&format!("serialize View IR: {e}")))
+    crepuscularity_native::to_json_owned(ir)
+        .map_err(|e| JsError::new(&format!("serialize View IR: {e}")))
 }
 
 fn build_context(context_json: Option<String>) -> Result<TemplateContext, JsError> {
@@ -59,11 +61,19 @@ fn build_context(context_json: Option<String>) -> Result<TemplateContext, JsErro
         .as_object()
         .ok_or_else(|| JsError::new("context must be a JSON object"))?;
     for (k, v) in obj {
-        let s = match v {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
+        let value = match v {
+            serde_json::Value::String(s) => TemplateValue::Str(s.clone()),
+            serde_json::Value::Bool(v) => TemplateValue::Bool(*v),
+            serde_json::Value::Null => TemplateValue::Null,
+            serde_json::Value::Number(v) => v
+                .as_i64()
+                .map(TemplateValue::Int)
+                .or_else(|| v.as_f64().map(TemplateValue::Float))
+                .ok_or_else(|| JsError::new("context number cannot be represented"))?,
+            // ponytail: structured values stay JSON strings until the JS context API supports lists/scopes.
+            other => TemplateValue::Str(other.to_string()),
         };
-        ctx.set(k, s.as_str());
+        ctx.set(k, value);
     }
     Ok(ctx)
 }
