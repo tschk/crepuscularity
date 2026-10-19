@@ -1405,3 +1405,73 @@ fn generated_named_and_bracketed_colors_share_runtime_resolution() {
         format!("{:?}", expected.style())
     );
 }
+
+#[test]
+fn generated_cursor_utilities_match_runtime_and_override_pointer() {
+    let cases = [
+        (
+            view! { "div cursor-pointer cursor-move" },
+            gpui::div().cursor_move(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-context-menu" },
+            gpui::div().cursor_context_menu(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-vertical-text" },
+            gpui::div().cursor_vertical_text(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-alias" },
+            gpui::div().cursor_alias(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-copy" },
+            gpui::div().cursor_copy(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-no-drop" },
+            gpui::div().cursor_no_drop(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-ew-resize" },
+            gpui::div().cursor_ew_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-ns-resize" },
+            gpui::div().cursor_ns_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-nesw-resize" },
+            gpui::div().cursor_nesw_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-nwse-resize" },
+            gpui::div().cursor_nwse_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-n-resize" },
+            gpui::div().cursor_n_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-e-resize" },
+            gpui::div().cursor_e_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-s-resize" },
+            gpui::div().cursor_s_resize(),
+        ),
+        (
+            view! { "div cursor-pointer cursor-w-resize" },
+            gpui::div().cursor_w_resize(),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ = view! { "div hover:cursor-copy focus:cursor-move class:cursor-ew-resize={enabled}" };
+}
