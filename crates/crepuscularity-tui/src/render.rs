@@ -141,42 +141,223 @@ pub fn collect_focusable_ids(template: &str) -> Result<Vec<String>, CrepusError>
     Ok(collect_focusable_ids_from_nodes(&nodes))
 }
 
+fn element_id(el: &Element, ctx: &TemplateContext) -> Result<Option<String>, CrepusError> {
+    if let Some(id) = &el.id {
+        return Ok(Some(id.clone()));
+    }
+    el.bindings
+        .iter()
+        .find(|binding| binding.prop == "id")
+        .map(|binding| crepuscularity_core::eval::eval_binding(binding, ctx))
+        .transpose()
+        .map(Option::flatten)
+        .map(|value| {
+            value
+                .map(|value| value_to_str(&value))
+                .filter(|id| !id.is_empty())
+        })
+}
+
 /// Walk pre-parsed `nodes` and collect focusable element IDs in document order.
+///
+/// Static class tokens honor TUI and current-platform prefixes. Branches remain
+/// syntactic: conditions, iterators, class interpolation and conditional classes
+/// are not evaluated.
 pub fn collect_focusable_ids_from_nodes(nodes: &[Node]) -> Vec<String> {
     let mut ids = Vec::new();
-    collect_focusable_ids_recursive(nodes, &mut ids);
+    collect_focusable_ids_recursive(nodes, &mut ids, &TemplateContext::new(), false, 0, None);
     ids
 }
 
-fn collect_focusable_ids_recursive(nodes: &[Node], out: &mut Vec<String>) {
+pub(crate) fn collect_focusable_ids_with_context(
+    nodes: &[Node],
+    ctx: &TemplateContext,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    collect_focusable_ids_recursive(nodes, &mut ids, &with_tui_target(ctx), true, 0, None);
+    ids
+}
+
+// Includes and slots are consumed synchronously; caller scopes need not be cloned.
+struct SlotFrame<'a> {
+    nodes: &'a [Node],
+    context: &'a TemplateContext,
+    caller_slot: Option<&'a SlotFrame<'a>>,
+}
+
+fn collect_focusable_ids_recursive(
+    nodes: &[Node],
+    out: &mut Vec<String>,
+    ctx: &TemplateContext,
+    evaluate_branches: bool,
+    include_depth: usize,
+    slot: Option<&SlotFrame<'_>>,
+) {
+    let mut ctx = std::borrow::Cow::Borrowed(ctx);
     for node in nodes {
         match node {
+            Node::Element(el)
+                if if evaluate_branches {
+                    let classes = active_classes(el, &ctx).unwrap_or_default();
+                    element_is_hidden(el, &ctx, &classes).unwrap_or(false)
+                        || classes.iter().any(|class| class == "invisible")
+                } else {
+                    element_is_statically_unfocusable(el)
+                } => {}
+            Node::Element(el) if evaluate_branches && el.tag == "slot" => {
+                let (nodes, slot_ctx, caller_slot) = if let Some(frame) = slot {
+                    (frame.nodes, frame.context, frame.caller_slot)
+                } else if let Some((nodes, slot_ctx)) = &ctx.slot {
+                    (nodes.as_slice(), slot_ctx.as_ref(), None)
+                } else {
+                    (el.children.as_slice(), ctx.as_ref(), slot)
+                };
+                collect_focusable_ids_recursive(
+                    nodes,
+                    out,
+                    slot_ctx,
+                    true,
+                    include_depth,
+                    caller_slot,
+                );
+            }
+            Node::Element(el) if evaluate_branches && el.tag == "slot-rotate" => {}
             Node::Element(el) => {
-                if el.id.is_some()
-                    && el
-                        .classes
+                let focusable = if evaluate_branches {
+                    active_classes(el, &ctx)
+                        .unwrap_or_default()
                         .iter()
-                        .any(|c| c == "focusable" || c.contains("focusable"))
-                {
-                    if let Some(ref id) = el.id {
-                        out.push(id.clone());
+                        .any(|class| class == "focusable")
+                } else {
+                    let target_ctx = with_tui_target(&ctx);
+                    el.classes
+                        .iter()
+                        .flat_map(|class| class.split_whitespace())
+                        .filter_map(|token| active_class(&target_ctx, token))
+                        .any(|class| class == "focusable")
+                };
+                if focusable {
+                    if let Ok(Some(id)) = element_id(el, &ctx) {
+                        out.push(id);
                     }
                 }
-                collect_focusable_ids_recursive(&el.children, out);
+                collect_focusable_ids_recursive(
+                    &el.children,
+                    out,
+                    &ctx,
+                    evaluate_branches,
+                    include_depth,
+                    slot,
+                );
             }
             Node::If(block) => {
-                collect_focusable_ids_recursive(&block.then_children, out);
-                if let Some(ref else_children) = block.else_children {
-                    collect_focusable_ids_recursive(else_children, out);
+                let condition = !evaluate_branches || eval_condition(&ctx, &block.condition);
+                if condition {
+                    collect_focusable_ids_recursive(
+                        &block.then_children,
+                        out,
+                        &ctx,
+                        evaluate_branches,
+                        include_depth,
+                        slot,
+                    );
+                }
+                if !evaluate_branches || !condition {
+                    if let Some(ref else_children) = block.else_children {
+                        collect_focusable_ids_recursive(
+                            else_children,
+                            out,
+                            &ctx,
+                            evaluate_branches,
+                            include_depth,
+                            slot,
+                        );
+                    }
                 }
             }
             Node::For(block) => {
-                collect_focusable_ids_recursive(&block.body, out);
+                if evaluate_branches {
+                    let _ = for_each_loop_context(block, &ctx, |child_ctx| {
+                        collect_focusable_ids_recursive(
+                            &block.body,
+                            out,
+                            child_ctx,
+                            true,
+                            include_depth,
+                            slot,
+                        );
+                        true
+                    });
+                } else {
+                    collect_focusable_ids_recursive(
+                        &block.body,
+                        out,
+                        &ctx,
+                        false,
+                        include_depth,
+                        slot,
+                    );
+                }
             }
             Node::Match(block) => {
+                let value = value_to_str(&eval_value(&block.expr, &ctx));
                 for arm in &block.arms {
-                    collect_focusable_ids_recursive(&arm.body, out);
+                    if !evaluate_branches || matches_pattern(&arm.pattern, &value) {
+                        collect_focusable_ids_recursive(
+                            &arm.body,
+                            out,
+                            &ctx,
+                            evaluate_branches,
+                            include_depth,
+                            slot,
+                        );
+                        if evaluate_branches {
+                            break;
+                        }
+                    }
                 }
+            }
+            Node::Include(inc) if evaluate_branches && include_depth < 64 => {
+                let (file_path, component_name) = inc
+                    .path
+                    .split_once('#')
+                    .map_or((inc.path.as_str(), None), |(file, name)| (file, Some(name)));
+                if let Ok(full_path) = resolve_include_path(ctx.base_dir.as_deref(), file_path) {
+                    if let Ok(content) = read_file(&ctx, &full_path) {
+                        if let Ok(nodes) = parse_included_source(
+                            component_name,
+                            &content,
+                            &if component_name.is_some() {
+                                full_path.clone()
+                            } else {
+                                include_frontend_path(&full_path, file_path)
+                            }
+                            .to_string_lossy(),
+                        ) {
+                            let Ok(child_ctx) = prepare_include_context(inc, &ctx, &full_path)
+                            else {
+                                continue;
+                            };
+                            let frame = SlotFrame {
+                                nodes: &inc.slot,
+                                context: &ctx,
+                                caller_slot: slot,
+                            };
+                            let child_slot = (!inc.slot.is_empty()).then_some(&frame);
+                            collect_focusable_ids_recursive(
+                                &nodes,
+                                out,
+                                &child_ctx,
+                                true,
+                                include_depth + 1,
+                                child_slot,
+                            );
+                        }
+                    }
+                }
+            }
+            Node::LetDecl(decl) if evaluate_branches => {
+                let _ = apply_declaration(decl, &mut ctx);
             }
             _ => {}
         }
