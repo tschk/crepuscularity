@@ -1475,3 +1475,229 @@ fn generated_cursor_utilities_match_runtime_and_override_pointer() {
     let enabled = true;
     let _ = view! { "div hover:cursor-copy focus:cursor-move class:cursor-ew-resize={enabled}" };
 }
+
+#[test]
+fn generated_ring_widths_match_runtime_and_ignore_invalid_overrides() {
+    let cases = [
+        (view! { "div shadow-xl ring" }, "ring"),
+        (view! { "div shadow-xl ring-0" }, "ring-0"),
+        (view! { "div shadow-xl ring-1" }, "ring-1"),
+        (view! { "div shadow-xl ring-2" }, "ring-2"),
+        (view! { "div shadow-xl ring-4" }, "ring-4"),
+        (view! { "div shadow-xl ring-8" }, "ring-8"),
+        (view! { "div shadow-xl ring-[2px]" }, "ring-[2px]"),
+        (view! { "div shadow-xl ring-[0.5rem]" }, "ring-[0.5rem]"),
+        (
+            view! { "div shadow-xl ring-2 ring-[1e38rem] ring-[50%] ring-[NaNpx]" },
+            "ring-2",
+        ),
+    ];
+    for (mut actual, class) in cases {
+        let mut expected = crepuscularity_gpui::crepuscularity_runtime::styler::apply_class(
+            gpui::div().shadow_xl(),
+            class,
+        );
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ = view! { "div hover:ring-2 focus:ring-[0.5rem] class:ring-0={enabled}" };
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_inset_ring_paints_inside_the_box() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::AppContext;
+    struct InsetPaintView;
+    impl gpui::Render for InsetPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            view! { "div size-[60px] bg-white\n  div m-[8px] size-[40px] bg-white ring-inset ring-4" }
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(60.0), gpui::px(60.0)), |_, app| {
+            app.new(|_| InsetPaintView)
+        })
+        .unwrap()
+        .into();
+    cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+        .unwrap();
+    let image = cx.capture_screenshot(window).unwrap();
+    let scale = image.width() / 60;
+    let actual = [6, 9, 20].map(|x| image.get_pixel(x * scale, 20 * scale).0);
+    assert_eq!(actual[0], [255, 255, 255, 255]);
+    assert_ne!(actual[1], [255, 255, 255, 255]);
+    assert_eq!(actual[1][3], 255);
+    assert_eq!(actual[2], [255, 255, 255, 255]);
+}
+
+#[test]
+fn generated_inset_rings_preserve_ordinary_shadows_in_either_order() {
+    let mut first = view! { "div shadow-md ring-inset ring-2" };
+    let mut second = view! { "div ring-2 shadow-md ring-inset" };
+    assert_eq!(
+        format!("{:?}", first.style()),
+        format!("{:?}", second.style())
+    );
+    let shadows = first.style().box_shadow.as_ref().unwrap();
+    assert!(shadows.iter().any(|shadow| shadow.inset));
+    assert!(shadows.iter().any(|shadow| !shadow.inset));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn composed_inset_rings_and_shadows_paint_equally_in_both_orders() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::AppContext;
+    struct ComposedPaintView;
+    impl gpui::Render for ComposedPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            view! {r#"div flex flex-row gap-[20px] bg-white
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4
+  div m-[8px] size-[40px] bg-white ring-4 ring-inset shadow-lg
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(160.0), gpui::px(80.0)), |_, app| {
+            app.new(|_| ComposedPaintView)
+        })
+        .unwrap()
+        .into();
+    cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+        .unwrap();
+    let image = cx.capture_screenshot(window).unwrap();
+    let scale = image.width() / 160;
+    let sample =
+        |offset: u32| [6, 9, 28].map(|x| image.get_pixel((x + offset) * scale, 28 * scale).0);
+    let first = sample(0);
+    assert_eq!(first, sample(76));
+    assert_ne!(
+        first[0],
+        [255, 255, 255, 255],
+        "ordinary shadow remains outside"
+    );
+    assert_eq!(first[0][0], first[0][1]);
+    assert_eq!(first[0][1], first[0][2]);
+    assert_ne!(
+        first[1][0], first[1][2],
+        "colored inset ring remains inside"
+    );
+    assert_eq!(first[2], [255, 255, 255, 255], "box interior remains white");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_state_shadow_resets_preserve_the_other_shadow_kind() {
+    check_generated_state_shadow_resets("hover:ring-0", "hover:shadow-none");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_target_prefixed_state_shadow_resets_preserve_the_other_shadow_kind() {
+    check_generated_state_shadow_resets("gpui:hover:gui:gpui:ring-0", "hover:gui:shadow-none");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_static_target_prefixed_state_shadow_resets_preserve_the_other_shadow_kind() {
+    check_generated_state_shadow_resets("static-prefixed", "hover:gui:shadow-none");
+}
+
+#[cfg(target_os = "macos")]
+fn check_generated_state_shadow_resets(first: &'static str, second: &'static str) {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::{AppContext, InputEvent};
+    struct StateShadowView(&'static str, &'static str);
+    impl gpui::Render for StateShadowView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let first = self.0;
+            let classes = self.1;
+            if first == "static-prefixed" {
+                let enabled = true;
+                return view! {r#"div flex flex-row gap-[20px] bg-white
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 hover:gpui:gui:ring-0
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class:hover:gui:shadow-none={enabled}
+"#};
+            }
+            if first == "hover:ring-0" {
+                return view! {r#"div flex flex-row gap-[20px] bg-white
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 hover:ring-0
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class={classes}
+"#};
+            }
+            view! {r#"div flex flex-row gap-[20px] bg-white
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class={first}
+  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class={classes}
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(160.0), gpui::px(80.0)), |_, app| {
+            app.new(|_| StateShadowView(first, second))
+        })
+        .unwrap()
+        .into();
+    let pixels = |cx: &mut gpui::HeadlessAppContext| {
+        cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+            .unwrap();
+        let image = cx.capture_screenshot(window).unwrap();
+        let scale = image.width() / 160;
+        [6, 9, 82, 85].map(|x| image.get_pixel(x * scale, 28 * scale).0)
+    };
+    let initial = pixels(&mut cx);
+    for x in [28.0, 104.0] {
+        cx.update_window(window, |_, window, app| {
+            window.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position: gpui::point(gpui::px(x), gpui::px(28.0)),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                app,
+            );
+        })
+        .unwrap();
+        let actual = pixels(&mut cx);
+        if x == 28.0 {
+            assert_eq!(actual[0], initial[0]);
+            assert_eq!(actual[1], [255, 255, 255, 255]);
+        } else {
+            assert_eq!(actual[1], initial[1]);
+            assert_eq!(actual[2], [255, 255, 255, 255]);
+            assert_eq!(actual[3], initial[3]);
+        }
+    }
+}
