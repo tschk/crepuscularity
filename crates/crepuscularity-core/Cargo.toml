@@ -9,11 +9,13 @@ documentation = "https://docs.rs/crepuscularity-core"
 readme = "../../README.md"
 
 [dependencies]
+crepuscularity-colors = { path = "../crepuscularity-colors", version = "0.1.0" }
 toml = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
+stacker = "0.1.24"
 notify = { workspace = true, optional = true }
 
 [dev-dependencies]

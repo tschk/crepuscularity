@@ -10,6 +10,7 @@ exclude = [
 members = [
     "crates/crepuscularity",
     "crates/crepuscularity-core",
+    "crates/crepuscularity-colors",
     "crates/crepuscularity-lsp",
     "crates/crepuscularity-native",
     "crates/crepuscularity-embedded",
