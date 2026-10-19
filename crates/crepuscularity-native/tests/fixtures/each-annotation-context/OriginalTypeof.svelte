@@ -1,0 +1,1 @@
+<script lang="ts">const sample=1;type Box<T>={value:T};</script>{#each [1] as item:typeof sample}<p>{item}</p>{/each}
