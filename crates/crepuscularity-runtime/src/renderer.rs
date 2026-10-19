@@ -49,6 +49,73 @@ const GPUI_TARGET_KEYS: [&str; 8] = [
     "is_linux",
 ];
 
+fn has_gpui_target_defaults(ctx: &TemplateContext) -> bool {
+    GPUI_TARGET_KEYS
+        .iter()
+        .all(|key| ctx.vars.contains_key(*key))
+}
+
+fn gpui_target_defaults() -> [(&'static str, TemplateValue); 8] {
+    [
+        ("crepus_target", TemplateValue::Str("gpui".into())),
+        ("is_gui", TemplateValue::Bool(true)),
+        ("is_tui", TemplateValue::Bool(false)),
+        ("is_web", TemplateValue::Bool(false)),
+        (
+            "crepus_platform",
+            TemplateValue::Str(std::env::consts::OS.into()),
+        ),
+        ("is_macos", TemplateValue::Bool(cfg!(target_os = "macos"))),
+        (
+            "is_windows",
+            TemplateValue::Bool(cfg!(target_os = "windows")),
+        ),
+        ("is_linux", TemplateValue::Bool(cfg!(target_os = "linux"))),
+    ]
+}
+
+fn with_gpui_target(ctx: &TemplateContext) -> Cow<'_, TemplateContext> {
+    if has_gpui_target_defaults(ctx) {
+        return Cow::Borrowed(ctx);
+    }
+    let mut ctx = ctx.clone();
+    for (key, value) in gpui_target_defaults() {
+        ctx.vars.entry(key.into()).or_insert(value);
+    }
+    Cow::Owned(ctx)
+}
+
+pub(crate) fn with_gpui_target_in_place<R>(
+    ctx: &mut TemplateContext,
+    render: impl FnOnce(&TemplateContext) -> R,
+) -> R {
+    if has_gpui_target_defaults(ctx) {
+        return render(ctx);
+    }
+    struct Restore<'a> {
+        ctx: &'a mut TemplateContext,
+        inserted: Vec<&'static str>,
+    }
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            for key in self.inserted.drain(..) {
+                self.ctx.vars.remove(key);
+            }
+        }
+    }
+    let mut guard = Restore {
+        ctx,
+        inserted: Vec::with_capacity(8),
+    };
+    for (key, value) in gpui_target_defaults() {
+        if let std::collections::hash_map::Entry::Vacant(entry) = guard.ctx.vars.entry(key.into()) {
+            entry.insert(value);
+            guard.inserted.push(key);
+        }
+    }
+    render(guard.ctx)
+}
+
 /// Render a list of nodes into a single `AnyElement`, threading `LetDecl`s into
 /// a running context clone so later siblings see the declared variables.
 pub fn render_nodes(nodes: &[Node], ctx: &TemplateContext) -> AnyElement {
@@ -1517,5 +1584,161 @@ mod state_style_tests {
         expected.style().box_shadow = base.style().box_shadow.clone();
         let mut expected = crate::styler::apply_class_list(expected, "shadow-none ring-4");
         assert_eq!(actual.box_shadow, expected.style().box_shadow);
+    }
+}
+
+#[cfg(test)]
+mod target_context_tests {
+    use super::*;
+
+    fn assert_same_vars(left: &TemplateContext, right: &TemplateContext) {
+        assert_eq!(left.vars.len(), right.vars.len());
+        for (key, value) in &left.vars {
+            assert_eq!(
+                format!("{value:?}"),
+                format!("{:?}", right.vars.get(key).unwrap())
+            );
+        }
+    }
+
+    #[test]
+    fn gpui_target_defaults_are_available_without_mutating_caller_values() {
+        let mut original = TemplateContext::new();
+        let defaults = with_gpui_target(&original);
+        assert!(eval_condition_bool(&defaults, "is_gui"));
+        assert!(!eval_condition_bool(&defaults, "is_tui || is_web"));
+        assert_eq!(value_to_str(defaults.get("crepus_target").unwrap()), "gpui");
+        assert!(original.get("is_gui").is_none());
+        original.set("is_gui", false);
+        original.set("crepus_target", "custom");
+        let overridden = with_gpui_target(&original);
+        assert!(!eval_condition_bool(&overridden, "is_gui"));
+        assert_eq!(
+            value_to_str(overridden.get("crepus_target").unwrap()),
+            "custom"
+        );
+        let nodes =
+            crepuscularity_core::parse_template("if is_gui\n  div #gui\nelse\n  div #other")
+                .unwrap();
+        let _ = render_nodes(&nodes, &TemplateContext::new());
+        let _ = render_node(&nodes[0], &TemplateContext::new());
+    }
+    #[test]
+    fn in_place_defaults_restore_all_caller_data_and_reuse_payloads() {
+        let mut ctx = TemplateContext::new();
+        ctx.set(
+            "items",
+            TemplateValue::List(vec![TemplateContext::new(); 256]),
+        );
+        let mut scope = TemplateContext::new();
+        scope.set("text", "large".repeat(1024));
+        ctx.set("scope", TemplateValue::Scope(scope));
+        ctx.set("is_gui", TemplateValue::Null);
+        ctx.set("crepus_target", "custom");
+        Arc::make_mut(&mut ctx.virtual_files).insert("child.crepus".into(), "span".into());
+        ctx.slot = Some((Vec::new(), Arc::new(TemplateContext::new())));
+        let before = ctx.clone();
+        let Some(TemplateValue::List(items)) = ctx.get("items") else {
+            panic!("items");
+        };
+        let items_pointer = items.as_ptr();
+        let Some(TemplateValue::Scope(scope)) = ctx.get("scope") else {
+            panic!("scope");
+        };
+        let Some(TemplateValue::Str(text)) = scope.get("text") else {
+            panic!("text");
+        };
+        let text_pointer = text.as_ptr();
+        for panic in [false, true] {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_gpui_target_in_place(&mut ctx, |current| {
+                    assert!(has_gpui_target_defaults(current));
+                    assert!(matches!(current.get("is_gui"), Some(TemplateValue::Null)));
+                    assert_eq!(current.get_str("crepus_target"), "custom");
+                    let Some(TemplateValue::List(items)) = current.get("items") else {
+                        panic!("items");
+                    };
+                    assert_eq!(items.as_ptr(), items_pointer);
+                    let Some(TemplateValue::Scope(scope)) = current.get("scope") else {
+                        panic!("scope");
+                    };
+                    let Some(TemplateValue::Str(text)) = scope.get("text") else {
+                        panic!("text");
+                    };
+                    assert_eq!(text.as_ptr(), text_pointer);
+                    assert!(!eval_condition_bool(current, "is_tui || is_web"));
+                    assert!(!panic, "deliberate render panic");
+                });
+            }));
+            assert_eq!(result.is_err(), panic);
+            assert_same_vars(&ctx, &before);
+            assert_eq!(ctx.base_dir, before.base_dir);
+            assert!(Arc::ptr_eq(&ctx.virtual_files, &before.virtual_files));
+            assert!(Arc::ptr_eq(
+                &ctx.slot.as_ref().unwrap().1,
+                &before.slot.as_ref().unwrap().1
+            ));
+        }
+        ctx.set("is_gui", true);
+        assert!(with_gpui_target_in_place(&mut ctx, |current| {
+            eval_condition_bool(current, "is_gui")
+        }));
+        ctx.vars.remove("is_gui");
+        assert!(with_gpui_target_in_place(&mut ctx, |current| {
+            eval_condition_bool(current, "is_gui")
+        }));
+        assert!(ctx.get("is_gui").is_none());
+    }
+
+    #[test]
+    fn complete_in_place_context_preserves_every_override_type() {
+        let mut ctx = TemplateContext::new();
+        for (key, value) in GPUI_TARGET_KEYS.into_iter().zip([
+            TemplateValue::Null,
+            TemplateValue::Bool(false),
+            TemplateValue::Int(42),
+            TemplateValue::Float(1.5),
+            TemplateValue::Str("custom".into()),
+            TemplateValue::List(Vec::new()),
+            TemplateValue::Scope(TemplateContext::new()),
+            TemplateValue::Bool(true),
+        ]) {
+            ctx.set(key, value);
+        }
+        let before = ctx.clone();
+        let pointer = &ctx as *const TemplateContext;
+        with_gpui_target_in_place(&mut ctx, |current| {
+            assert_eq!(current as *const TemplateContext, pointer);
+            assert_same_vars(current, &before);
+            assert!(matches!(with_gpui_target(current), Cow::Borrowed(_)));
+        });
+        assert_same_vars(&ctx, &before);
+    }
+}
+
+#[cfg(test)]
+mod include_target_tests {
+    use super::*;
+
+    #[test]
+    fn includes_preserve_target_overrides_without_leaking_parent_variables() {
+        let mut parent = with_gpui_target(&TemplateContext::new()).into_owned();
+        parent.set("is_gui", false);
+        parent.set("crepus_target", "custom");
+        parent.set("crepus_platform", "preview");
+        parent.set("private_parent_value", "secret");
+        let child = with_gpui_target(&include_context(
+            &parent,
+            std::path::Path::new("child.crepus"),
+        ))
+        .into_owned();
+        assert!(!eval_condition_bool(&child, "is_gui"));
+        assert_eq!(value_to_str(child.get("crepus_target").unwrap()), "custom");
+        assert_eq!(
+            value_to_str(child.get("crepus_platform").unwrap()),
+            "preview"
+        );
+        assert!(child.get("private_parent_value").is_none());
+        assert_eq!(child.get_bool("is_macos"), parent.get_bool("is_macos"));
     }
 }
