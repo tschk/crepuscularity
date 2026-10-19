@@ -440,3 +440,89 @@ main :: proc() {{
     );
     success(result);
 }
+
+#[test]
+fn selected_header_controls_the_odin_library_import() {
+    let output = Output::new();
+    generate_all(&options(&output.0, None)).unwrap();
+    let canonical = std::fs::read_to_string(output.0.join("odin/abi_generated.odin")).unwrap();
+    assert!(canonical.contains("foreign import crepus \"system:crepuscularity_abi\""));
+    let header = output.0.join("custom.h");
+    std::fs::write(&header, "int custom_increment(int value);\n").unwrap();
+    generate_all(&options(&output.0, Some(header))).unwrap();
+    let custom = std::fs::read_to_string(output.0.join("odin/abi_generated.odin")).unwrap();
+    assert!(
+        custom.contains("foreign import crepus \"system:custom\""),
+        "{custom}"
+    );
+    assert!(!custom.contains("system:crepuscularity_abi"), "{custom}");
+    assert!(
+        custom.contains("custom_increment :: proc \"c\" (p0: c.int) -> c.int ---"),
+        "{custom}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn custom_odin_library_names_are_escaped_and_controls_rejected() {
+    let output = Output::new();
+    let header = output.0.join("custom \"雪\\abi.h");
+    std::fs::write(&header, "int custom_increment(int value);\n").unwrap();
+    generate_all(&options(&output.0, Some(header))).unwrap();
+    let custom = std::fs::read_to_string(output.0.join("odin/abi_generated.odin")).unwrap();
+    assert!(
+        custom.contains("foreign import crepus \"system:custom \\\"雪\\\\abi\""),
+        "{custom}"
+    );
+    let previous = custom;
+    let header = output.0.join("custom\nabi.h");
+    std::fs::write(&header, "int custom_increment(int value);\n").unwrap();
+    let error = generate_all(&options(&output.0, Some(header))).unwrap_err();
+    assert!(error.contains("without controls"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(output.0.join("odin/abi_generated.odin")).unwrap(),
+        previous
+    );
+}
+
+#[test]
+#[ignore = "requires installed Odin, cc, and ar (macOS: xcrun libtool and Command Line Tools)"]
+fn selected_odin_library_links_and_calls_its_custom_export() {
+    let output = Output::new();
+    let header = output.0.join("custom.h");
+    std::fs::write(&header, "int custom_increment(int value);\n").unwrap();
+    generate_all(&options(&output.0, Some(header))).unwrap();
+    let stub = output.0.join("custom.c");
+    std::fs::write(
+        &stub,
+        "int custom_increment(int value) { return value + 1; }\n",
+    )
+    .unwrap();
+    let object = output.0.join("custom.o");
+    success(
+        Command::new("cc")
+            .arg("-c")
+            .arg(stub)
+            .arg("-o")
+            .arg(&object)
+            .output()
+            .unwrap(),
+    );
+    let mut archiver = if cfg!(target_os = "macos") {
+        let mut command = Command::new("xcrun");
+        command.args(["libtool", "-static", "-o"]);
+        command
+    } else {
+        let mut command = Command::new("ar");
+        command.arg("rcs");
+        command
+    };
+    success(
+        archiver
+            .arg(output.0.join("libcustom.a"))
+            .arg(object)
+            .output()
+            .unwrap(),
+    );
+    success(run(&output.0, "package main\nimport abi \"../odin\"\nmain :: proc() { assert(abi.custom_increment(41) == 42) }\n", &output.0));
+}
