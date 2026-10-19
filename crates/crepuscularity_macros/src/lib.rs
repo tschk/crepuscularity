@@ -2197,29 +2197,72 @@ fn element_tag_to_tokens(tag: &str) -> TokenStream2 {
 // Tailwind → GPUI mapper
 // ============================================================
 
-fn map_class(class: &str) -> Option<TokenStream2> {
-    // Target-conditional classes: gpui:h-2, tui:h-1, web:p-4
-    // GPUI macro always targets gpui — strip matching prefixes, skip others.
-    if let Some((prefix, rest)) = class.split_once(':') {
+fn gpui_class(mut class: &str) -> Option<&str> {
+    while let Some((prefix, rest)) = class.split_once(':') {
         match prefix {
-            "gpui" | "gui" => return map_class(rest),
+            "gpui" | "gui" => class = rest,
             "tui" | "web" | "ios" | "android" | "macos" | "darwin" | "windows" | "win32"
             | "linux" => return None,
-            _ => {}
+            _ => break,
         }
     }
+    Some(class)
+}
+
+// Static unknown utilities remain no-ops, but admitted color expressions must
+// not disappear when Rust syntax parsing fails inside the optional style mapper.
+fn validate_dynamic_color_class(class: &str) -> Result<(), String> {
+    let Some(mut class) = gpui_class(class) else {
+        return Ok(());
+    };
+    if let Some((state, rest)) = class.split_once(':') {
+        if matches!(state, "hover" | "focus" | "active") {
+            let Some(rest) = gpui_class(rest) else {
+                return Ok(());
+            };
+            class = rest;
+        }
+    }
+    let Some(rest) = ["bg-", "text-", "border-"]
+        .iter()
+        .find_map(|prefix| class.strip_prefix(prefix))
+    else {
+        return Ok(());
+    };
+    let color =
+        if let Some((color, opacity)) = rest.rsplit_once('/').filter(|_| !rest.ends_with('}')) {
+            if parse_opacity_percentage(opacity).is_none() {
+                return Ok(());
+            }
+            color
+                .strip_prefix('[')
+                .and_then(|color| color.strip_suffix(']'))
+                .unwrap_or(color)
+        } else {
+            rest
+        };
+    if let Some(expression) = extract_braced_expr_str(color) {
+        syn::parse_str::<syn::Expr>(&expression)
+            .map_err(|error| format!("Invalid color expression `{expression}`: {error}"))?;
+    }
+    Ok(())
+}
+
+fn map_class(class: &str) -> Option<TokenStream2> {
+    let state_style = syn::Ident::new("__s", Span::mixed_site());
+    let class = gpui_class(class)?;
 
     if let Some(rest) = class.strip_prefix("hover:") {
         let style = map_class_to_style(rest)?;
-        return Some(quote! { .hover(|__s| __s #style) });
+        return Some(quote! { .hover(|#state_style| #state_style #style) });
     }
     if let Some(rest) = class.strip_prefix("focus:") {
         let style = map_class_to_style(rest)?;
-        return Some(quote! { .focus(|__s| __s #style) });
+        return Some(quote! { .focus(|#state_style| #state_style #style) });
     }
     if let Some(rest) = class.strip_prefix("active:") {
         let style = map_class_to_style(rest)?;
-        return Some(quote! { .active(|__s| __s #style) });
+        return Some(quote! { .active(|#state_style| #state_style #style) });
     }
 
     map_class_to_style(class)
@@ -2242,6 +2285,7 @@ fn gpui_text_run_class(class: &str) -> Option<TokenStream2> {
 }
 
 fn map_class_to_style(class: &str) -> Option<TokenStream2> {
+    let class = gpui_class(class)?;
     if let Some(tokens) = gpui_text_run_class(class) {
         return Some(tokens);
     }
@@ -2255,6 +2299,12 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "flex-wrap" => Some(quote! { .flex_wrap() }),
         "flex-nowrap" => Some(quote! { .flex_nowrap() }),
         "flex-1" => Some(quote! { .flex_1() }),
+        "flex-auto" => Some(quote! { .flex_auto() }),
+        "flex-initial" => Some(quote! { .flex_initial() }),
+        "flex-none" => Some(quote! { .flex_none() }),
+        "flex-row-reverse" => Some(quote! { .flex_row_reverse() }),
+        "flex-col-reverse" => Some(quote! { .flex_col_reverse() }),
+        "flex-wrap-reverse" => Some(quote! { .flex_wrap_reverse() }),
         "grow" => Some(quote! { .grow() }),
         "grow-0" => Some(quote! { .grow_0() }),
         "shrink" => Some(quote! { .shrink() }),
@@ -2265,18 +2315,32 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "invisible" => Some(quote! { .invisible() }),
         "visible" => Some(quote! { .visible() }),
         "grid" => Some(quote! { .grid() }),
+        "aspect-square" => Some(quote! { .aspect_square() }),
+        "aspect-video" => Some(quote! { .aspect_ratio(16.0 / 9.0) }),
+        "aspect-auto" => Some(quote! { .__crepus_aspect_auto() }),
+        "col-span-full" => Some(quote! { .col_span_full() }),
+        "row-span-full" => Some(quote! { .row_span_full() }),
+        "col-start-auto" => Some(quote! { .col_start_auto() }),
+        "col-end-auto" => Some(quote! { .col_end_auto() }),
+        "row-start-auto" => Some(quote! { .row_start_auto() }),
+        "row-end-auto" => Some(quote! { .row_end_auto() }),
         "absolute" => Some(quote! { .absolute() }),
         "relative" => Some(quote! { .relative() }),
-        "fixed" => Some(quote! { .fixed() }),
-        "sticky" => Some(quote! { .sticky() }),
         "overflow-hidden" => Some(quote! { .overflow_hidden() }),
-        "overflow-auto" => Some(quote! { .overflow_y_auto().overflow_x_auto() }),
-        "overflow-x-auto" => Some(quote! { .overflow_x_auto() }),
-        "overflow-y-auto" => Some(quote! { .overflow_y_auto() }),
+        "overflow-visible" => Some(quote! { .__crepus_overflow_visible(true, true) }),
+        "overflow-x-visible" => Some(quote! { .__crepus_overflow_visible(true, false) }),
+        "overflow-y-visible" => Some(quote! { .__crepus_overflow_visible(false, true) }),
+        "overflow-auto" | "overflow-scroll" => {
+            Some(quote! { .__crepus_overflow_scroll(true, true) })
+        }
+        "overflow-x-auto" | "overflow-x-scroll" => {
+            Some(quote! { .__crepus_overflow_scroll(true, false) })
+        }
+        "overflow-y-auto" | "overflow-y-scroll" => {
+            Some(quote! { .__crepus_overflow_scroll(false, true) })
+        }
         "overflow-x-hidden" => Some(quote! { .overflow_x_hidden() }),
         "overflow-y-hidden" => Some(quote! { .overflow_y_hidden() }),
-        "overflow-scroll" => Some(quote! { .overflow_y_scroll() }),
-        "overflow-y-scroll" => Some(quote! { .overflow_y_scroll() }),
 
         // Sizing shortcuts
         "w-full" => Some(quote! { .w_full() }),
@@ -2298,16 +2362,26 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "justify-end" => Some(quote! { .justify_end() }),
         "justify-between" => Some(quote! { .justify_between() }),
         "justify-around" => Some(quote! { .justify_around() }),
+        "justify-evenly" => Some(quote! { .justify_evenly() }),
         "items-center" => Some(quote! { .items_center() }),
         "items-start" => Some(quote! { .items_start() }),
         "items-end" => Some(quote! { .items_end() }),
-        "items-stretch" => None, // no items_stretch() in GPUI 0.2.x
+        "items-stretch" => Some(quote! { .items_stretch() }),
         "items-baseline" => Some(quote! { .items_baseline() }),
-        // self-* (align-self) not available as methods in GPUI 0.2.x
-        "self-stretch" | "self-center" | "self-start" | "self-end" | "self-auto" => None,
+        "self-start" => Some(quote! { .self_start() }),
+        "self-end" => Some(quote! { .self_end() }),
+        "self-center" => Some(quote! { .self_center() }),
+        "self-stretch" => Some(quote! { .self_stretch() }),
+        "self-baseline" => Some(quote! { .self_baseline() }),
+        "self-auto" => Some(quote! { .__crepus_self_auto() }),
         "content-center" => Some(quote! { .content_center() }),
         "content-start" => Some(quote! { .content_start() }),
         "content-end" => Some(quote! { .content_end() }),
+        "content-normal" => Some(quote! { .content_normal() }),
+        "content-stretch" => Some(quote! { .content_stretch() }),
+        "content-between" => Some(quote! { .content_between() }),
+        "content-around" => Some(quote! { .content_around() }),
+        "content-evenly" => Some(quote! { .content_evenly() }),
 
         // Colors — background
         "bg-black" => Some(quote! { .bg(::gpui::black()) }),
@@ -2333,6 +2407,33 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "border-b" => Some(quote! { .border_b_1() }),
         "border-l" => Some(quote! { .border_l_1() }),
         "border-r" => Some(quote! { .border_r_1() }),
+        "border-t-0" => Some(quote! { .border_t_0() }),
+        "border-t-2" => Some(quote! { .border_t_2() }),
+        "border-t-4" => Some(quote! { .border_t_4() }),
+        "border-t-8" => Some(quote! { .border_t_8() }),
+        "border-b-0" => Some(quote! { .border_b_0() }),
+        "border-b-2" => Some(quote! { .border_b_2() }),
+        "border-b-4" => Some(quote! { .border_b_4() }),
+        "border-b-8" => Some(quote! { .border_b_8() }),
+        "border-l-0" => Some(quote! { .border_l_0() }),
+        "border-l-2" => Some(quote! { .border_l_2() }),
+        "border-l-4" => Some(quote! { .border_l_4() }),
+        "border-l-8" => Some(quote! { .border_l_8() }),
+        "border-r-0" => Some(quote! { .border_r_0() }),
+        "border-r-2" => Some(quote! { .border_r_2() }),
+        "border-r-4" => Some(quote! { .border_r_4() }),
+        "border-r-8" => Some(quote! { .border_r_8() }),
+        "border-dashed" => Some(quote! { .border_dashed() }),
+
+        // Shadows
+        "shadow" | "shadow-md" => Some(quote! { .__crepus_shadow_class("shadow-md") }),
+        "shadow-2xs" => Some(quote! { .__crepus_shadow_class("shadow-2xs") }),
+        "shadow-xs" => Some(quote! { .__crepus_shadow_class("shadow-xs") }),
+        "shadow-sm" => Some(quote! { .__crepus_shadow_class("shadow-sm") }),
+        "shadow-lg" => Some(quote! { .__crepus_shadow_class("shadow-lg") }),
+        "shadow-xl" => Some(quote! { .__crepus_shadow_class("shadow-xl") }),
+        "shadow-2xl" => Some(quote! { .__crepus_shadow_class("shadow-2xl") }),
+        "shadow-none" => Some(quote! { .__crepus_shadow_class("shadow-none") }),
         "outline-none" | "outline-0" => None,
 
         // Border radius
@@ -2350,6 +2451,7 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
 
         // Typography — weight
         "font-thin" => Some(quote! { .font_weight(::gpui::FontWeight::THIN) }),
+        "font-extralight" => Some(quote! { .font_weight(::gpui::FontWeight::EXTRA_LIGHT) }),
         "font-light" => Some(quote! { .font_weight(::gpui::FontWeight::LIGHT) }),
         "font-normal" => Some(quote! { .font_weight(::gpui::FontWeight::NORMAL) }),
         "font-medium" => Some(quote! { .font_weight(::gpui::FontWeight::MEDIUM) }),
@@ -2357,7 +2459,8 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "font-bold" => Some(quote! { .font_weight(::gpui::FontWeight::BOLD) }),
         "font-extrabold" => Some(quote! { .font_weight(::gpui::FontWeight::EXTRA_BOLD) }),
         "font-black" => Some(quote! { .font_weight(::gpui::FontWeight::BLACK) }),
-        "font-italic" => Some(quote! { .font_style(::gpui::FontStyle::Italic) }),
+        "italic" | "font-italic" => Some(quote! { .italic() }),
+        "not-italic" => Some(quote! { .not_italic() }),
 
         // Typography — scale
         "text-xs" => Some(quote! { .text_size(::gpui::rems(0.75)) }),
@@ -2379,6 +2482,18 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "text-center" => Some(quote! { .text_align(::gpui::TextAlign::Center) }),
         "text-right" => Some(quote! { .text_align(::gpui::TextAlign::Right) }),
 
+        // Typography — decoration
+        "underline" => Some(quote! { .underline() }),
+        "line-through" => Some(quote! { .line_through() }),
+        "no-underline" => Some(quote! { .text_decoration_none() }),
+        "decoration-solid" => Some(quote! { .text_decoration_solid() }),
+        "decoration-wavy" => Some(quote! { .text_decoration_wavy() }),
+        "decoration-0" => Some(quote! { .text_decoration_0() }),
+        "decoration-1" => Some(quote! { .text_decoration_1() }),
+        "decoration-2" => Some(quote! { .text_decoration_2() }),
+        "decoration-4" => Some(quote! { .text_decoration_4() }),
+        "decoration-8" => Some(quote! { .text_decoration_8() }),
+
         // Typography — line height
         "leading-none" => Some(quote! { .line_height(::gpui::relative(1.)) }),
         "leading-tight" => Some(quote! { .line_height(::gpui::relative(1.25)) }),
@@ -2389,9 +2504,10 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
 
         // Typography — misc
         "truncate" => Some(quote! { .truncate() }),
+        "text-ellipsis" => Some(quote! { .text_ellipsis() }),
         "whitespace-nowrap" => Some(quote! { .whitespace_nowrap() }),
         "whitespace-normal" => Some(quote! { .whitespace_normal() }),
-        "whitespace-pre" => Some(quote! { .whitespace_pre() }),
+        "whitespace-pre" => None,
 
         // Cursor
         "cursor-pointer" => Some(quote! { .cursor_pointer() }),
@@ -2403,12 +2519,23 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
         "cursor-grabbing" => Some(quote! { .cursor_grabbing() }),
         "cursor-col-resize" => Some(quote! { .cursor_col_resize() }),
         "cursor-row-resize" => Some(quote! { .cursor_row_resize() }),
-
-        // Selection / misc
-        "select-none" => Some(quote! { .select_none() }),
-        "pointer-events-none" => Some(quote! { .pointer_events_none() }),
+        "cursor-move" => Some(quote! { .cursor_move() }),
+        "cursor-context-menu" => Some(quote! { .cursor_context_menu() }),
+        "cursor-vertical-text" => Some(quote! { .cursor_vertical_text() }),
+        "cursor-alias" => Some(quote! { .cursor_alias() }),
+        "cursor-copy" => Some(quote! { .cursor_copy() }),
+        "cursor-no-drop" => Some(quote! { .cursor_no_drop() }),
+        "cursor-ew-resize" => Some(quote! { .cursor_ew_resize() }),
+        "cursor-ns-resize" => Some(quote! { .cursor_ns_resize() }),
+        "cursor-nesw-resize" => Some(quote! { .cursor_nesw_resize() }),
+        "cursor-nwse-resize" => Some(quote! { .cursor_nwse_resize() }),
+        "cursor-n-resize" => Some(quote! { .cursor_n_resize() }),
+        "cursor-e-resize" => Some(quote! { .cursor_e_resize() }),
+        "cursor-s-resize" => Some(quote! { .cursor_s_resize() }),
+        "cursor-w-resize" => Some(quote! { .cursor_w_resize() }),
 
         // Explicit ignore list (not supported in GPUI)
+        "fixed" | "sticky" | "select-none" | "pointer-events-none" => None,
         "transition-colors"
         | "transition"
         | "duration-200"
@@ -2751,6 +2878,142 @@ mod event_closure_tests {
         assert!(event_callback_expression("handle_click").unwrap().is_none());
         assert!(event_callback_expression("{| invalid}").is_err());
         assert!(event_callback_expression("factory(").is_err());
+    }
+}
+
+#[cfg(test)]
+mod state_class_tests {
+    use super::*;
+
+    #[test]
+    fn nested_state_targets_match_static_and_conditional_utilities() {
+        let nodes = crepuscularity_core::parse_template("div id=fixture").unwrap();
+        for state in ["hover", "focus", "active"] {
+            for utility in ["ring-0", "shadow-none", "p-2"] {
+                let plain = format!("{state}:{utility}");
+                for prefix in ["gpui:", "gui:gpui:"] {
+                    let nested = format!("gpui:{state}:{prefix}{utility}");
+                    assert_eq!(
+                        map_class(&nested).unwrap().to_string(),
+                        map_class(&plain).unwrap().to_string()
+                    );
+                    for conditional in [false, true] {
+                        let render = |class: String| {
+                            let Node::Element(mut element) = core_node_to_macro(&nodes[0]).unwrap()
+                            else {
+                                panic!("expected element")
+                            };
+                            if conditional {
+                                element.conditional_classes.push(ConditionalClass {
+                                    class,
+                                    condition: "enabled".into(),
+                                });
+                            } else {
+                                element.classes.push(class);
+                            }
+                            generate_element(&element).unwrap().to_string()
+                        };
+                        assert_eq!(
+                            render(nested.clone()),
+                            render(plain.clone()),
+                            "{nested}, conditional={conditional}"
+                        );
+                        let foreign = render(format!("{state}:web:{utility}"));
+                        assert!(!foreign.contains(&format!(". {state} (")), "{foreign}");
+                        assert!(!foreign.contains("__crepus_base_shadow"), "{foreign}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multiple_utilities_share_one_state_style_call() {
+        let nodes = crepuscularity_core::parse_template(
+            "div hover:bg-red-500 gpui:hover:text-white focus:p-2 focus:m-1 active:bg-blue-500 active:text-black web:hover:p-8"
+        ).unwrap();
+        let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+            panic!("expected element")
+        };
+        let code = generate_element(&element).unwrap().to_string();
+        for state in ["hover", "focus", "active"] {
+            assert_eq!(code.matches(&format!(". {state} (")).count(), 1, "{code}");
+        }
+        assert!(code.contains("text_color"));
+    }
+}
+
+#[cfg(test)]
+mod conditional_target_tests {
+    use super::*;
+
+    #[test]
+    fn conditional_classes_use_the_same_target_filter_as_static_classes() {
+        for class in ["gpui:flex-row", "gui:flex-row", "gpui:gui:flex-row"] {
+            let tokens = generate_conditional_class(&ConditionalClass {
+                class: class.into(),
+                condition: "enabled".into(),
+            })
+            .unwrap()
+            .to_string();
+            assert!(tokens.contains("flex_row"), "{tokens}");
+        }
+        for class in ["web:flex-row", "tui:flex-row", "ios:flex-row"] {
+            assert!(generate_conditional_class(&ConditionalClass {
+                class: class.into(),
+                condition: "enabled".into()
+            })
+            .unwrap()
+            .is_empty());
+        }
+        assert!(generate_conditional_class(&ConditionalClass {
+            class: "gpui:unknown-utility".into(),
+            condition: "enabled".into()
+        })
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod tracking_tests {
+    use super::*;
+
+    #[test]
+    fn tracking_emits_finite_pixels_and_preserves_signed_spacing() {
+        for (class, value) in [("tracking-[-0.5rem]", -8.0f32), ("tracking-[2px]", 2.0)] {
+            assert_eq!(
+                map_class_to_style(class).unwrap().to_string(),
+                quote! { .letter_spacing(::gpui::px(#value)) }.to_string()
+            );
+        }
+        for class in [
+            "tracking-[50%]",
+            "tracking-[auto]",
+            "tracking-[1e38rem]",
+            "tracking-[-1e38rem]",
+            "tracking-[NaNpx]",
+            "tracking-[infpx]",
+        ] {
+            assert!(map_class_to_style(class).is_none(), "{class}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod font_family_tests {
+    use super::*;
+
+    #[test]
+    fn empty_font_families_are_ignored() {
+        for class in ["font-[]", "font-['']", "font-[\"\"]", "font-[___]"] {
+            assert!(map_class_to_style(class).is_none(), "{class}");
+        }
+        assert_eq!(
+            map_class_to_style("font-['Times_New_Roman']")
+                .unwrap()
+                .to_string(),
+            quote! { .font_family("Times New Roman") }.to_string()
+        );
     }
 }
 
