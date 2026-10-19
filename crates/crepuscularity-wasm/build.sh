@@ -30,7 +30,9 @@ wasm-bindgen \
     --out-dir "$crate_dir/npm/wasm" \
     --target nodejs
 
-rm -f "$crate_dir/npm/wasm/.gitignore" "$crate_dir/npm/wasm/package.json"
+rm -f "$crate_dir/npm/wasm/.gitignore"
+# The nodejs target emits CommonJS glue inside this ESM npm package.
+printf '{"type":"commonjs"}\n' > "$crate_dir/npm/wasm/package.json"
 
 # A binding layer that silently lacks a frontend is worse than one that fails:
 # an extension it does not know falls through to generic markup and returns
@@ -57,6 +59,7 @@ wasm-bindgen \
     --out-dir "$crate_dir/npm/browser" \
     --target web
 
-bun test "$crate_dir/npm/parser.test.ts"
+bun "$crate_dir/build-js.ts"
+bun test "$crate_dir/npm/parser.test.ts" "$crate_dir/npm/package.test.ts"
 
 echo "built $crate_dir/npm/wasm"
