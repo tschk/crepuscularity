@@ -488,7 +488,7 @@ mod rust_scaffold {
     use crate::scaffold;
     use crate::ui;
 
-    const SCAFFOLD_NATIVE_VERSION: &str = "0.6.5";
+    const SCAFFOLD_NATIVE_VERSION: &str = "0.7.0";
 
     const CARGO_TOML: &str = r#"[package]
 name = "{{slug}}"

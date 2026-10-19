@@ -53,7 +53,7 @@ path = "src/main.rs"
 [dependencies]
 gpui = {{ package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }}
 gpui_platform = {{ package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"] }}
-crepuscularity-gpui = {{ version = "0.5.10" }}
+crepuscularity-gpui = {{ version = "0.6.0" }}
 "#
     )
 }

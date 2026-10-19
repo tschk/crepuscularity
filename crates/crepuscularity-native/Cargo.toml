@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-native"
-version = "0.6.5"
+version = "0.7.0"
 edition = "2021"
 license = "ISC"
 description = "View intermediate representation (JSON) for native SwiftUI / Compose shells (UNSTABLE)."
@@ -15,7 +15,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 raffia = { version = "=0.13.0", optional = true }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true, optional = true }
@@ -33,7 +33,7 @@ oxc_codegen = { version = "0.128", optional = true }
 oxc_syntax = { version = "0.128", optional = true }
 
 [dev-dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 

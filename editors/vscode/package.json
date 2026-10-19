@@ -2,7 +2,7 @@
   "name": "crepuscularity-vscode",
   "displayName": "Crepuscularity",
   "description": "Syntax highlighting, snippets, and crepus-lsp diagnostics for .crepus templates.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "crepuscularity",
   "author": "Max Carter <max@undivisible.dev>",
   "license": "ISC",

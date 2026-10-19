@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-runtime"
-version = "0.4.20"
+version = "0.5.0"
 edition = "2021"
 license = "ISC"
 description = "Runtime parser, GPUI renderer, and hot-reload engine for Crepuscularity (UNSTABLE; in active development)."
@@ -18,7 +18,7 @@ gpui_text_run_styles = []
 test-support = ["gpui/test-support"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0", features = ["notify"] }
 gpui = { package = "gpui-ce", version = "0.2.2", default-features = false }
 gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 stacker = "0.1.24"

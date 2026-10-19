@@ -31,7 +31,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-web = "0.5.2"
+crepuscularity-web = "0.6.0"
 wasm-bindgen = "0.2"
 
 [profile.release]

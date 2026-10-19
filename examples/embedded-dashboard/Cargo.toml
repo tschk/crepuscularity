@@ -6,10 +6,10 @@ license = "ISC"
 publish = false
 
 [dependencies]
-crepuscularity-embedded = { path = "../../crates/crepuscularity-embedded", version = "0.1.23", features = ["std"] }
+crepuscularity-embedded = { path = "../../crates/crepuscularity-embedded", version = "0.2.0", features = ["std"] }
 
 [build-dependencies]
-crepuscularity-core = { path = "../../crates/crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../../crates/crepuscularity-core", version = "0.6.0" }
 
 [[test]]
 name = "smoke"

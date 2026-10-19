@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-lvgl"
-version = "0.1.11"
+version = "0.2.0"
 edition = "2021"
 license = "ISC"
 description = "LVGL Pro XML generator for the Crepuscularity .crepus DSL."
@@ -9,7 +9,7 @@ readme = "../../README.md"
 
 [dependencies]
 crepuscularity-colors = { path = "../crepuscularity-colors", version = "0.1.0" }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
