@@ -85,6 +85,24 @@ const simple =
     \\{"version":7,"root":[{"kind":"input","bind":"name","placeholder":"Name","onChange":"edit","style":{"width":200,"height":40}}]}
 ;
 
+test "crepus-zpui built-in input participates in keyboard tab navigation" {
+    var f = try Fixture.init(simple, "A");
+    defer f.deinit();
+    // Host Tab/Shift-Tab actions call these methods; no mouse activation first.
+    try testing.expectEqual(@as(usize, 1), f.window.rendered_frame.tab_stops.tabStopCount());
+    f.window.focusNext();
+    f.settle();
+    try testing.expect(f.platform.input_handler != null);
+    f.typeText("B");
+    try testing.expectEqualStrings("BA", f.model().value.items);
+    try testing.expectEqual(@as(usize, 1), f.model().changes);
+    const focused = f.window.focused_id;
+    f.window.focusPrev();
+    f.settle();
+    try testing.expectEqual(focused, f.window.focused_id);
+    try testing.expect(f.platform.input_handler != null);
+}
+
 test "crepus-zpui built-in input commits typed Unicode and survives redraw with selection" {
     var f = try Fixture.init(simple, "A");
     defer f.deinit();
