@@ -999,6 +999,16 @@ fn build_element(
     }
 }
 
+fn text_only(nodes: &[Node]) -> bool {
+    !nodes.is_empty()
+        && nodes.iter().all(|node| {
+            matches!(
+                node,
+                Node::Text(_) | Node::RawText(_) | Node::RawHtml(_) | Node::LetDecl(_)
+            )
+        })
+}
+
 fn adjusted_constraint(hints: &StyleHints, parent_dir: Direction) -> Constraint {
     match hints.constraint_for(parent_dir) {
         Constraint::Length(n) => Constraint::Length(match parent_dir {
@@ -1026,47 +1036,38 @@ fn build_content_element(
     el: &Element,
     hints: &StyleHints,
     ctx: &TemplateContext,
+    parent_dir: Direction,
     constraint: Constraint,
     style: Style,
-) -> WidgetChild {
+) -> Result<WidgetChild, CrepusError> {
     let mut child_ctx: std::borrow::Cow<'_, TemplateContext> = std::borrow::Cow::Borrowed(ctx);
-
-    let lines: Vec<Line<'static>> = el
-        .children
-        .iter()
-        .filter_map(|child| match child {
-            Node::Text(parts) => Some(build_line(parts, &child_ctx)),
-            Node::RawText(expr) => Some(Line::raw(value_to_str(&eval_value(expr, &child_ctx)))),
-            Node::LetDecl(decl) => {
-                let val = eval_value(&decl.expr, &child_ctx);
-                if decl.is_default {
-                    if !child_ctx.vars.contains_key(&decl.name) {
-                        child_ctx.to_mut().vars.insert(decl.name.clone(), val);
-                    }
-                } else {
-                    let child_ctx = child_ctx.to_mut();
-                    if let Some(v) = child_ctx.vars.get_mut(&decl.name) {
-                        *v = val;
-                    } else {
-                        child_ctx.vars.insert(decl.name.clone(), val);
-                    }
-                }
-                None
+    let mut lines = Vec::new();
+    for child in &el.children {
+        match child {
+            Node::Text(parts) => lines.extend(build_lines(parts, &child_ctx)?),
+            Node::RawText(expr) | Node::RawHtml(expr) => {
+                lines.extend(Text::raw(value_to_str(&eval_expr(expr, &child_ctx)?)).lines);
             }
-            _ => None,
-        })
-        .collect();
+            Node::LetDecl(decl) => apply_declaration(decl, &mut child_ctx)?,
+            _ => {}
+        }
+    }
 
-    // Resolve w-fit for text elements: width = longest line length.
-    let constraint = if matches!(hints.width, SizeHint::Fit) {
-        let max_width = lines.iter().map(|l| l.width() as u16).max().unwrap_or(0);
-        let overhead = border_padding_overhead(hints, Direction::Horizontal);
-        Constraint::Length(max_width.saturating_add(overhead))
+    let fit_size = match parent_dir {
+        Direction::Horizontal if matches!(hints.width, SizeHint::Fit) => {
+            Some(lines.iter().map(Line::width).max().unwrap_or(0))
+        }
+        Direction::Vertical if matches!(hints.height, SizeHint::Fit) => Some(lines.len()),
+        _ => None,
+    };
+    let constraint = if let Some(size) = fit_size {
+        let content = size.min(u16::MAX as usize) as u16;
+        Constraint::Length(content.saturating_add(border_padding_overhead(hints, parent_dir)))
     } else {
         constraint
     };
 
-    WidgetChild {
+    Ok(WidgetChild {
         node: WidgetNode::Content {
             lines,
             style,
@@ -1074,11 +1075,24 @@ fn build_content_element(
             alignment: hints.alignment,
         },
         constraint,
-    }
+    })
 }
 
 /// Element with no children (spacer, background panel, etc.).
-fn build_empty_box(hints: &StyleHints, constraint: Constraint, style: Style) -> WidgetChild {
+fn build_empty_box(
+    hints: &StyleHints,
+    parent_dir: Direction,
+    constraint: Constraint,
+    style: Style,
+) -> WidgetChild {
+    let constraint = resolve_fit_constraint(
+        constraint,
+        &mut [],
+        hints.direction,
+        hints.gap,
+        hints,
+        parent_dir,
+    );
     WidgetChild {
         node: WidgetNode::Container {
             direction: hints.direction,
@@ -1101,22 +1115,36 @@ pub struct ContainerProps<'a> {
 }
 
 /// Element with structural children → split its area for each child.
+#[allow(clippy::too_many_arguments)]
 fn build_container_element(
     el: &Element,
     hints: &StyleHints,
     ctx: &TemplateContext,
-    _parent_dir: Direction,
+    parent_dir: Direction,
     props: ContainerProps<'_>,
+    scroll_cfg: ScrollConfig,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
     let child_dir = hints.direction;
-    let children = build_children(&el.children, ctx, child_dir, props.style, renderer);
-    let scroll_cfg = scroll_config(el, ctx, props.classes);
-
+    let mut children = build_children(&el.children, ctx, child_dir, props.style, renderer, slot);
+    if text_only(&el.children) {
+        for child in &mut children {
+            if let WidgetNode::Content { alignment, .. } = &mut child.node {
+                *alignment = hints.alignment;
+            }
+        }
+    }
     // Resolve Fit constraints: measure the natural content size and
     // convert to a Fixed constraint so the element doesn't fill.
-    let constraint =
-        resolve_fit_constraint(props.constraint, &children, child_dir, hints.gap, hints);
+    let constraint = resolve_fit_constraint(
+        props.constraint,
+        &mut children,
+        child_dir,
+        hints.gap,
+        hints,
+        parent_dir,
+    );
 
     WidgetChild {
         node: WidgetNode::Container {
@@ -1133,123 +1161,92 @@ fn build_container_element(
     }
 }
 
-/// When a container has a `Fit` size hint (via `h-fit`/`w-fit`), measure the
-/// natural content height/width from the built children and return a `Length`
-/// constraint so the element takes exactly its content size.
+/// Resolve fit only along the axis allocated by the parent.
 fn resolve_fit_constraint(
     constraint: Constraint,
-    children: &[WidgetChild],
+    children: &mut [WidgetChild],
     child_dir: Direction,
     gap: u16,
     hints: &StyleHints,
+    parent_dir: Direction,
 ) -> Constraint {
-    // Determine which axis needs fitting and compute content size for it.
-    // h-fit → measure height; w-fit → measure width.
-    let fit_height = matches!(hints.height, SizeHint::Fit);
-    let fit_width = matches!(hints.width, SizeHint::Fit);
-
-    if !fit_height && !fit_width {
+    let fits = match parent_dir {
+        Direction::Horizontal => matches!(hints.width, SizeHint::Fit),
+        Direction::Vertical => matches!(hints.height, SizeHint::Fit),
+    };
+    if !fits {
         return constraint;
     }
-
-    let n = children.len();
-    if n == 0 {
-        return Constraint::Length(0);
+    if child_dir == parent_dir {
+        for child in children.iter_mut() {
+            if !matches!(
+                child.constraint,
+                Constraint::Length(_) | Constraint::Min(_) | Constraint::Max(_)
+            ) {
+                child.constraint =
+                    Constraint::Length(intrinsic_extent(&child.node, parent_dir).max(1));
+            }
+        }
     }
+    let content = children_extent(children, child_dir, parent_dir, gap);
+    Constraint::Length(content.saturating_add(border_padding_overhead(hints, parent_dir)))
+}
 
-    let total_gap = gap * (n as u16).saturating_sub(1);
-
-    // Content size along the container's main axis (child_dir).
-    let main_size: u16 = match child_dir {
-        Direction::Vertical => {
-            let sum: u16 = children
-                .iter()
-                .map(|c| constraint_min_height(&c.constraint))
-                .sum();
-            sum + total_gap
-        }
-        Direction::Horizontal => {
-            let sum: u16 = children
-                .iter()
-                .map(|c| constraint_min_width(&c.constraint))
-                .sum();
-            sum + total_gap
-        }
-    };
-
-    // Content size along the cross axis (perpendicular to child_dir).
-    let cross_size: u16 = match child_dir {
-        Direction::Vertical => children
-            .iter()
-            .map(|c| constraint_min_width(&c.constraint))
-            .max()
-            .unwrap_or(0),
-        Direction::Horizontal => children
-            .iter()
-            .map(|c| constraint_min_height(&c.constraint))
-            .max()
-            .unwrap_or(0),
-    };
-
-    // Pick the right size based on which axis has Fit.
-    let (content_size, overhead_axis) = if fit_height {
-        // Height fit: if container is flex-col, main axis = height;
-        // if flex-row, cross axis = height.
-        let size = match child_dir {
-            Direction::Vertical => main_size,
-            Direction::Horizontal => cross_size,
-        };
-        (size, Direction::Vertical)
+fn children_extent(
+    children: &[WidgetChild],
+    direction: Direction,
+    axis: Direction,
+    gap: u16,
+) -> u16 {
+    let sizes = children
+        .iter()
+        .map(|child| child_extent(child, direction, axis));
+    if axis == direction {
+        let gaps = children.len().saturating_sub(1).min(u16::MAX as usize) as u16;
+        sizes
+            .fold(0u16, u16::saturating_add)
+            .saturating_add(gap.saturating_mul(gaps))
     } else {
-        // Width fit: if container is flex-row, main axis = width;
-        // if flex-col, cross axis = width.
-        let size = match child_dir {
-            Direction::Horizontal => main_size,
-            Direction::Vertical => cross_size,
-        };
-        (size, Direction::Horizontal)
+        sizes.max().unwrap_or(0)
+    }
+}
+
+fn child_extent(child: &WidgetChild, direction: Direction, axis: Direction) -> u16 {
+    if axis == direction {
+        match child.constraint {
+            Constraint::Length(n) | Constraint::Min(n) | Constraint::Max(n) => n,
+            _ => intrinsic_extent(&child.node, axis).max(1),
+        }
+    } else {
+        intrinsic_extent(&child.node, axis)
+    }
+}
+
+fn intrinsic_extent(node: &WidgetNode, axis: Direction) -> u16 {
+    let (content, block) = match node {
+        WidgetNode::Content { lines, block, .. } => {
+            // Fit sizing counts logical rows independently of the viewport width.
+            let extent = match axis {
+                Direction::Vertical => lines.len(),
+                Direction::Horizontal => lines.iter().map(Line::width).max().unwrap_or(0),
+            };
+            (extent.min(u16::MAX as usize) as u16, block)
+        }
+        WidgetNode::Container {
+            children,
+            direction,
+            gap,
+            block,
+            ..
+        } => (children_extent(children, *direction, axis, *gap), block),
+        WidgetNode::Empty => return 0,
     };
-
-    let overhead = border_padding_overhead(hints, overhead_axis);
-    Constraint::Length(content_size.saturating_add(overhead))
+    content.saturating_add(block.as_ref().map_or(0, |spec| spec.overhead(axis)))
 }
 
-/// Estimate the minimum height a constraint needs.
-fn constraint_min_height(c: &Constraint) -> u16 {
-    match c {
-        Constraint::Length(n) | Constraint::Min(n) => *n,
-        Constraint::Fill(_) => 1,
-        Constraint::Percentage(_) => 1,
-        Constraint::Max(n) => *n,
-        _ => 1,
-    }
-}
-
-/// Estimate the minimum width a constraint needs.
-fn constraint_min_width(c: &Constraint) -> u16 {
-    match c {
-        Constraint::Length(n) | Constraint::Min(n) => *n,
-        Constraint::Fill(_) => 1,
-        Constraint::Percentage(_) => 1,
-        Constraint::Max(n) => *n,
-        _ => 1,
-    }
-}
-
-/// Border + padding cells consumed along the main axis.
+/// Border, title, and padding cells consumed along the requested axis.
 fn border_padding_overhead(hints: &StyleHints, dir: Direction) -> u16 {
-    match dir {
-        Direction::Vertical => {
-            let b = u16::from(hints.borders.intersects(Borders::TOP))
-                + u16::from(hints.borders.intersects(Borders::BOTTOM));
-            b + hints.padding.top + hints.padding.bottom
-        }
-        Direction::Horizontal => {
-            let b = u16::from(hints.borders.intersects(Borders::LEFT))
-                + u16::from(hints.borders.intersects(Borders::RIGHT));
-            b + hints.padding.left + hints.padding.right
-        }
-    }
+    hints_to_block(hints).map_or(0, |block| block.overhead(dir))
 }
 
 /// `<slot>` — renders the caller's slot children (or the element's own children
