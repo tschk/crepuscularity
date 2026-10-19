@@ -69,6 +69,10 @@ impl ComponentRegistry {
         );
     }
 
+    /// Register all named components and their defaults from a component file.
+    ///
+    /// Relative includes use the render context's `base_dir`. Supply the file's
+    /// parent directory in that context when rendering file-backed components.
     pub fn register_file(&mut self, path: &Path) -> Result<(), CrepusError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| CrepusError::render(format!("component file error: {:?}: {}", path, e)))?;
