@@ -454,3 +454,25 @@ fn trusted_event_modifier_is_preserved() {
     let nodes = parse("<button on:click|trusted={save} />");
     assert_eq!(el(&nodes[0]).event_handlers[0].modifiers, ["trusted"]);
 }
+
+#[test]
+fn test_parse_svelte_component_raw_happy_path() {
+    let src = "<script context=\"module\">export const x = 1;</script>\n<script>let y = 2;</script>\n<style>p { color: red; }</style>\n<p>{y}</p>";
+    let comp = super::parse_svelte_component_raw(src).expect("component should parse");
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "p");
+    assert!(comp
+        .module_script
+        .as_deref()
+        .unwrap()
+        .contains("export const x"));
+    assert!(comp.script.as_deref().unwrap().contains("let y"));
+    assert!(comp.style.as_deref().unwrap().contains("color: red"));
+}
+
+#[test]
+fn test_parse_svelte_component_raw_unexpected_trailing_markup() {
+    let src = "<div>hi</div></extra>";
+    let err = super::parse_svelte_component_raw(src).expect_err("should fail with trailing markup");
+    assert!(err.message.contains("unexpected trailing markup"));
+}
