@@ -8,7 +8,7 @@
 //! "#;
 //! let mut parser = tree_sitter::Parser::new();
 //! parser.set_language(&tree_sitter_crepus::language()).expect("Error loading Crepus grammar");
-//! let tree = parser.parse(code, None).unwrap();
+//! let tree = parser.parse(code, None).expect("Failed to parse code");
 //! assert!(!tree.root_node().has_error());
 //! ```
 //!
@@ -66,7 +66,7 @@ mod tests {
             .expect("Error loading Crepus grammar");
         let tree = parser
             .parse(r#"button @click="" px-4 py-2 bg-blue-500 text-white"#, None)
-            .unwrap();
+            .expect("Failed to parse test code");
         assert!(!tree.root_node().has_error());
     }
 }
