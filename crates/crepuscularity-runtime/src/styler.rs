@@ -22,20 +22,135 @@ pub fn apply_class(d: Div, class: &str) -> Div {
     apply_class_with_ctx(d, class, None)
 }
 
+/// Apply a runtime utility list to any styled GPUI element.
+pub fn apply_class_list<E: gpui::Styled>(mut element: E, classes: impl AsRef<str>) -> E {
+    let mut styled = gpui::div();
+    *styled.style() = std::mem::take(element.style());
+    for class in classes.as_ref().split_whitespace() {
+        styled = apply_class(styled, class);
+    }
+    *element.style() = std::mem::take(styled.style());
+    element
+}
+
+/// Whether a state list operates on the shared ring/shadow collection.
+pub fn class_list_has_state_shadow(classes: &str, state: &str) -> bool {
+    classes.split_whitespace().any(|mut class| {
+        while let Some(rest) = class
+            .strip_prefix("gpui:")
+            .or_else(|| class.strip_prefix("gui:"))
+        {
+            class = rest;
+        }
+        class.split_once(':').is_some_and(|(prefix, mut utility)| {
+            if prefix != state {
+                return false;
+            }
+            while let Some(rest) = utility
+                .strip_prefix("gpui:")
+                .or_else(|| utility.strip_prefix("gui:"))
+            {
+                utility = rest;
+            }
+            is_shadow_class(utility)
+        })
+    })
+}
+
+/// Resolve one state from a runtime utility list for generated GPUI views.
+pub fn class_list_state_style(classes: &str, state: &str) -> gpui::StyleRefinement {
+    state_style_with_ctx(classes.split_whitespace(), state, None)
+}
+
+/// Apply matching state utilities in order, including resets of earlier utilities.
+pub fn apply_class_list_state_style(
+    style: gpui::StyleRefinement,
+    classes: &str,
+    state: &str,
+) -> gpui::StyleRefinement {
+    state_style_with_initial(style, classes.split_whitespace(), state, None, None)
+}
+
+pub fn state_style_with_ctx<'a>(
+    classes: impl Iterator<Item = &'a str>,
+    state: &str,
+    ctx: Option<&TemplateContext>,
+) -> gpui::StyleRefinement {
+    state_style_with_initial(gpui::StyleRefinement::default(), classes, state, ctx, None)
+}
+
+pub(crate) fn state_style_with_initial<'a>(
+    style: gpui::StyleRefinement,
+    classes: impl Iterator<Item = &'a str>,
+    state: &str,
+    ctx: Option<&TemplateContext>,
+    base: Option<&gpui::StyleRefinement>,
+) -> gpui::StyleRefinement {
+    let mut styled = gpui::div();
+    *styled.style() = style;
+    for mut class in classes {
+        while let Some(rest) = class
+            .strip_prefix("gpui:")
+            .or_else(|| class.strip_prefix("gui:"))
+        {
+            class = rest;
+        }
+        if let Some((prefix, utility)) = class.split_once(':') {
+            if prefix == state {
+                styled = apply_class_with_ctx_and_base(styled, utility, ctx, base);
+            }
+        }
+    }
+    std::mem::take(styled.style())
+}
+
 /// Apply a class with optional template context for dynamic value resolution.
 pub fn apply_class_with_ctx(d: Div, class: &str, ctx: Option<&TemplateContext>) -> Div {
-    // State prefixes — skip silently in runtime renderer (no hover/focus state at runtime)
+    apply_class_with_ctx_and_base(d, class, ctx, None)
+}
+
+fn apply_class_with_ctx_and_base(
+    mut d: Div,
+    mut class: &str,
+    ctx: Option<&TemplateContext>,
+    base: Option<&gpui::StyleRefinement>,
+) -> Div {
+    while let Some((prefix, rest)) = class.split_once(':') {
+        match prefix {
+            "gpui" | "gui" => class = rest,
+            "tui" | "web" | "ios" | "android" | "macos" | "darwin" | "windows" | "win32"
+            | "linux" => return d,
+            _ => break,
+        }
+    }
+    if class.starts_with('{') && class.ends_with('}') {
+        if let Some(ctx) = ctx {
+            if let Ok(classes) = ctx.interpolate(class) {
+                return classes.split_whitespace().fold(d, |d, class| {
+                    apply_class_with_ctx_and_base(d, class, None, base)
+                });
+            }
+        }
+        return d;
+    }
+
+    // The renderer applies state variants separately from the base style.
     if class.starts_with("hover:") || class.starts_with("focus:") || class.starts_with("active:") {
         return d;
     }
 
-    // Check for context-expression classes: bg-{expr}, text-{expr}, border-{expr}
+    // Resolve embedded expressions such as bg-{color} or w-{size}.
     if let Some(ctx) = ctx {
         if class.contains('{') {
-            return apply_context_class(d, class, ctx);
+            return apply_context_class(d, class, ctx, base);
         }
     }
 
+    if let Some(base) = base {
+        if is_shadow_class(class) && d.style().box_shadow.is_none() {
+            d.style().box_shadow = base.box_shadow.clone();
+        }
+    }
     apply_base_class(d, class)
 }
 
@@ -48,13 +163,14 @@ pub fn apply_base_class(d: Div, class: &str) -> Div {
 
 /// Try to resolve a class containing `{expr}` against the template context.
 /// Falls through to `apply_base_class` if no context expression matched.
-fn apply_context_class(d: Div, class: &str, ctx: &TemplateContext) -> Div {
+fn apply_context_class(
+    d: Div,
+    class: &str,
+    ctx: &TemplateContext,
+    base: Option<&gpui::StyleRefinement>,
+) -> Div {
     // Pattern: prefix-{expr} where prefix is bg, text, border, etc.
-    for (prefix, apply_fn) in &[
-        ("bg-", apply_bg as fn(Div, u32) -> Div),
-        ("text-", apply_text_color as fn(Div, u32) -> Div),
-        ("border-", apply_border_color as fn(Div, u32) -> Div),
-    ] {
+    for prefix in ["bg-", "text-", "border-"] {
         if let Some(rest) = class.strip_prefix(prefix) {
             if rest.starts_with('{') && rest.ends_with('}') {
                 let expr = &rest[1..rest.len() - 1];
@@ -62,8 +178,8 @@ fn apply_context_class(d: Div, class: &str, ctx: &TemplateContext) -> Div {
                     continue;
                 };
                 let color_str = crepuscularity_core::context::value_to_str(&val);
-                if let Some(hex) = parse_color_str(&color_str) {
-                    return apply_fn(d, hex);
+                if let Some(color) = parse_runtime_hex_color(&color_str) {
+                    return apply_color(d, prefix, color);
                 }
             }
         }
@@ -76,11 +192,13 @@ fn apply_context_class(d: Div, class: &str, ctx: &TemplateContext) -> Div {
                 let expr = &expr_part[1..expr_part.len() - 1];
                 if let Ok(val) = crepuscularity_core::eval::eval_expr(expr, ctx) {
                     let color_str = crepuscularity_core::context::value_to_str(&val);
-                    if let Some(hex) = parse_color_str(&color_str) {
-                        if let Ok(alpha) = alpha_str.parse::<u32>() {
-                            let alpha_byte = alpha * 255 / 100;
-                            let rgba_val = (hex << 8) | alpha_byte;
-                            return d.bg(rgba(rgba_val));
+                    if let Some(normalized) = parse_css_hex_color(&color_str) {
+                        if let (Ok(hex), Some(alpha)) = (
+                            u32::from_str_radix(&normalized[1..7], 16),
+                            parse_opacity_percentage(alpha_str),
+                        ) {
+                            let rgba_val = (hex << 8) | (alpha * 255.0) as u32;
+                            return apply_rgba(d, "bg-", rgba_val);
                         }
                     }
                 }
@@ -96,13 +214,19 @@ fn apply_context_class(d: Div, class: &str, ctx: &TemplateContext) -> Div {
                 return apply_base_class(d, class);
             };
             let s = crepuscularity_core::context::value_to_str(&val);
-            if let Ok(n) = s.parse::<f32>() {
-                return d.opacity(n / 100.0);
+            if let Some(opacity) = parse_opacity_percentage(&s) {
+                return d.opacity(opacity);
             }
         }
     }
 
-    // No context expression matched — fall through to normal class processing
+    // Resolved values are classes, not another interpolation pass.
+    if let Ok(resolved) = ctx.interpolate(class) {
+        return resolved.split_whitespace().fold(d, |d, class| {
+            apply_class_with_ctx_and_base(d, class, None, base)
+        });
+    }
+
     apply_base_class(d, class)
 }
 
@@ -1251,5 +1375,171 @@ mod parse_absolute_length_tests {
         assert_eq!(parse_absolute_length("abc"), None);
         assert_eq!(parse_absolute_length("10.5.5px"), None);
         assert_eq!(parse_absolute_length("10pxrem"), None);
+    }
+}
+
+#[cfg(test)]
+mod class_list_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_class_lists_match_individual_utilities() {
+        let mut reset = apply_class_list(
+            gpui::div().self_center().aspect_square().w_full(),
+            "self-auto aspect-auto",
+        );
+        assert!(reset.style().align_self.is_none());
+        assert!(reset.style().aspect_ratio.is_none());
+        let mut expected = gpui::div().w_full();
+        assert_eq!(
+            format!("{:?}", reset.style()),
+            format!("{:?}", expected.style())
+        );
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("theme", "flex flex-row gap-4 p-2 bg-red-500");
+        let mut dynamic = apply_class_with_ctx(gpui::div(), "{theme}", Some(&ctx));
+        let mut list = apply_class_list(gpui::div().w_full(), "flex flex-row gap-4 p-2 bg-red-500");
+        let mut expected_list =
+            apply_class_list(gpui::div(), "w-full flex flex-row gap-4 p-2 bg-red-500");
+        assert_eq!(
+            format!("{:?}", list.style()),
+            format!("{:?}", expected_list.style())
+        );
+        let mut literal = gpui::div();
+        for class in ["flex", "flex-row", "gap-4", "p-2", "bg-red-500"] {
+            literal = apply_class(literal, class);
+        }
+        assert_eq!(
+            format!("{:?}", dynamic.style()),
+            format!("{:?}", literal.style())
+        );
+    }
+
+    #[test]
+    fn target_prefixes_match_macro_filtering() {
+        let mut actual = apply_class_list(
+            gpui::div(),
+            "gpui:flex gui:flex-row gpui:gap-4 web:flex-col tui:p-8 ios:hidden",
+        );
+        let mut expected = apply_class_list(gpui::div(), "flex flex-row gap-4");
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("theme", "gpui:flex gui:flex-row web:hidden");
+        let mut actual = apply_class_with_ctx(gpui::div(), "gpui:{theme}", Some(&ctx));
+        let mut expected = apply_class_list(gpui::div(), "flex flex-row");
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+
+    #[test]
+    fn dynamic_class_values_are_not_recursively_evaluated() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("theme", "{theme}");
+        let mut actual = apply_class_with_ctx(gpui::div(), "{theme}", Some(&ctx));
+        let mut empty = gpui::div();
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", empty.style())
+        );
+    }
+
+    #[test]
+    fn dynamic_dimensions_match_static_styles_after_context_updates() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("color", "#12ab34");
+        ctx.set("alpha", 50);
+        for (size, gap) in [(7, 2), (30, 5)] {
+            ctx.set("size", size);
+            ctx.set("gap", gap);
+            let mut actual = gpui::div();
+            for class in [
+                "w-{1 + 2}",
+                "h-[{size + 2}px]",
+                "p-{gap}",
+                "bg-{color}",
+                "opacity-{alpha}",
+            ] {
+                actual = apply_class_with_ctx(actual, class, Some(&ctx));
+            }
+            let mut expected = apply_class_list(
+                gpui::div(),
+                format!("w-3 h-[{}px] p-{gap} bg-[#12ab34] opacity-50", size + 2),
+            );
+            assert_eq!(
+                format!("{:?}", actual.style()),
+                format!("{:?}", expected.style())
+            );
+        }
+    }
+
+    #[test]
+    fn state_dimensions_resolve_expressions_without_applying_other_states() {
+        let mut ctx = TemplateContext::new();
+        for (size, gap) in [(7, 2), (30, 5)] {
+            ctx.set("size", size);
+            ctx.set("gap", gap);
+            let actual = state_style_with_ctx(
+                [
+                    "gpui:hover:w-{1 + 2}",
+                    "hover:h-[{size + 2}px]",
+                    "hover:p-{gap}",
+                    "focus:w-99",
+                ]
+                .into_iter(),
+                "hover",
+                Some(&ctx),
+            );
+            let mut expected =
+                apply_class_list(gpui::div(), format!("w-3 h-[{}px] p-{gap}", size + 2));
+            assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+        }
+    }
+
+    #[test]
+    fn dynamic_dimension_fallbacks_are_noops_and_resolved_lists_are_not_recursive() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("braced", "{dimension}");
+        ctx.set("dimension", 3);
+        for class in ["p-{missing}", "w-{1 +}", "p-{braced}"] {
+            let mut actual = apply_class_with_ctx(gpui::div(), class, Some(&ctx));
+            let mut empty = gpui::div();
+            assert_eq!(
+                format!("{:?}", actual.style()),
+                format!("{:?}", empty.style()),
+                "{class}"
+            );
+        }
+        ctx.set("gap", "2 m-4");
+        let mut actual = apply_class_with_ctx(gpui::div(), "p-{gap}", Some(&ctx));
+        let mut expected = apply_class_list(gpui::div(), "p-2 m-4");
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+}
+
+#[cfg(test)]
+mod state_list_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_state_lists_preserve_utility_order_and_target_filtering() {
+        let actual = class_list_state_style(
+            "hover:bg-blue-500 gpui:hover:bg-red-500 gui:hover:p-2 web:hover:hidden focus:p-8",
+            "hover",
+        );
+        let mut expected = apply_class_list(gpui::div(), "bg-red-500 p-2");
+        assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+        let actual = class_list_state_style("hover:p-2 active:p-4", "active");
+        let mut expected = apply_class_list(gpui::div(), "p-4");
+        assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
     }
 }
