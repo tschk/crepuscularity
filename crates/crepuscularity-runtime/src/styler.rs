@@ -1309,7 +1309,11 @@ pub fn parse_duration_ms(s: &str) -> Option<u64> {
         return rest.parse::<u64>().ok();
     }
     if let Some(rest) = s.strip_suffix('s') {
-        return rest.parse::<f64>().ok().map(|v| (v * 1000.0) as u64);
+        return rest.parse::<f64>().ok().and_then(|seconds| {
+            let milliseconds = seconds * 1000.0;
+            (milliseconds.is_finite() && milliseconds >= 0.0 && milliseconds < u64::MAX as f64)
+                .then_some(milliseconds as u64)
+        });
     }
     s.parse::<u64>().ok()
 }
@@ -1348,8 +1352,14 @@ mod parse_duration_ms_tests {
         assert_eq!(parse_duration_ms("1000"), Some(1000));
         assert_eq!(parse_duration_ms("abc"), None);
         assert_eq!(parse_duration_ms("1.5ms"), None);
-        assert_eq!(parse_duration_ms("-1s"), Some(0));
+        assert_eq!(parse_duration_ms("-1s"), None);
         assert_eq!(parse_duration_ms("-100ms"), None);
+        for invalid in ["NaNs", "infs", "-infs", "1e308s", "18446744073709552s"] {
+            assert_eq!(parse_duration_ms(invalid), None, "{invalid}");
+        }
+        assert_eq!(parse_duration_ms("0s"), Some(0));
+        assert_eq!(parse_duration_ms("0.0005s"), Some(0));
+        assert_eq!(parse_duration_ms("18446744073709551615ms"), Some(u64::MAX));
     }
 }
 
