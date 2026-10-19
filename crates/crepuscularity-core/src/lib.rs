@@ -14,7 +14,6 @@ pub mod diagnostics;
 pub mod error;
 pub mod eval;
 pub mod include_paths;
-pub mod output_paths;
 pub mod parser;
 pub mod preprocess;
 pub mod render_entry;

@@ -156,7 +156,7 @@ fn class_attr(style: Option<&ViewStyle>) -> String {
 
 /// Rewrite expression references using the shared framework lexer.
 fn scope_expr(expr: &str, locals: &[LocalBinding]) -> String {
-    crate::scoped_expression::scope_expr(expr, locals, "scope.")
+    crate::js_expr::scope_expr(expr, locals, "scope.")
 }
 
 /// A text child: literal (HTML-escaped) unless bound, in which case `{expr}`.
@@ -267,7 +267,7 @@ fn emit_for_each(
     )
 }
 
-fn emit_node(node: &ViewNode, indent: usize, locals: &[LocalBinding]) -> String {
+pub(crate) fn emit_node(node: &ViewNode, indent: usize, locals: &[LocalBinding]) -> String {
     let pad = "  ".repeat(indent);
     match node {
         ViewNode::Text {
@@ -702,6 +702,17 @@ mod tests {
     use super::*;
     use crate::render::render_template_to_ir;
     use crepuscularity_core::context::TemplateContext;
+
+    #[test]
+    fn component_emitter_emits_scope_and_handlers_props_contract() {
+        let body = emit_svelte_component(&sample_ir());
+        assert!(
+            body.contains("let { scope = {}, handlers = {} }: { scope?: Record<string, any>; handlers?: Record<string, any> } = $props();"),
+            "{body}"
+        );
+        assert!(body.contains("<script lang=\"ts\">"), "{body}");
+        assert!(body.contains("</script>"), "{body}");
+    }
 
     #[test]
     fn image_attributes_keep_carriage_returns_out_of_static_html() {

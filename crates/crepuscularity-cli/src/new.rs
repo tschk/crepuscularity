@@ -48,8 +48,9 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-gpui = {{ git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"] }}
-crepuscularity-gpui = {{ git = "https://github.com/tschk/crepuscularity", package = "crepuscularity-gpui" }}
+gpui = {{ package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }}
+gpui_platform = {{ package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"] }}
+crepuscularity-gpui = {{ version = "0.5.10" }}
 "#
     )
 }

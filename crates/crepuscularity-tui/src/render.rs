@@ -152,6 +152,90 @@ pub fn collect_focusable_ids_from_nodes(nodes: &[Node]) -> Vec<String> {
     ids
 }
 
+/// Collect focusable IDs from the currently rendered branches and loop items.
+pub(crate) fn collect_focusable_ids_with_context(
+    template: &str,
+    ctx: &TemplateContext,
+) -> Result<Vec<String>, CrepusError> {
+    let nodes = parse_template(template)?;
+    let mut ids = Vec::new();
+    collect_focusable_ids_in_context(&nodes, ctx, &mut ids);
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    Ok(ids)
+}
+
+fn collect_focusable_ids_in_context(nodes: &[Node], ctx: &TemplateContext, out: &mut Vec<String>) {
+    let mut ctx = ctx.clone();
+    for node in nodes {
+        match node {
+            Node::LetDecl(decl) => {
+                if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
+                    let value = eval_expr(&decl.expr, &ctx).unwrap_or(TemplateValue::Null);
+                    ctx.vars.insert(decl.name.clone(), value);
+                }
+            }
+            Node::Element(el) => {
+                let static_focusable = el
+                    .classes
+                    .iter()
+                    .any(|class| class == "focusable" || class.contains("focusable"));
+                let dynamic_focusable = el.conditional_classes.iter().any(|class| {
+                    class.class == "focusable" && eval_condition(&ctx, &class.condition)
+                });
+                if static_focusable || dynamic_focusable {
+                    if let Some(id) = &el.id {
+                        out.push(id.clone());
+                    }
+                }
+                collect_focusable_ids_in_context(&el.children, &ctx, out);
+            }
+            Node::If(block) => {
+                let branch = if eval_condition(&ctx, &block.condition) {
+                    Some(&block.then_children)
+                } else {
+                    block.else_children.as_ref()
+                };
+                if let Some(branch) = branch {
+                    collect_focusable_ids_in_context(branch, &ctx, out);
+                }
+            }
+            Node::For(block) => {
+                for item_ctx in ctx.get_list_ref(&block.iterator) {
+                    let mut child_ctx = ctx.clone();
+                    child_ctx.vars.extend(item_ctx.vars.clone());
+                    if !block.pattern.trim().is_empty() {
+                        let item_str = item_ctx.get_str("value");
+                        if !item_str.is_empty() {
+                            child_ctx.vars.insert(
+                                block.pattern.trim().to_string(),
+                                TemplateValue::Str(item_str),
+                            );
+                        }
+                    }
+                    collect_focusable_ids_in_context(&block.body, &child_ctx, out);
+                }
+            }
+            Node::Match(block) => {
+                let value =
+                    value_to_str(&eval_expr(&block.expr, &ctx).unwrap_or(TemplateValue::Null));
+                let arm = block.arms.iter().find(|arm| {
+                    let pattern = arm.pattern.trim();
+                    let quoted = pattern
+                        .strip_prefix('"')
+                        .and_then(|value| value.strip_suffix('"'))
+                        == Some(value.as_str());
+                    pattern == "_" || quoted || pattern == value
+                });
+                if let Some(arm) = arm {
+                    collect_focusable_ids_in_context(&arm.body, &ctx, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_focusable_ids_recursive(nodes: &[Node], out: &mut Vec<String>) {
     for node in nodes {
         match node {
@@ -675,8 +759,15 @@ fn build_element(
     if let Some(title_val) = el
         .bindings
         .iter()
-        .find(|b| b.prop == "title")
-        .map(|b| value_to_str(&eval_value(&b.value, ctx)))
+        .find(|b| b.matches_prop("title"))
+        .and_then(|binding| {
+            // Keep the TUI builder's existing error-to-null policy. Attribute null omits the title.
+            crepuscularity_core::eval::eval_binding(binding, ctx)
+                .unwrap_or_else(|_| {
+                    (binding.origin != BindingOrigin::Attribute).then_some(TemplateValue::Null)
+                })
+                .map(|value| value_to_str(&value))
+        })
     {
         hints.title = Some(title_val);
     }
@@ -1035,7 +1126,7 @@ fn build_slot_rotate(
 fn slot_rotate_interval_ms(el: &Element, ctx: &TemplateContext) -> u64 {
     const DEFAULT_INTERVAL_MS: u64 = 3200;
     for b in &el.bindings {
-        if b.prop == "interval" {
+        if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
             let v = value_to_str(&eval_value(&b.value, ctx));
             let trimmed = v.trim_matches('"').trim();
             return trimmed.parse().unwrap_or(DEFAULT_INTERVAL_MS);
@@ -1538,6 +1629,20 @@ fn active_classes(el: &Element, ctx: &TemplateContext) -> Vec<String> {
         .iter()
         .filter_map(|c| active_class(ctx, &interpolate_str(ctx, c)))
         .collect();
+    for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
+            // As with existing TUI scalar bindings, evaluation errors render as null.
+            if let Some(value) =
+                crepuscularity_core::eval::eval_binding(binding, ctx).unwrap_or(None)
+            {
+                classes.extend(
+                    value_to_str(&value)
+                        .split_whitespace()
+                        .filter_map(|token| active_class(ctx, token)),
+                );
+            }
+        }
+    }
     for cc in &el.conditional_classes {
         if eval_condition(ctx, &cc.condition) {
             if let Some(class) = active_class(ctx, &interpolate_str(ctx, &cc.class)) {
@@ -1573,7 +1678,7 @@ fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> Scr
     let scroll_to_bottom = el
         .bindings
         .iter()
-        .find(|b| b.prop == "scroll-bottom")
+        .find(|b| b.prop == "scroll-bottom" && b.origin != BindingOrigin::Attribute)
         .map(|b| {
             let v = eval_value(&b.value, ctx);
             match v {
@@ -1589,10 +1694,11 @@ fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> Scr
         .bindings
         .iter()
         .find(|binding| {
-            matches!(
-                binding.prop.as_str(),
-                "scroll-offset" | "scroll-y" | "scroll"
-            )
+            binding.origin != BindingOrigin::Attribute
+                && matches!(
+                    binding.prop.as_str(),
+                    "scroll-offset" | "scroll-y" | "scroll"
+                )
         })
         .map(|binding| value_to_str(&eval_value(&binding.value, ctx)))
         .or_else(|| {
@@ -1754,6 +1860,63 @@ mod slot_rotate_tests {
                 rendered(current_slot_rotate_line(&phrases, 1000, t)),
                 "solo"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod binding_origin_tests {
+    use super::*;
+
+    fn element(source: &str) -> Element {
+        let nodes =
+            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.ng")))
+                .unwrap();
+        let Node::Element(el) = nodes.into_iter().next().unwrap() else {
+            panic!("element expected")
+        };
+        el
+    }
+
+    #[test]
+    fn attribute_class_is_literal_and_null_is_absent() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("classes", "text-red-500 {missing}");
+        let el = element("<div [attr.CLASS]=\"classes\"></div>");
+        assert_eq!(active_classes(&el, &ctx), ["text-red-500", "{missing}"]);
+        assert!(active_classes(&element("<div [attr.CLASS]=\"null\"></div>"), &ctx).is_empty());
+    }
+
+    #[test]
+    fn attribute_names_do_not_activate_tui_control_paths() {
+        let ctx = TemplateContext::new();
+        let attr = element("<div [attr.interval]=\"99\" [attr.scroll-bottom]=\"true\" [attr.scroll-offset]=\"7\"></div>");
+        assert_eq!(slot_rotate_interval_ms(&attr, &ctx), 3200);
+        let config = scroll_config(&attr, &ctx, &["overflow-scroll".into()]);
+        assert_eq!(config.offset, 0);
+        assert!(!config.scroll_to_bottom);
+        let ordinary =
+            element("<div [interval]=\"99\" [scroll-bottom]=\"true\" [scroll-offset]=\"7\"></div>");
+        assert_eq!(slot_rotate_interval_ms(&ordinary, &ctx), 99);
+        let config = scroll_config(&ordinary, &ctx, &["overflow-scroll".into()]);
+        assert_eq!(config.offset, 7);
+        assert!(config.scroll_to_bottom);
+    }
+
+    #[test]
+    fn null_attribute_title_is_omitted_while_false_is_literal() {
+        let ctx = TemplateContext::new();
+        for (value, expected) in [("null", false), ("false", true)] {
+            let el = element(&format!(
+                "<div class=\"border\" [attr.TITLE]=\"{value}\">Body</div>"
+            ));
+            let area = Rect::new(0, 0, 20, 3);
+            let mut buffer = Buffer::empty(area);
+            BufferRenderer::new()
+                .render_nodes(&[Node::Element(el)], &ctx, &mut buffer, area)
+                .unwrap();
+            let top: String = (0..20).map(|x| buffer[(x, 0)].symbol()).collect();
+            assert_eq!(top.contains("false"), expected, "{top}");
         }
     }
 }

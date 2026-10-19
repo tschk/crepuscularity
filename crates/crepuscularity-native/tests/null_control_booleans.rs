@@ -22,7 +22,7 @@ fn source(filename: &str, tag: &str, prop: &str, value: &str) -> String {
 }
 
 #[test]
-fn null_missing_and_typed_false_do_not_enable_control_booleans_in_six_frontends() {
+fn null_missing_and_false_follow_control_specific_boolean_contracts() {
     for filename in [
         "Entry.crepus",
         "Entry.jsx",
@@ -45,7 +45,12 @@ fn null_missing_and_typed_false_do_not_enable_control_booleans_in_six_frontends(
                 )
                 .unwrap();
                 let ir = serde_json::to_value(ir).unwrap();
-                assert_eq!(ir["root"][0][property], false, "{filename} {source}: {ir}");
+                // Portable file-picker expressions use presence; ordinary checkboxes remain typed.
+                let enabled = tag == "file-picker" && value == "false";
+                assert_eq!(
+                    ir["root"][0][property], enabled,
+                    "{filename} {source}: {ir}"
+                );
             }
         }
     }

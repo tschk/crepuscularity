@@ -17,9 +17,21 @@ final class CrepuscularityPlugin
             throw new RuntimeException('Invalid characters in CREPUS_BIN');
         }
 
-        if (str_contains($bin, '/') || str_contains($bin, '\\')) {
-            throw new RuntimeException('CREPUS_BIN must be a binary name, not a path');
+        $isWindowsPath = preg_match('/^[A-Za-z]:[\\\\\/]/', $bin) === 1;
+        if (!$isWindowsPath && str_contains($bin, '\\')) {
+            throw new RuntimeException('Invalid backslash in POSIX CREPUS_BIN');
         }
+
+        $basename = basename($isWindowsPath ? str_replace('\\', '/', $bin) : $bin);
+        if ($basename !== 'crepus' && $basename !== 'crepus.exe') {
+            throw new RuntimeException("Invalid CREPUS_BIN: binary name must be 'crepus' or 'crepus.exe', got '$basename'");
+        }
+
+        $isAbsolute = str_starts_with($bin, '/') || $isWindowsPath;
+        if ($bin !== $basename && !$isAbsolute) {
+            throw new RuntimeException('Invalid CREPUS_BIN: must be an absolute path or a simple binary name');
+        }
+
         return $bin;
     }
 
@@ -63,15 +75,24 @@ final class CrepuscularityPlugin
             }
             return json_decode($stdout, true, 512, JSON_THROW_ON_ERROR);
         }
-        $cmd = escapeshellcmd($bin) . ' native ir ' . escapeshellarg($realPath);
-        // ponytail: path validated below for context path, bare path goes via escapeshellarg
-        $out = [];
-        $code = 0;
-        exec($cmd, $out, $code);
-        if ($code !== 0) {
+        // ponytail: path validated below for context path, bare path goes via arguments array
+        $descriptor = [
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $proc = proc_open([$bin, 'native', 'ir', $realPath], $descriptor, $pipes);
+        if (!is_resource($proc)) {
             throw new RuntimeException('crepus native ir failed');
         }
-        return json_decode(implode("\n", $out), true, 512, JSON_THROW_ON_ERROR);
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        $code = proc_close($proc);
+        if ($code !== 0) {
+            throw new RuntimeException(trim($stderr) ?: 'crepus native ir failed');
+        }
+        return json_decode($stdout, true, 512, JSON_THROW_ON_ERROR);
     }
 
     public static function renderHtml(string $path, ?array $context = null): string

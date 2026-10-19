@@ -86,9 +86,7 @@ impl Rgb565Buffer {
 
     pub fn clear(&mut self, color: Color) {
         let v = color.to_rgb565().0;
-        for p in &mut self.pixels {
-            *p = v;
-        }
+        self.pixels.fill(v);
     }
 }
 
@@ -106,9 +104,7 @@ impl Rgb888Buffer {
 
     pub fn clear(&mut self, color: Color) {
         let v = color.to_rgb888();
-        for p in &mut self.pixels {
-            *p = v;
-        }
+        self.pixels.fill(v);
     }
 }
 

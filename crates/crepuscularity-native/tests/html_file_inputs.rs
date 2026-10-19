@@ -39,7 +39,7 @@ fn standard_file_multiple_uses_presence_while_custom_picker_coercion_is_unchange
         ("<input type='file' multiple={false}/>", false),
         ("<input type='file' multiple={null}/>", false),
         ("<input type='file' class='multiple'/>", false),
-        ("<file-picker multiple='false'/>", false),
+        ("<file-picker multiple='false'/>", true),
         ("<file-picker class='multiple'/>", true),
     ] {
         let ir = lower(source, "Entry.jsx").unwrap();

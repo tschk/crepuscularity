@@ -1,0 +1,265 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "stack",
+      "axis": "column",
+      "spacing": 8.0,
+      "style": {
+        "classes": [
+          "flex",
+          "flex-col",
+          "gap-2",
+          "w-80"
+        ],
+        "width": 320.0,
+        "flexDirection": "column"
+      },
+      "children": [
+        {
+          "kind": "stack",
+          "axis": "row",
+          "alignItems": "center",
+          "justifyContent": "between",
+          "style": {
+            "classes": [
+              "flex",
+              "items-center",
+              "justify-between"
+            ]
+          },
+          "children": [
+            {
+              "kind": "badge",
+              "label": "Online",
+              "tone": "success"
+            },
+            {
+              "kind": "button",
+              "label": "Apply",
+              "onClick": "apply"
+            }
+          ]
+        },
+        {
+          "kind": "toggle",
+          "label": "Enabled",
+          "bind": "enabled",
+          "checked": false,
+          "onChange": "enabled_changed"
+        },
+        {
+          "kind": "checkbox",
+          "label": "Remember",
+          "bind": "remember",
+          "checked": false,
+          "onChange": "remember_changed"
+        },
+        {
+          "kind": "slider",
+          "label": "Volume",
+          "bind": "volume",
+          "value": 30.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 10.0,
+          "onChange": "volume_changed",
+          "style": {
+            "classes": [
+              "w-56"
+            ],
+            "width": 224.0
+          }
+        },
+        {
+          "kind": "picker",
+          "bind": "mode",
+          "options": [
+            {
+              "value": "compact",
+              "label": "Compact"
+            },
+            {
+              "value": "expanded",
+              "label": "Expanded"
+            }
+          ],
+          "onChange": "mode_changed",
+          "style": {
+            "classes": [
+              "w-40"
+            ],
+            "width": 160.0
+          }
+        },
+        {
+          "kind": "tabs",
+          "bind": "tab",
+          "tabs": [
+            {
+              "value": "overview",
+              "label": "Overview",
+              "children": [
+                {
+                  "kind": "stack",
+                  "axis": "column",
+                  "children": [
+                    {
+                      "kind": "text",
+                      "content": "Overview content"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "details",
+              "label": "Details",
+              "children": [
+                {
+                  "kind": "stack",
+                  "axis": "column",
+                  "children": [
+                    {
+                      "kind": "text",
+                      "content": "Details content"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "onChange": "tab_changed",
+          "style": {
+            "classes": [
+              "w-64"
+            ],
+            "width": 256.0
+          }
+        },
+        {
+          "kind": "progress",
+          "label": "Sync",
+          "value": 60.0,
+          "max": 100.0
+        },
+        {
+          "kind": "meter",
+          "label": "Storage",
+          "value": 40.0,
+          "min": 10.0,
+          "max": 70.0
+        },
+        {
+          "kind": "divider",
+          "axis": "row",
+          "style": {
+            "classes": [
+              "flex-row"
+            ],
+            "flexDirection": "row"
+          }
+        },
+        {
+          "kind": "spacer",
+          "size": 6.0
+        },
+        {
+          "kind": "list",
+          "ordered": false,
+          "children": [
+            {
+              "kind": "listItem",
+              "children": [
+                {
+                  "kind": "text",
+                  "content": "First item"
+                }
+              ]
+            },
+            {
+              "kind": "listItem",
+              "children": [
+                {
+                  "kind": "text",
+                  "content": "Second item"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "ordered": true,
+          "children": [
+            {
+              "kind": "listItem",
+              "children": [
+                {
+                  "kind": "text",
+                  "content": "Ordered item"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "link",
+          "href": "https://example.com/help",
+          "target": "_blank",
+          "rel": "noopener",
+          "children": [
+            {
+              "kind": "text",
+              "content": "Help"
+            }
+          ]
+        },
+        {
+          "kind": "image",
+          "src": "preview",
+          "alt": "Preview",
+          "style": {
+            "classes": [
+              "object-cover",
+              "w-16",
+              "h-8"
+            ],
+            "width": 64.0,
+            "height": 32.0,
+            "objectFit": "cover"
+          }
+        },
+        {
+          "kind": "scroll",
+          "axis": "column",
+          "style": {
+            "classes": [
+              "overflow-y-auto",
+              "h-16"
+            ],
+            "height": 64.0
+          },
+          "children": [
+            {
+              "kind": "stack",
+              "axis": "column",
+              "children": [
+                {
+                  "kind": "stack",
+                  "axis": "column",
+                  "children": [
+                    {
+                      "kind": "text",
+                      "content": "Scrollable content"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

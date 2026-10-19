@@ -304,6 +304,13 @@ fn style(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedStyle, CrepusErr
             classes.push(ctx.interpolate(&cc.class)?);
         }
     }
+    for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                classes.extend(value_to_str(&value).split_whitespace().map(str::to_string));
+            }
+        }
+    }
     Ok(style_from_classes_with_context(&classes, Some(ctx)))
 }
 
@@ -348,4 +355,46 @@ fn render_text_inline(parts: &[TextPart], ctx: &TemplateContext) -> Result<Strin
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod binding_origin_tests {
+    use super::*;
+
+    fn element(source: &str) -> Element {
+        let nodes =
+            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.ng")))
+                .unwrap();
+        let Node::Element(el) = nodes.into_iter().next().unwrap() else {
+            panic!("element expected")
+        };
+        el
+    }
+
+    #[test]
+    fn attribute_class_is_literal_and_null_is_absent() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("classes", "bg-red-500 {missing}");
+        let attr = element("<div [attr.CLASS]=\"classes\"></div>");
+        let expected = style_from_classes_with_context(&["bg-red-500".into()], Some(&ctx));
+        assert_eq!(style(&attr, &ctx).unwrap().bg, expected.bg);
+        assert_eq!(
+            style(&element("<div [attr.CLASS]=\"null\"></div>"), &ctx)
+                .unwrap()
+                .bg,
+            None
+        );
+    }
+
+    #[test]
+    fn malformed_attribute_class_expression_propagates() {
+        let mut el = element("<div></div>");
+        el.bindings.push(Binding {
+            origin: BindingOrigin::Attribute,
+            prop: "class".into(),
+            value: "true foo".into(),
+        });
+        assert!(crepuscularity_core::eval::eval_expr("true foo", &TemplateContext::new()).is_err());
+        assert!(style(&el, &TemplateContext::new()).is_err());
+    }
 }
