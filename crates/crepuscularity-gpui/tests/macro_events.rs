@@ -870,6 +870,130 @@ fn state_style_builders_do_not_shadow_caller_s_variables() {
     let _ = view! { "div hover:bg-{__s} class={classes} hover:text-{__s}" };
 }
 
+#[test]
+fn conditional_state_classes_merge_with_static_states_and_evaluate_once() {
+    let mut checks = 0;
+    let mut condition = || {
+        checks += 1;
+        true
+    };
+    let _ = view! { "div hover:p-2 class:hover:bg-red-500={condition()} class:hover:text-white={false} class:focus:p-4={true} class:active:bg-blue-500={true}" };
+    assert_eq!(checks, 1);
+}
+
+#[test]
+fn generated_focus_styles_construct_stateful_elements_for_keyboard_focus() {
+    let actual = view! { "div focus:bg-red-500" };
+    assert!(gpui::Element::id(&actual).is_some());
+    let enabled = true;
+    let actual = view! { "div class:focus:p-2={enabled}" };
+    assert!(gpui::Element::id(&actual).is_some());
+    let classes = "focus:bg-blue-500";
+    let actual = view! { "div class={classes}" };
+    assert!(gpui::Element::id(&actual).is_some());
+    let classes = "p-2";
+    let _ = view! { "div class={classes}" };
+}
+
+#[gpui::test]
+fn generated_focus_styles_navigate_and_skip_disabled_conditions(cx: &mut gpui::TestAppContext) {
+    struct FocusView;
+    impl gpui::Render for FocusView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let disabled = false;
+            let classes = "focus:bg-blue-500";
+            view! {r#"div flex flex-col
+  button w-[100px] h-[40px] focus:bg-red-500
+  button w-[100px] h-[40px] class:focus:bg-green-500={disabled}
+  button w-[100px] h-[40px] class={classes}
+"#}
+        }
+    }
+    let (_, cx) = cx.add_window_view(|_, _| FocusView);
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    let first = cx.update(|window, app| window.focused(app).unwrap());
+    cx.update(|window, app| window.focus_next(app));
+    let next = cx.update(|window, app| window.focused(app).unwrap());
+    assert_ne!(first, next);
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(90.0)),
+        gpui::Modifiers::default(),
+    );
+    assert_eq!(cx.update(|window, app| window.focused(app).unwrap()), next);
+    cx.update(|window, app| window.focus_prev(app));
+    assert_eq!(cx.update(|window, app| window.focused(app).unwrap()), first);
+}
+
+#[cfg(target_os = "macos")]
+static METAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_focus_colors_paint_and_skip_disabled_controls() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::{AppContext, InputEvent};
+    struct FocusPaintView;
+    impl gpui::Render for FocusPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let enabled = true;
+            let disabled = false;
+            let classes = "focus:bg-[#0000ff]";
+            view! {r#"div flex flex-col bg-white
+  button w-[100px] h-[20px] focus:bg-[#ff0000]
+  button w-[100px] h-[20px] class:focus:bg-[#00ff00]={enabled}
+  button w-[100px] h-[20px] class:focus:bg-black={disabled}
+  button w-[100px] h-[20px] class={classes}
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(120.0), gpui::px(100.0)), |_, app| {
+            app.new(|_| FocusPaintView)
+        })
+        .unwrap()
+        .into();
+    let pixels = |cx: &mut gpui::HeadlessAppContext| {
+        cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+            .unwrap();
+        let image = cx.capture_screenshot(window).unwrap();
+        let scale = image.width() / 120;
+        [10, 30, 50, 70].map(|y| image.get_pixel(10 * scale, y * scale).0)
+    };
+    let white = [255, 255, 255, 255];
+    assert_eq!(pixels(&mut cx), [white; 4]);
+    cx.update_window(window, |_, window, app| {
+        window.dispatch_event(
+            gpui::MouseDownEvent {
+                position: gpui::point(gpui::px(10.0), gpui::px(10.0)),
+                button: gpui::MouseButton::Left,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            app,
+        );
+    })
+    .unwrap();
+    assert_eq!(pixels(&mut cx), [[255, 0, 0, 255], white, white, white]);
+    cx.update_window(window, |_, window, app| window.focus_next(app))
+        .unwrap();
+    assert_eq!(pixels(&mut cx), [white, [0, 255, 0, 255], white, white]);
+    cx.update_window(window, |_, window, app| window.focus_next(app))
+        .unwrap();
+    assert_eq!(pixels(&mut cx), [white, white, white, [0, 0, 255, 255]]);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "requires a Metal device"]
