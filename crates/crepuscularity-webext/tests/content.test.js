@@ -117,6 +117,66 @@ test("browser program member expressions retain literal property names and disti
   expect(messages.find((value) => Object.hasOwn(value, "member"))).toEqual({ member: 7, dotted: 9 });
 });
 
+test("retries existing code blocks after character, replacement, and nested-element updates", async () => {
+  document.body.innerHTML = "<pre><code>&lt;ai-anywhere incomplete</code></pre>";
+  const calls = [];
+  await start({ extract_widgets: (text) => { calls.push(text); return []; } });
+  expect(calls).toHaveLength(1);
+  const code = document.querySelector("code");
+  code.firstChild.data = "<ai-anywhere character></ai-anywhere>";
+  await flush();
+  expect(calls.at(-1)).toContain("character");
+  code.textContent = "<ai-anywhere replacement></ai-anywhere>";
+  await flush();
+  expect(calls.at(-1)).toContain("replacement");
+  const span = document.createElement("span");
+  span.textContent = "nested";
+  code.append(span);
+  await flush();
+  expect(calls.at(-1)).toContain("nested");
+  const pre = document.createElement("pre");
+  pre.textContent = "<ai-anywhere new></ai-anywhere>";
+  document.body.append(pre);
+  await flush();
+  expect(calls.at(-1)).toContain("new");
+});
+
+test("removed pending code blocks are skipped and can render when reinserted", async () => {
+  let extracts = 0;
+  await start({
+    extract_widgets: () => { extracts++; return [{}]; },
+    render_anywhere_parts: () => ({ html: "<p>Mounted</p>" }),
+  });
+  const pre = document.createElement("pre");
+  pre.textContent = "<ai-anywhere complete></ai-anywhere>";
+  document.body.append(pre);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  pre.remove();
+  await flush();
+  expect(extracts).toBe(0);
+  document.body.append(pre);
+  await flush();
+  expect(extracts).toBe(1);
+  expect(document.querySelectorAll(".aa-mount")).toHaveLength(1);
+});
+
+test("already mounted code blocks are not rendered again when reinserted and edited", async () => {
+  document.body.innerHTML = "<pre><code>&lt;ai-anywhere complete&gt;&lt;/ai-anywhere&gt;</code></pre>";
+  const pre = document.querySelector("pre");
+  let renders = 0;
+  await start({
+    extract_widgets: () => [{}],
+    render_anywhere_parts: () => { renders++; return { html: "<p>Mounted</p>" }; },
+  });
+  expect(renders).toBe(1);
+  expect(document.querySelectorAll(".aa-mount")).toHaveLength(1);
+  document.body.append(pre);
+  pre.querySelector("code").textContent = "<ai-anywhere edited></ai-anywhere>";
+  await flush();
+  expect(renders).toBe(1);
+});
+
+
 test("iframe resize uses one weakly owned listener across removal and remount", async () => {
   const addListener = spyOn(window, "addEventListener");
   // Happy DOM cannot navigate Blob URLs; use the existing srcdoc fallback here.

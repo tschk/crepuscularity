@@ -444,7 +444,7 @@
   }
 
   function enhanceCodeBlock(pre) {
-    if (!(pre instanceof HTMLElement) || mounted.has(pre)) {
+    if (!(pre instanceof HTMLElement) || !pre.isConnected || mounted.has(pre)) {
       return;
     }
 
@@ -457,13 +457,16 @@
   }
 
   function queueNode(node) {
-    if (!(node instanceof HTMLElement)) {
+    const element = node instanceof HTMLElement ? node : node.parentElement;
+    if (!(element instanceof HTMLElement)) {
       return;
     }
-    if (node.matches("pre") && hasAnywhereContent(node)) {
-      pending.add(node);
+    const containingPre = element.closest("pre");
+    if (containingPre) {
+      if (hasAnywhereContent(containingPre)) pending.add(containingPre);
       return;
     }
+    if (!(node instanceof HTMLElement)) return;
     node.querySelectorAll("pre").forEach((pre) => {
       if (pre instanceof HTMLElement && hasAnywhereContent(pre)) {
         pending.add(pre);
@@ -495,6 +498,7 @@
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
+      if (mutation.type === "characterData") queueNode(mutation.target);
       mutation.addedNodes.forEach((node) => queueNode(node));
       mutation.removedNodes.forEach(disposeRemovedFrameDocuments);
     }
@@ -502,7 +506,7 @@
       scheduleFlush();
     }
   });
-  observer.observe(document.documentElement, { subtree: true, childList: true });
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
 
   if (typeof wasmModule.content_main === "function") {
     wasmModule.content_main();
