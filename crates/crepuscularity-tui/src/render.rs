@@ -1386,15 +1386,23 @@ fn build_if(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let body = if eval_condition(ctx, &block.condition) {
+    let condition = match ctx.eval_condition(&block.condition) {
+        Ok(condition) => condition,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
+    let body = if condition {
         &block.then_children
     } else if let Some(ref else_children) = block.else_children {
         else_children
     } else {
         return vec![];
     };
-    build_children(body, ctx, parent_dir, inherited, renderer)
+    build_children(body, ctx, parent_dir, inherited, renderer, slot)
 }
 
 fn build_for(
@@ -1403,54 +1411,70 @@ fn build_for(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let items = ctx.get_list_ref(&block.iterator);
     let mut out = Vec::new();
+    let result = for_each_loop_context(block, ctx, |child_ctx| {
+        out.extend(build_children(
+            &block.body,
+            child_ctx,
+            parent_dir,
+            inherited,
+            renderer,
+            slot,
+        ));
+        renderer.build_error.is_none()
+    });
+    if let Err(error) = result {
+        renderer.build_error.get_or_insert(error);
+    }
+    out
+}
+
+fn for_each_loop_context(
+    block: &ForBlock,
+    ctx: &TemplateContext,
+    mut visit: impl FnMut(&TemplateContext) -> bool,
+) -> Result<(), CrepusError> {
+    let TemplateValue::List(items) = eval_expr(&block.iterator, ctx)? else {
+        return Ok(());
+    };
     let mut child_ctx = ctx.clone();
     let pattern = block.pattern.trim();
     let has_pattern = !pattern.is_empty();
-    // Keys written by the previous iteration, so the scope can be restored in
-    // time proportional to the item instead of re-cloning the whole context
-    // (which holds the item list itself) on every pass.
-    let mut written: Vec<String> = Vec::new();
+    let mut overwritten = Vec::new();
     for item_ctx in items {
-        let item_str = if has_pattern {
-            item_ctx.get_str("value")
-        } else {
-            String::new()
-        };
-        // Restore child_ctx
-        for key in written.drain(..) {
-            match ctx.vars.get(&key) {
-                Some(v) => {
-                    child_ctx.vars.insert(key, v.clone());
+        // Merge all fields from the item context into the child context.
+        for (k, v) in &item_ctx.vars {
+            overwritten.push((k.clone(), child_ctx.vars.insert(k.clone(), v.clone())));
+        }
+        if has_pattern {
+            let value = item_ctx
+                .get("value")
+                .cloned()
+                .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()));
+            overwritten.push((
+                pattern.to_string(),
+                child_ctx.vars.insert(pattern.to_string(), value),
+            ));
+        }
+        let keep_going = visit(&child_ctx);
+        // Move parent values back; reverse also restores duplicate field/alias writes.
+        for (key, value) in overwritten.drain(..).rev() {
+            match value {
+                Some(value) => {
+                    child_ctx.vars.insert(key, value);
                 }
                 None => {
                     child_ctx.vars.remove(&key);
                 }
             }
         }
-        // Merge all fields from the item context into the child context.
-        for (k, v) in &item_ctx.vars {
-            child_ctx.vars.insert(k.clone(), v.clone());
-            written.push(k.clone());
+        if !keep_going {
+            break;
         }
-        // Bind the loop pattern variable to the item's "value" field if present.
-        if has_pattern && !item_str.is_empty() {
-            child_ctx
-                .vars
-                .insert(pattern.to_string(), TemplateValue::Str(item_str));
-            written.push(pattern.to_string());
-        }
-        out.extend(build_children(
-            &block.body,
-            &child_ctx,
-            parent_dir,
-            inherited,
-            renderer,
-        ));
     }
-    out
+    Ok(())
 }
 
 fn build_match(
@@ -1459,22 +1483,32 @@ fn build_match(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let val = value_to_str(&eval_value(&block.expr, ctx));
+    let val = match eval_expr(&block.expr, ctx) {
+        Ok(value) => value_to_str(&value),
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
     for arm in &block.arms {
-        let pattern = arm.pattern.trim();
-        let matched = if pattern == "_" {
-            true
-        } else if pattern.starts_with('"') && pattern.ends_with('"') {
-            pattern[1..pattern.len() - 1] == *val
-        } else {
-            pattern == val
-        };
-        if matched {
-            return build_children(&arm.body, ctx, parent_dir, inherited, renderer);
+        if matches_pattern(&arm.pattern, &val) {
+            return build_children(&arm.body, ctx, parent_dir, inherited, renderer, slot);
         }
     }
     vec![]
+}
+
+fn matches_pattern(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern == "_" {
+        true
+    } else if let Some(literal) = pattern.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        crepuscularity_core::parser::unescape_crepus_text_literal(literal) == value
+    } else {
+        pattern == value
+    }
 }
 
 fn prepare_include_context(
@@ -2086,6 +2120,32 @@ mod slot_rotate_tests {
                 "solo"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod loop_visit_tests {
+    use super::*;
+
+    #[test]
+    fn a_stopped_loop_does_not_visit_remaining_rows() {
+        let nodes = parse_template("for item in items\n  span \"{item}\"").unwrap();
+        let Node::For(block) = &nodes[0] else {
+            panic!("expected loop");
+        };
+        let mut ctx = TemplateContext::new();
+        let mut row = TemplateContext::new();
+        row.set("value", 1);
+        ctx.set("items", TemplateValue::List(vec![row; 3]));
+        let mut visits = 0;
+        for_each_loop_context(block, &ctx, |child| {
+            visits += 1;
+            assert_eq!(child.get_str("item"), "1");
+            false
+        })
+        .unwrap();
+        assert_eq!(visits, 1);
+        assert!(!ctx.vars.contains_key("item"));
     }
 }
 
