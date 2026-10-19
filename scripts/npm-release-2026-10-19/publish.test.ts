@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ordered, status, validatePacked, assertDependencies } from './publish';
+import { ordered, status, validatePacked, assertDependencies, waitForAvailability } from './publish';
 const registry = {name:'@test/a',versions:{'1.0.0':{name:'@test/a',version:'1.0.0'}},'dist-tags':{latest:'1.0.0'}};
 const pkg=(name:string,dependencies:Record<string,string>={})=>({entry:{name,observedLatest:'1.0.0'},manifest:{name,version:'1.1.0',dependencies},registry});
 describe('release decisions',()=>{
@@ -38,4 +38,18 @@ test('required peer dependencies need a published or prepared version; optional 
  const calls:string[]=[];
  await assertDependencies(consumer,new Map(),async name=>{calls.push(name);return ['1.1.0'];});
  expect(calls).toEqual(['core']);
+});
+
+test('waits for npm processing without requiring a second upload',async()=>{
+ let probes=0,sleeps=0;
+ await waitForAvailability(async()=>++probes===3,4,0,async()=>{sleeps++;});
+ expect(probes).toBe(3);expect(sleeps).toBe(2);
+});
+test('bounded availability timeout preserves accepted-upload guidance',async()=>{
+ await expect(waitForAvailability(async()=>false,2,0,async()=>{})).rejects.toThrow('do not bump or republish');
+});
+test('permanent availability errors stop immediately',async()=>{
+ let probes=0;
+ await expect(waitForAvailability(async()=>{probes++;throw new Error('unexpected artifact origin');},4,0,async()=>{})).rejects.toThrow('origin');
+ expect(probes).toBe(1);
 });

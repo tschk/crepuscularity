@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -17,7 +17,7 @@ function run(args: string[], cwd = base, inherit = false): string {
   return inherit ? '' : proc.stdout.toString().trim();
 }
 async function metadata(name: string): Promise<Registry> {
-  const res = await fetch(`${registryURL}/${encodeURIComponent(name)}`, {signal:AbortSignal.timeout(30000)});
+  const res = await fetch(`${registryURL}/${encodeURIComponent(name)}`, {cache:'no-store',headers:{'Cache-Control':'no-cache'},signal:AbortSignal.timeout(30000)});
   if (!res.ok) throw new Error(`${name}: registry HTTP ${res.status}; cannot treat this as an unpublished version.`);
   return await res.json() as Registry;
 }
@@ -74,11 +74,39 @@ function inspectArtifact(file:string, expected:Manifest): Manifest {
   validatePacked(packed);
   return packed;
 }
-async function checkPublished(info:Registry, version:string) {
-  const url=info.versions[version]?.dist?.tarball;
-  if (!url || new URL(url).origin!==registryURL) throw new Error(`${info.name}@${version}: missing/unexpected artifact URL`);
-  const res=await fetch(url,{method:'HEAD',signal:AbortSignal.timeout(30000)});
-  if (!res.ok) throw new Error(`${info.name}@${version}: registered tarball HTTP ${res.status}; bump the version after investigation, do not overwrite it.`);
+export async function waitForAvailability(probe:()=>Promise<boolean>, attempts=37, delay=5000, sleep:(ms:number)=>Promise<unknown>=Bun.sleep):Promise<void> {
+  for(let i=0;i<attempts;i++) {
+    if(await probe())return;
+    if(i+1<attempts)await sleep(delay);
+  }
+  throw new Error('npm has not exposed the package artifact yet. An accepted upload may still be processing; do not bump or republish it. Rerun this helper later to verify the saved receipt.');
+}
+async function verifyPublished(name:string,version:string) {
+  console.log(`Checking registry availability: ${name}@${version}`);
+  await waitForAvailability(async()=>{
+    const result=await fetch(`${registryURL}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,{cache:'no-store',headers:{'Cache-Control':'no-cache'},signal:AbortSignal.timeout(30000)});
+    if(result.status===404||result.status===429||result.status>=500)return false;
+    if(!result.ok)throw new Error(`${name}@${version}: metadata HTTP ${result.status}`);
+    const published=await result.json() as Manifest & {dist?:{tarball?:string}};
+    if(published.name!==name||published.version!==version)throw new Error(`${name}@${version}: registry identity mismatch`);
+    const url=published.dist?.tarball;
+    if(!url)return false;
+    if(new URL(url).origin!==registryURL)throw new Error(`${name}@${version}: unexpected artifact origin`);
+    const response=await fetch(url,{method:'HEAD',cache:'no-store',signal:AbortSignal.timeout(30000)});
+    if(response.ok)return true;
+    if(response.status===404||response.status===429||response.status>=500)return false;
+    throw new Error(`${name}@${version}: artifact HTTP ${response.status}`);
+  });
+}
+type Receipt={state:'accepted'|'verified';sha512:string;observedAt:string;source?:string};
+const receiptPath=join(base,'publish-receipts.json');
+function receipts():Record<string,Receipt> {
+  return existsSync(receiptPath)?JSON.parse(readFileSync(receiptPath,'utf8')):{};
+}
+function saveReceipt(key:string,receipt:Receipt) {
+  const state=receipts();state[key]=receipt;
+  writeFileSync(receiptPath+'.tmp',JSON.stringify(state,null,2)+'\n');
+  renameSync(receiptPath+'.tmp',receiptPath);
 }
 function cleanSource(dir:string):string {
   const root=run(['git','rev-parse','--show-toplevel'],dir);
@@ -101,19 +129,31 @@ function checkRepo(root:string, projects:string, checked:Set<string>) {
 async function main() {
   const args=process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('bun publish.ts [--login] [--prepare | --publish] [--only NAME_SUBSTRING] [--projects DIR]\nDefault: live read-only public-package inventory. --prepare checks/packs; --publish also uploads.\n--login uses npm browser authentication; uploads use Bun. Existing versions are skipped.');return;
+    console.log('bun publish.ts [--login] [--prepare | --publish | --verify] [--only NAME_SUBSTRING] [--projects DIR]\nDefault: live read-only public-package inventory. --prepare checks/packs; --publish also uploads.\n--login uses npm browser authentication; uploads use Bun. Existing versions are skipped.');return;
   }
-  let publish=false,prepare=false,login=false,only='',projects=join(homedir(),'projects');
+  let publish=false,prepare=false,verify=false,login=false,only='',projects=join(homedir(),'projects');
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--publish') publish=true;
     else if(a==='--prepare') prepare=true;
+    else if(a==='--verify') verify=true;
     else if(a==='--login') login=true;
     else if(a==='--only' || a==='--projects') { const value=args[++i];if(!value || value.startsWith('--'))throw new Error(`${a} needs a value`);if(a==='--only')only=value;else projects=resolve(value); }
     else throw new Error(`Unknown argument ${a}`);
   }
-  if(publish&&prepare)throw new Error('Choose --prepare or --publish');
+  if([publish,prepare,verify].filter(Boolean).length>1)throw new Error('Choose --prepare, --publish or --verify');
   const config=JSON.parse(readFileSync(join(base,'release.json'),'utf8')) as {owner:string;packages:Entry[]};
+  if(verify) {
+    const saved=Object.entries(receipts()).filter(([key])=>key.includes(only));
+    if(!saved.length)throw new Error('No saved upload receipts match; --verify never uploads.');
+    for(const [key,receipt]of saved) {
+      const at=key.lastIndexOf('@');
+      await verifyPublished(key.slice(0,at),key.slice(at+1));
+      saveReceipt(key,{...receipt,state:'verified',observedAt:new Date().toISOString()});
+      console.log(`VERIFIED ${key}`);
+    }
+    return;
+  }
   if(login) run(['npm','login','--registry',registryURL,'--auth-type=web'],base,true);
   if(publish) {
     const who=run(['bun','pm','whoami','--registry',registryURL]);
@@ -132,13 +172,14 @@ async function main() {
       else if(entry.artifact) manifest={name:entry.name,version:entry.version!};
       if(manifest && manifest.name!==entry.name)throw new Error(`Local package identity changed at ${dir}`);
       const state=manifest?.private ? 'PRIVATE' : status(manifest?.version,info);
-      console.log(`${state.padEnd(16)} ${entry.name}  npm=${info['dist-tags'].latest ?? '(none)'} local=${manifest?.version ?? '(none)'}`);
-      if(state==='CURRENT') {await checkPublished(info,manifest!.version);if(entry.releaseNote)console.log(`  NOTE ${entry.releaseNote}`);}
+      const display=state==='PENDING'&&receipts()[`${entry.name}@${manifest?.version}`]?'ACCEPTED/PENDING':state;
+      console.log(`${display.padEnd(16)} ${entry.name}  npm=${info['dist-tags'].latest ?? '(none)'} local=${manifest?.version ?? '(none)'}`);
+      if(state==='CURRENT') {await verifyPublished(entry.name,manifest!.version);if(entry.releaseNote)console.log(`  NOTE ${entry.releaseNote}`);}
       return state==='PENDING' ? {entry,manifest:manifest!,dir,registry:info} : null;
     }));
     for(const row of rows)if(row)candidates.push(row);
   }
-  console.log(`\n${candidates.length} unpublished local versions. A version difference alone is not a passing release check.`);
+  console.log(`\n${candidates.length} local versions awaiting upload or registry availability. A version difference alone is not a passing release check.`);
   if(!publish&&!prepare)return;
   const checked=new Set<string>(), ready:Candidate[]=[], blocked:string[]=[];
   const packDir=join(base,'prepared');mkdirSync(packDir,{recursive:true});
@@ -174,11 +215,19 @@ async function main() {
     catch(error){readyMap.delete(p.manifest.name);blocked.push(p.manifest.name);console.error(`BLOCKED ${p.manifest.name}: ${(error as Error).message}`);}
   }
   if(publish)for(const p of safe) {
+    const key=`${p.manifest.name}@${p.manifest.version}`;
+    const digest=createHash('sha512').update(readFileSync(p.artifact!)).digest('hex');
+    const receipt=receipts()[key];
+    if(receipt && receipt.sha512!==digest)throw new Error(`${key}: previously accepted artifact has a different checksum; investigate before publishing`);
     const fresh=await metadata(p.manifest.name);
-    if(Object.hasOwn(fresh.versions,p.manifest.version)){await checkPublished(fresh,p.manifest.version);console.log(`Already published: ${p.manifest.name}`);continue;}
-    const tag=p.manifest.version.includes('-')?'next':'latest';
-    run(['bun','publish',p.artifact!,'--access','public','--registry',registryURL,'--tag',tag,'--auth-type','web'],base,true);
-    const actual=await metadata(p.manifest.name);await checkPublished(actual,p.manifest.version);
+    if(!receipt&&!Object.hasOwn(fresh.versions,p.manifest.version)) {
+      const tag=p.manifest.version.includes('-')?'next':'latest';
+      run(['bun','publish',p.artifact!,'--access','public','--registry',registryURL,'--tag',tag,'--auth-type','web'],base,true);
+      // Persist acceptance before polling: retry must never resubmit a processing upload.
+      saveReceipt(key,{state:'accepted',sha512:digest,observedAt:new Date().toISOString()});
+    } else console.log(`Upload already accepted/registered: ${key}; verifying without resubmitting`);
+    await verifyPublished(p.manifest.name,p.manifest.version);
+    saveReceipt(key,{state:'verified',sha512:digest,observedAt:new Date().toISOString()});
     console.log(`VERIFIED ${p.manifest.name}@${p.manifest.version}`);
   }
   console.log(`\n${publish?'Published/verified':'Prepared'} ${safe.length}; blocked ${blocked.length}. No source files were rewritten and no versions were bumped.`);

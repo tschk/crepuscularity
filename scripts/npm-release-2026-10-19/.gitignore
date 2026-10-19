@@ -1,2 +1,3 @@
 *.tgz
 prepared/
+publish-receipts.json*

@@ -6,7 +6,7 @@ Run from this folder:
 bun publish.ts --login --publish
 ```
 
-`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun handles package checks, packing and publishing. Existing registry versions are skipped and their tarball availability is checked. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
+`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun handles package checks, packing and publishing. Existing registry versions are skipped and their tarball availability is checked. Accepted uploads are saved before verification; reruns do not submit them again. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
 
 To inspect the live plan without logging in, building or publishing:
 
@@ -20,6 +20,14 @@ To publish only the prepared parser:
 bun publish.ts --login --publish --only crepuscularity-wasm
 ```
 
+Verify accepted uploads without logging in, building, or publishing:
+
+```sh
+bun publish.ts --verify --only crepuscularity-wasm
+```
+
+The check polls version metadata and tarball availability for about three minutes. A timeout preserves the acceptance receipt and does not trigger another upload or a version bump.
+
 `--prepare` runs the same local checks/packing and publish dry runs without uploading. `--only` filters package names; required dependencies must still resolve from npm or another prepared package. `--projects /path/to/projects` changes the local project directory.
 
 ## What is included
@@ -32,7 +40,7 @@ bun publish.ts --login --publish --only crepuscularity-wasm
 
 This is a live check of 31 publicly listed packages maintained by npm user `undivisible`, not an authenticated inventory of private packages. Versions and maintainers are rechecked on every run. Matching version numbers mean that version is already immutable on npm, not that every local source change has shipped. Required packed dependency ranges are checked even when `--only` excludes their packages. Prereleases use the `next` tag; stable versions use `latest`.
 
-No package has been uploaded by preparation or tests. npm currently returns 401 until authentication is refreshed.
+The human completed npm login and received a successful upload response for parser 0.1.4. Public availability is checked separately: accepted uploads can remain in npm processing. `publish-receipts.json` preserves acceptance so retries verify rather than resubmit. No other package upload is established by that result.
 
 ## Files and verification
 
