@@ -30,6 +30,170 @@ use crate::styler::{apply_class_with_ctx, parse_duration_ms, state_style_with_in
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
 
+#[derive(Default)]
+struct IncludeCache {
+    bundles: Vec<BundleCache>,
+    prepared: Option<Arc<PreparedIncludes>>,
+}
+
+type IncludeIdentity = (std::path::PathBuf, std::path::PathBuf);
+
+struct BundleCache {
+    virtual_files: Arc<std::collections::HashMap<String, String>>,
+    nodes: std::collections::HashMap<IncludeIdentity, Result<Arc<Vec<Node>>, String>>,
+    sources: std::collections::HashMap<std::path::PathBuf, Arc<str>>,
+    resolutions: std::collections::HashMap<
+        (Option<std::path::PathBuf>, String),
+        Result<std::path::PathBuf, String>,
+    >,
+    components: std::collections::HashMap<
+        std::path::PathBuf,
+        Result<Arc<crepuscularity_core::parser::ComponentFile>, String>,
+    >,
+}
+
+impl IncludeCache {
+    fn bundle(&mut self, ctx: &TemplateContext) -> &mut BundleCache {
+        let index = self
+            .bundles
+            .iter()
+            .position(|bundle| Arc::ptr_eq(&bundle.virtual_files, &ctx.virtual_files))
+            .unwrap_or_else(|| {
+                self.bundles.push(BundleCache {
+                    virtual_files: Arc::clone(&ctx.virtual_files),
+                    nodes: Default::default(),
+                    sources: Default::default(),
+                    resolutions: Default::default(),
+                    components: Default::default(),
+                });
+                self.bundles.len() - 1
+            });
+        &mut self.bundles[index]
+    }
+
+    fn resolve(
+        &mut self,
+        ctx: &TemplateContext,
+        literal: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        let key = (ctx.base_dir.clone(), literal.to_owned());
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.resolutions.get(&key))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).resolutions.get(&key) {
+            return result.clone();
+        }
+        let path = resolve_include_path(ctx.base_dir.as_deref(), literal)
+            .map_err(|error| error.to_string())?;
+        self.bundle(ctx).resolutions.insert(key, Ok(path.clone()));
+        Ok(path)
+    }
+
+    fn source(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<str>, String> {
+        if let Some(source) = self.bundle(ctx).sources.get(path) {
+            return Ok(Arc::clone(source));
+        }
+        let source: Arc<str> = lookup_virtual_file(ctx, path)
+            .map(Ok)
+            .unwrap_or_else(|| std::fs::read_to_string(path))
+            .map_err(|error| format!("include error: {:?}: {}", path, error))?
+            .into();
+        Ok(source)
+    }
+
+    #[cfg(test)]
+    fn nodes(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<Vec<Node>>, String> {
+        self.nodes_with_frontend(ctx, path, path)
+    }
+
+    fn nodes_with_frontend(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+        frontend: &std::path::Path,
+    ) -> Result<Arc<Vec<Node>>, String> {
+        let key = (path.to_path_buf(), frontend.to_path_buf());
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.nodes.get(&key))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).nodes.get(&key) {
+            return result.clone();
+        }
+        let source = self.source(ctx, path)?;
+        let nodes =
+            if crepuscularity_core::virtual_files::lookup_virtual_file_entry(ctx, path).is_some() {
+                // Virtual ASTs belong to this render's retained bundle snapshot.
+                crepuscularity_core::parse_template_with_path(&source, Some(frontend)).map(Arc::new)
+            } else {
+                crepuscularity_core::ast_cache::parse_content_with_path(&source, Some(frontend))
+            }
+            .map_err(|error| error.to_string())?;
+        self.bundle(ctx).sources.insert(path.to_path_buf(), source);
+        self.bundle(ctx).nodes.insert(key, Ok(Arc::clone(&nodes)));
+        Ok(nodes)
+    }
+
+    fn components(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<crepuscularity_core::parser::ComponentFile>, String> {
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.components.get(path))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).components.get(path) {
+            return result.clone();
+        }
+        let content = self.source(ctx, path)?;
+        let file = Arc::new(
+            crepuscularity_core::parser::parse_component_file(&content)
+                .map_err(|error| format!("component file parse error: {error}"))?,
+        );
+        self.bundle(ctx).sources.insert(path.to_path_buf(), content);
+        self.bundle(ctx)
+            .components
+            .insert(path.to_path_buf(), Ok(Arc::clone(&file)));
+        Ok(file)
+    }
+}
+
+pub(crate) fn render_nodes_prepared(
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    prepared: Arc<PreparedIncludes>,
+) -> AnyElement {
+    render_nodes_at_path(
+        nodes,
+        ctx,
+        "root",
+        None,
+        &mut IncludeCache {
+            prepared: Some(prepared),
+            ..Default::default()
+        },
+    )
+}
+
 fn eval_expr_value(expr: &str, ctx: &TemplateContext) -> TemplateValue {
     crepuscularity_core::eval::eval_expr(expr, ctx).unwrap_or(TemplateValue::Null)
 }
@@ -2192,6 +2356,165 @@ mod loop_expression_tests {
         );
         assert!(ctx.get("item").is_none());
         let _ = render_for(block, &ctx, "root", None, &mut IncludeCache::default());
+    }
+}
+
+#[cfg(test)]
+mod include_cache_tests {
+    use super::*;
+
+    fn element_id(nodes: &[Node]) -> Option<&str> {
+        match &nodes[0] {
+            Node::Element(element) => element.id.as_deref(),
+            _ => panic!("expected element"),
+        }
+    }
+
+    #[test]
+    fn shared_includes_render_distinct_evaluated_props() {
+        let mut ctx = TemplateContext::new();
+        Arc::make_mut(&mut ctx.virtual_files).extend([
+            ("child.crepus".into(), "div id={name}".into()),
+            ("named.crepus".into(), "--- Card\ndiv id={name}".into()),
+        ]);
+        let nodes = crepuscularity_core::parse_template(
+            "include child.crepus name=\"first\"\ninclude child.crepus name=\"second\"\ninclude named.crepus#Card name=\"third\"\ninclude named.crepus#Card name=\"fourth\"",
+        ).unwrap();
+        let mut cache = IncludeCache::default();
+        let mut elements = render_siblings_with_ctx(&nodes, &ctx, "root", None, &mut cache);
+        let ids: Vec<_> = elements
+            .iter_mut()
+            .map(|element| {
+                gpui::Element::id(element.downcast_mut::<gpui::Stateful<gpui::Div>>().unwrap())
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            ["first", "second", "third", "fourth"].map(|id| ElementId::Name(id.into()))
+        );
+        assert_eq!(cache.bundles.len(), 1);
+        assert_eq!(cache.bundles[0].nodes.len(), 1);
+        assert_eq!(cache.bundles[0].components.len(), 1);
+    }
+
+    #[test]
+    fn repeated_virtual_and_named_includes_share_parsed_snapshots() {
+        let mut ctx = TemplateContext::new();
+        Arc::make_mut(&mut ctx.virtual_files).extend([
+            ("child.svelte".into(), "<div id=\"first\" />".into()),
+            ("named.crepus".into(), "--- Card\ndiv #first".into()),
+        ]);
+        let path = std::path::Path::new("child.svelte");
+        let named_path = std::path::Path::new("named.crepus");
+        let mut cache = IncludeCache::default();
+        let one = cache.nodes(&ctx, path).unwrap();
+        let two = cache.nodes(&ctx, path).unwrap();
+        assert!(Arc::ptr_eq(&one, &two));
+        assert_eq!(element_id(&one), Some("first"));
+        let named_one = cache.components(&ctx, named_path).unwrap();
+        let named_two = cache.components(&ctx, named_path).unwrap();
+        assert!(Arc::ptr_eq(&named_one, &named_two));
+        assert!(std::ptr::eq(
+            &named_one.components["Card"].nodes,
+            &named_two.components["Card"].nodes
+        ));
+
+        // Slot contexts can supply another bundle for the same resolved path.
+        let mut slot_ctx = ctx.clone();
+        Arc::make_mut(&mut slot_ctx.virtual_files).extend([
+            ("child.svelte".into(), "<div id=\"other\" />".into()),
+            ("named.crepus".into(), "--- Card\ndiv #other".into()),
+        ]);
+        let other = cache.nodes(&slot_ctx, path).unwrap();
+        let named_other = cache.components(&slot_ctx, named_path).unwrap();
+        assert!(!Arc::ptr_eq(&one, &other));
+        assert_eq!(element_id(&other), Some("other"));
+        assert_eq!(
+            element_id(&named_other.components["Card"].nodes),
+            Some("other")
+        );
+        assert!(Arc::ptr_eq(&one, &cache.nodes(&ctx, path).unwrap()));
+        let mut next_render = IncludeCache::default();
+        assert!(!Arc::ptr_eq(&one, &next_render.nodes(&ctx, path).unwrap()));
+        assert!(!Arc::ptr_eq(
+            &named_one,
+            &next_render.components(&ctx, named_path).unwrap()
+        ));
+    }
+
+    #[test]
+    fn next_render_observes_file_and_virtual_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ordinary = dir.path().join("ordinary.crepus");
+        let named = dir.path().join("named.crepus");
+        std::fs::write(&ordinary, "div #first").unwrap();
+        std::fs::write(&named, "--- Card\ndiv #first").unwrap();
+        let mut ctx = TemplateContext::new();
+        let mut cache = IncludeCache::default();
+        let original = cache.nodes(&ctx, &ordinary).unwrap();
+        let original_named = cache.components(&ctx, &named).unwrap();
+        let modified = std::fs::metadata(&ordinary).unwrap().modified().unwrap();
+        // Reload must observe equal-length edits even when timestamps are restored.
+        std::fs::write(&ordinary, "div #later").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&ordinary)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        std::fs::write(&named, "--- Card\ndiv #later").unwrap();
+        assert!(Arc::ptr_eq(
+            &original,
+            &cache.nodes(&ctx, &ordinary).unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            &original_named,
+            &cache.components(&ctx, &named).unwrap()
+        ));
+        let mut next_render = IncludeCache::default();
+        assert_eq!(
+            element_id(&next_render.nodes(&ctx, &ordinary).unwrap()),
+            Some("later")
+        );
+        assert_eq!(
+            element_id(&next_render.components(&ctx, &named).unwrap().components["Card"].nodes),
+            Some("later")
+        );
+        Arc::make_mut(&mut ctx.virtual_files)
+            .insert("ordinary.crepus".into(), "div #virtual_one".into());
+        assert_eq!(
+            element_id(&next_render.nodes(&ctx, &ordinary).unwrap()),
+            Some("virtual_one")
+        );
+        Arc::make_mut(&mut ctx.virtual_files)
+            .insert("ordinary.crepus".into(), "div #virtual_two".into());
+        assert_eq!(
+            element_id(&IncludeCache::default().nodes(&ctx, &ordinary).unwrap()),
+            Some("virtual_two")
+        );
+    }
+
+    #[test]
+    fn failed_named_parses_do_not_poison_the_render_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("named.crepus");
+        let ctx = TemplateContext::new();
+        let mut cache = IncludeCache::default();
+        assert!(cache
+            .components(&ctx, &path)
+            .unwrap_err()
+            .starts_with("include error:"));
+        std::fs::write(&path, "--- Card\nif {").unwrap();
+        assert!(cache
+            .components(&ctx, &path)
+            .unwrap_err()
+            .starts_with("component file parse error:"));
+        std::fs::write(&path, "--- Card\ndiv #recovered").unwrap();
+        assert_eq!(
+            element_id(&cache.components(&ctx, &path).unwrap().components["Card"].nodes),
+            Some("recovered")
+        );
     }
 }
 
