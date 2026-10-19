@@ -454,3 +454,18 @@ fn trusted_event_modifier_is_preserved() {
     let nodes = parse("<button on:click|trusted={save} />");
     assert_eq!(el(&nodes[0]).event_handlers[0].modifiers, ["trusted"]);
 }
+
+#[test]
+fn svelte_component_raw_extracts_all_blocks_and_catches_trailing_markup() {
+    let src = "<script>let x = 1;</script><script context=\"module\">export const y = 2;</script><style>p { color: red; }</style><p>{x}</p>";
+    let comp = parse_svelte_component_raw(src).unwrap();
+    assert!(comp.script.unwrap().contains("let x = 1;"));
+    assert!(comp.module_script.unwrap().contains("export const y = 2;"));
+    assert!(comp.style.unwrap().contains("color: red;"));
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "p");
+
+    let err = parse_svelte_component_raw("<p>ok</p></unmatched>").unwrap_err();
+    assert_eq!(err.message, "unexpected trailing markup in Svelte template");
+    assert_eq!(err.byte_offset, Some(9));
+}
