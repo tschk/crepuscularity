@@ -1,7 +1,15 @@
 
+    @Synchronized
     private fun documentPickerValue(method: String): JSONObject {
         if (method != "pick") error("unsupported documentPicker method: $method")
+        val open = openDocuments ?: error("document picker unavailable")
+        check(pendingPickerAction == null) { "picker already active" }
         pendingPickerAction = "documentPicker.pick"
-        openDocuments?.invoke() ?: emit(errorJson("documentPicker.pick", "document picker unavailable"))
+        try {
+            open()
+        } catch (error: Exception) {
+            pendingPickerAction = null
+            throw error
+        }
         return JSONObject().put("opening", true)
     }
