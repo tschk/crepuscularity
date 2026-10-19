@@ -1,6 +1,5 @@
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::collections::HashMap;
 use std::hint::black_box;
 
 fn bench_for_loop_context(c: &mut Criterion) {
