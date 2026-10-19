@@ -1873,3 +1873,94 @@ fn disabled_bindings_evaluate_once_and_preserve_enabled_styles() {
         format!("{:?}", expected.style())
     );
 }
+
+#[test]
+fn custom_form_components_keep_their_builder_bindings_and_input_events() {
+    struct InputField {
+        value: String,
+        checked: bool,
+    }
+    impl InputField {
+        fn new() -> Self {
+            Self {
+                value: String::new(),
+                checked: false,
+            }
+        }
+        fn value(mut self, value: String) -> Self {
+            self.value = value;
+            self
+        }
+        fn checked(mut self, checked: bool) -> Self {
+            self.checked = checked;
+            self
+        }
+        fn on_input(self, _: impl Fn(&(), &mut Window, &mut gpui::App) + 'static) -> Self {
+            self
+        }
+    }
+    let field = view! {r#"InputField bind:value={String::from("hello")} bind:checked={true} @input={|_, _, _| {}} @change={|_, _, _| {}}"#};
+    assert_eq!(field.value, "hello");
+    assert!(field.checked);
+}
+
+#[gpui::test]
+fn quoted_jsx_handlers_dispatch_named_methods(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Actions(Arc<AtomicUsize>);
+    impl Actions {
+        fn click(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn key(&mut self, _: &KeyDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.fetch_add(10, Ordering::SeqCst);
+        }
+    }
+    impl gpui::Render for Actions {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            view! {r#"<button class="w-[100px] h-[40px]" onClick="click" @keydown|ctrl+s="key">Press</button>"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let action_hits = hits.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| Actions(action_hits));
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_keystrokes("ctrl-s ctrl-x s ctrl-s");
+    assert_eq!(hits.load(Ordering::SeqCst), 21);
+}
+
+#[test]
+fn event_callback_blocks_construct_once_in_both_frontends() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let builds = Arc::new(AtomicUsize::new(0));
+    let jsx_builds = builds.clone();
+    let _ = view! {r#"<button @click={{ jsx_builds.fetch_add(1, Ordering::SeqCst); move |_, _, _| {} }} />"#};
+    let indent_builds = builds.clone();
+    let _ = view! {r#"button @click={{ indent_builds.fetch_add(1, Ordering::SeqCst); move |_, _, _| {} }}"#};
+    assert_eq!(builds.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn jsx_callback_factories_and_parenthesized_callbacks_construct_once() {
+    fn factory(count: &mut usize) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) {
+        *count += 1;
+        |_, _, _| {}
+    }
+    let mut builds = 0;
+    let _ = view! {r#"<button @click={factory(&mut builds)} />"#};
+    let callback = factory(&mut builds);
+    let _ = view! {r#"<button @click={(callback)} />"#};
+    let _ = view! {r#"<button @click={(|_, _, _| {})} />"#};
+    let _ = view! {r#"button @click={factory(&mut builds)}"#};
+    let _ = view! {r#"<button bind:disabled={true} @click={factory(&mut builds)} />"#};
+    assert_eq!(builds, 3);
+}
