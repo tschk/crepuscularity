@@ -4,8 +4,6 @@
 //! order (`y * cols + x`). Thresholds match the moonshine/svelte ports:
 //! `(bayer_index + 0.5) / 16`.
 
-#![allow(dead_code)]
-
 /// Classic Bayer 4×4 indices, normalized with half-step centering.
 pub const BAYER: [[f32; 4]; 4] = [
     [
@@ -50,13 +48,7 @@ pub enum Variant {
 
 #[inline]
 pub fn clamp01(t: f32) -> f32 {
-    if t < 0.0 {
-        0.0
-    } else if t > 1.0 {
-        1.0
-    } else {
-        t
-    }
+    t.clamp(0.0, 1.0)
 }
 
 /// Backing grid size for a logical width/height (same rules as JS/Flutter).
@@ -76,13 +68,13 @@ pub fn resample(source: &[f32], cols: usize) -> Vec<f32> {
     }
     let last = (source.len() - 1).max(1) as f32;
     let mut out = vec![0.0; cols];
-    for c in 0..cols {
+    for (c, out_c) in out.iter_mut().enumerate().take(cols) {
         let t = (c as f32 / (cols - 1).max(1) as f32) * last;
         let i = t.floor() as usize;
         let f = t - i as f32;
         let a = source[i];
         let b = source[(i + 1).min(source.len() - 1)];
-        out[c] = a + (b - a) * f;
+        *out_c = a + (b - a) * f;
     }
     out
 }
@@ -125,10 +117,7 @@ fn column_alphas(
     // Top edge highlight
     cells.push((top, (clamp01(BORDER_ALPHA) * 255.0).round() as u8));
     if depth > 1 {
-        cells.push((
-            top + 1,
-            (clamp01(BORDER_ALPHA * 0.5) * 255.0).round() as u8,
-        ));
+        cells.push((top + 1, (clamp01(BORDER_ALPHA * 0.5) * 255.0).round() as u8));
     }
     cells
 }

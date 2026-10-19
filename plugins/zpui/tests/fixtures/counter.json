@@ -1,0 +1,31 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "stack",
+      "axis": "column",
+      "spacing": 8.0,
+      "style": {
+        "classes": [
+          "flex",
+          "flex-col",
+          "gap-2",
+          "p-4"
+        ],
+        "padding": 16.0,
+        "flexDirection": "column"
+      },
+      "children": [
+        {
+          "kind": "text",
+          "content": "Crepuscularity + ZPUI"
+        },
+        {
+          "kind": "button",
+          "label": "Increment",
+          "onClick": "increment"
+        }
+      ]
+    }
+  ]
+}

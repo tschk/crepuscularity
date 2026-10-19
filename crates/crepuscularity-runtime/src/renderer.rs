@@ -476,7 +476,10 @@ fn element_id(el: &Element, ctx: &TemplateContext) -> Option<SharedString> {
     let value = if let Some(id) = &el.id {
         id.clone()
     } else {
-        let binding = el.bindings.iter().find(|binding| binding.prop == "id")?;
+        let binding = el
+            .bindings
+            .iter()
+            .find(|binding| binding.matches_prop("id"))?;
         let value = crepuscularity_core::eval::eval_binding(binding, ctx)
             .ok()
             .flatten()?;
@@ -2658,6 +2661,25 @@ mod context_borrow_tests {
 #[cfg(test)]
 mod attribute_id_tests {
     use super::*;
+
+    #[test]
+    fn attribute_id_names_follow_html_case_insensitivity() {
+        let mut nodes = crepuscularity_core::parse_template("div").unwrap();
+        let Node::Element(element) = &mut nodes[0] else {
+            panic!("expected element")
+        };
+        element.bindings.push(crepuscularity_core::ast::Binding {
+            origin: BindingOrigin::Attribute,
+            prop: "ID".into(),
+            value: "42".into(),
+        });
+        assert_eq!(
+            element_id(element, &TemplateContext::new()).as_deref(),
+            Some("42")
+        );
+        element.bindings[0].origin = BindingOrigin::Expression;
+        assert!(element_id(element, &TemplateContext::new()).is_none());
+    }
 
     #[test]
     fn attribute_ids_use_null_omission_and_scalar_string_coercion() {

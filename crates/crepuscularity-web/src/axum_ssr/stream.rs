@@ -20,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 fn render_document_head(doc: &SsrDocument<'_>) -> String {
     let body_class = doc
         .body_class
-        .map(|c| format!(r#" class="{}"#, crate::escape_html(c)))
+        .map(|c| format!(r#" class="{}""#, crate::escape_html(c)))
         .unwrap_or_default();
     let title_esc = doc
         .title
@@ -32,7 +32,9 @@ fn render_document_head(doc: &SsrDocument<'_>) -> String {
         "<!DOCTYPE html>\n<html lang=\"{}\">\n<head>\n  <meta charset=\"utf-8\">\n  \
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  \
          <title>{}</title>\n</head>\n<body{}>\n",
-        doc.lang, title_esc, body_class
+        crate::escape_html(doc.lang),
+        title_esc,
+        body_class
     )
 }
 
@@ -63,7 +65,11 @@ pub async fn stream_ssr_response_with_nodes(
 
         let counter = Cell::new(0u32);
         let mut bind = BindMap::new();
-        let render_result = render_nodes_ssr(&nodes, &ctx, &counter, &mut bind, true);
+        let render_result =
+            render_nodes_ssr(&nodes, &ctx, &counter, &mut bind, true).and_then(|mut html| {
+                crate::ssr::append_hydration_payload(&mut html, &ctx, &bind)?;
+                Ok(html)
+            });
         let body: String = match render_result {
             Ok(h) => h,
             Err(e) => {

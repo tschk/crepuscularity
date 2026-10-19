@@ -2294,9 +2294,7 @@ fn emit(
                             }
                             object.push('}');
                             let constant = format!("{}{}", slots.model_node, slots.models.len());
-                            slots
-                                .models
-                                .push(format!("const {constant} = {object};"));
+                            slots.models.push(format!("const {constant} = {object};"));
                             Some((key, constant))
                         }
                         None => None,

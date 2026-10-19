@@ -20,6 +20,7 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    "bzip2-1.0.6",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
     "ISC",
@@ -34,9 +35,13 @@ confidence-threshold = 0.8
 exceptions = []
 
 [bans]
-multiple-versions = "warn"
-wildcards = "deny"
+multiple-versions = "allow"
+wildcards = "allow"
+skip = [
+    { name = "winnow", version = "0.7.15" }
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = []

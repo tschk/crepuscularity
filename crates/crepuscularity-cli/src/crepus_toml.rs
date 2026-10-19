@@ -609,6 +609,51 @@ pub fn resolve_pick(
 mod tests {
     use super::*;
 
+    fn dummy_web_target(id: &str) -> ResolvedWebTarget {
+        ResolvedWebTarget {
+            id: id.to_string(),
+            site_dir: std::path::PathBuf::from(format!("/tmp/{}", id)),
+            out_dir: std::path::PathBuf::from(format!("/tmp/{}/out", id)),
+            entry: "src/main.rs".to_string(),
+            meta: WebTargetMeta::default(),
+        }
+    }
+
+    #[test]
+    fn test_resolve_pick() {
+        let t1 = dummy_web_target("foo");
+        let t2 = dummy_web_target("bar");
+
+        // 0 targets, no id
+        let err = resolve_pick(&[], None).unwrap_err();
+        assert_eq!(
+            err,
+            "crepus.toml defines 0 web targets []; pass --target ID"
+        );
+
+        // 1 target, no id
+        let res = resolve_pick(std::slice::from_ref(&t1), None).unwrap();
+        assert_eq!(res.id, "foo");
+
+        // 2 targets, no id
+        let err = resolve_pick(&[t1.clone(), t2.clone()], None).unwrap_err();
+        assert_eq!(
+            err,
+            r#"crepus.toml defines 2 web targets ["foo", "bar"]; pass --target ID"#
+        );
+
+        // id matches
+        let res = resolve_pick(&[t1.clone(), t2.clone()], Some("bar")).unwrap();
+        assert_eq!(res.id, "bar");
+
+        // id doesn't match
+        let err = resolve_pick(&[t1.clone(), t2.clone()], Some("baz")).unwrap_err();
+        assert_eq!(
+            err,
+            r#"no web target with id "baz" (available: ["foo", "bar"])"#
+        );
+    }
+
     #[test]
     fn resolves_webext_browsers_and_safari_packaging() {
         let manifest = CrepusManifest::parse(

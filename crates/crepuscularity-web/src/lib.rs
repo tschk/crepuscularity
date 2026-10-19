@@ -452,16 +452,7 @@ fn render_element_with_hydration(
         out.push('"');
     }
 
-    for binding in &el.bindings {
-        out.push(' ');
-        out.push_str(&binding.prop);
-        out.push_str("=\"");
-        let value = crepuscularity_core::context::value_to_str(
-            &crepuscularity_core::eval::eval_expr(&binding.value, ctx)?,
-        );
-        out.push_str(&escape_html(&value));
-        out.push('"');
-    }
+    render::push_bindings(&mut out, el, ctx, false)?;
 
     for handler in &el.event_handlers {
         out.push(' ');
@@ -545,10 +536,18 @@ pub fn escape_html(input: &str) -> String {
 /// True for attributes whose value a browser resolves as a URL, and which
 /// therefore carry a scheme that `escape_html` cannot neutralise.
 pub(crate) fn is_url_attr(prop: &str) -> bool {
-    matches!(
-        prop,
-        "href" | "src" | "srcset" | "action" | "formaction" | "poster" | "data" | "xlink:href"
-    )
+    [
+        "href",
+        "src",
+        "srcset",
+        "action",
+        "formaction",
+        "poster",
+        "data",
+        "xlink:href",
+    ]
+    .iter()
+    .any(|name| prop.eq_ignore_ascii_case(name))
 }
 
 /// Scheme as a browser reads it: leading C0 whitespace is skipped and tab, LF
@@ -578,7 +577,9 @@ fn url_scheme(value: &str) -> String {
 pub(crate) fn is_safe_url_value(prop: &str, value: &str) -> bool {
     match url_scheme(value).as_str() {
         "javascript" | "vbscript" => false,
-        "data" => !matches!(prop, "href" | "xlink:href" | "action" | "formaction"),
+        "data" => !["href", "xlink:href", "action", "formaction"]
+            .iter()
+            .any(|name| prop.eq_ignore_ascii_case(name)),
         _ => true,
     }
 }
@@ -635,4 +636,117 @@ fn filter_web_class(class: &str) -> Option<String> {
         };
     }
     Some(class.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!(escape_html(""), "");
+        assert_eq!(escape_html("hello"), "hello");
+        assert_eq!(escape_html("&<>\"'"), "&amp;&lt;&gt;&quot;&#39;");
+        assert_eq!(
+            escape_html("<div>\"test\" & 'test'</div>"),
+            "&lt;div&gt;&quot;test&quot; &amp; &#39;test&#39;&lt;/div&gt;"
+        );
+    }
+
+    #[test]
+    fn test_url_scheme() {
+        assert_eq!(url_scheme("http://example.com"), "http");
+        assert_eq!(url_scheme("https://example.com"), "https");
+        assert_eq!(url_scheme("mailto:user@example.com"), "mailto");
+
+        assert_eq!(url_scheme("HTTP://example.com"), "http");
+        assert_eq!(url_scheme("JaVaScRiPt:alert(1)"), "javascript");
+
+        assert_eq!(url_scheme(" \n http://example.com"), "http");
+        assert_eq!(url_scheme("\x00javascript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("\x1Fjavascript:alert(1)"), "javascript");
+
+        assert_eq!(url_scheme("java\nscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\rscript:alert(1)"), "javascript");
+        assert_eq!(url_scheme("java\tscript:alert(1)"), "javascript");
+        assert_eq!(
+            url_scheme("j\ra\nv\ta\rs\nc\tr\ni\rp\nt:alert(1)"),
+            "javascript"
+        );
+
+        assert_eq!(url_scheme("example.com"), "");
+        assert_eq!(url_scheme("javascript"), "");
+        assert_eq!(url_scheme(""), "");
+
+        assert_eq!(url_scheme("http:"), "http");
+
+        assert_eq!(url_scheme("://example.com"), "");
+        assert_eq!(url_scheme(":"), "");
+    }
+}
+
+#[cfg(all(test, feature = "hydration"))]
+mod attribute_origin_hydration_tests {
+    #[test]
+    fn hydration_retains_attribute_presence_and_omits_null() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<input [attr.checked]=\"false\" [disabled]=\"false\" [attr.title]=\"null\"/>",
+            Some(std::path::Path::new("Entry.ng")),
+        )
+        .unwrap();
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &super::TemplateContext::new(),
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(html.contains("checked=\"false\""), "{html}");
+        assert!(!html.contains(" disabled="), "{html}");
+        assert!(!html.contains(" title="), "{html}");
+    }
+
+    #[test]
+    fn hydration_keeps_attribute_class_on_slot_rotate_elements() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<slot-rotate [attr.class]=\"classes\">one<!-- split -->two</slot-rotate>",
+            Some(std::path::Path::new("Entry.ng")),
+        )
+        .unwrap();
+        let mut ctx = super::TemplateContext::new();
+        ctx.set("classes", "literal-{name} & special");
+        ctx.set("name", "CHANGED");
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &ctx,
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(
+            html.contains("class=\"literal-{name} &amp; special\""),
+            "{html}"
+        );
+        assert_eq!(html.matches(" class=").count(), 1, "{html}");
+    }
+    #[test]
+    fn hydration_filters_mixed_case_url_attributes_without_rewriting_names() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            r#"<a [attr.HREF]="'javascript:alert(1)'">unsafe</a><button [attr.FORMAction]="'data:text/html,bad'">unsafe</button><img [attr.SRC]="'data:image/png;base64,AA=='"/>"#,
+            Some(std::path::Path::new("Entry.ng")),
+        ).unwrap();
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &super::TemplateContext::new(),
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(!html.contains(" HREF="), "{html}");
+        assert!(!html.contains(" FORMAction="), "{html}");
+        assert!(
+            html.contains("SRC=\"data:image/png;base64,AA==\""),
+            "{html}"
+        );
+    }
 }

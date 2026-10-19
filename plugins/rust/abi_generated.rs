@@ -4,15 +4,6 @@
 use std::os::raw::*;
 
 extern "C" {
-    pub fn crepus_session_free(session: *mut CrepusSession);
-    pub fn crepus_session_set_template_string(session: *mut CrepusSession, template_utf8: *const c_char, base_dir_utf8: *const c_char) -> i32;
-    pub fn crepus_session_set_component(session: *mut CrepusSession, component_utf8: *const c_char) -> i32;
-    pub fn crepus_session_set_files_json(session: *mut CrepusSession, files_json_utf8: *const c_char) -> i32;
-    pub fn crepus_session_set_context_json(session: *mut CrepusSession, context_json_utf8: *const c_char) -> i32;
-    pub fn crepus_session_apply_context_patch_json(session: *mut CrepusSession, context_json_utf8: *const c_char) -> i32;
-    pub fn *crepus_session_render_ir_json(session: *mut CrepusSession) -> c_char;
-    pub fn *crepus_session_dispatch_event_json(session: *mut CrepusSession, event_json_utf8: *const c_char) -> c_char;
-    pub fn *crepus_session_take_last_error(session: *mut CrepusSession) -> c_char;
-    pub fn *crepus_last_error() -> c_char;
+    pub fn crepus_last_error() -> *mut c_char;
     pub fn crepus_string_free(ptr: *mut c_char);
 }

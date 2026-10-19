@@ -12,7 +12,7 @@
     }
   })();
 
-  const cacheKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const cacheKey = `${Date.now()}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
   const runtimeUrl = `${runtimeApi.getURL("vendor/runtime.js")}?v=${cacheKey}`;
   const wasmUrl = `${runtimeApi.getURL("vendor/runtime_bg.wasm")}?v=${cacheKey}`;
 
@@ -96,17 +96,32 @@
 
   function stripOuterCodeFence(text) {
     const trimmed = text.trim();
-    const match = /^```[\w-]*\s*\n([\s\S]*?)\n```\s*$/i.exec(trimmed);
-    return match ? match[1].trim() : trimmed;
+    if (!trimmed.startsWith("```")) return trimmed;
+
+    const firstNewline = trimmed.indexOf("\n");
+    if (firstNewline === -1) return trimmed;
+
+    const langLine = trimmed.slice(3, firstNewline);
+    if (!/^[\w-]*\s*$/.test(langLine)) return trimmed;
+
+    const lastNewline = trimmed.lastIndexOf("\n");
+    if (lastNewline === -1 || lastNewline === firstNewline) return trimmed;
+
+    const endFence = trimmed.slice(lastNewline + 1);
+    if (!/^```\s*$/.test(endFence)) return trimmed;
+
+    return trimmed.slice(firstNewline + 1, lastNewline).trim();
   }
 
   function collectWidgetPres() {
     const pres = [];
-    document.querySelectorAll("pre").forEach((node) => {
+    const nodes = document.getElementsByTagName("pre");
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
       if (node instanceof HTMLElement && hasAnywhereContent(node)) {
         pres.push(node);
       }
-    });
+    }
     return pres.filter(
       (pre) => !pres.some((other) => other !== pre && other.contains(pre))
     );
@@ -305,14 +320,14 @@
         const name = attr.name.toLowerCase();
         const value = attr.value.trim().toLowerCase();
 
-        if (name.startsWith("on")) continue;
+        if (name.startsWith("on") || name === "style" || name === "srcdoc") continue;
 
         if (name === "href" || name === "src") {
           const isSafeUrl = value.startsWith("http://") ||
                             value.startsWith("https://") ||
                             value.startsWith("mailto:") ||
                             value.startsWith("#") ||
-                            value.startsWith("/") && !value.startsWith("//");
+                            value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\");
           if (!isSafeUrl) continue;
         }
         clone.setAttribute(attr.name, attr.value);
@@ -433,11 +448,13 @@
       pending.add(node);
       return;
     }
-    node.querySelectorAll("pre").forEach((pre) => {
+    const nodes = node.getElementsByTagName("pre");
+    for (let i = 0; i < nodes.length; i++) {
+      const pre = nodes[i];
       if (pre instanceof HTMLElement && hasAnywhereContent(pre)) {
         pending.add(pre);
       }
-    });
+    }
   }
 
   function flushPending() {
