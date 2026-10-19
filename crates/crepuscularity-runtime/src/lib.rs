@@ -1,5 +1,6 @@
 pub mod frontend_bridge;
 pub mod hot_reload;
+pub mod input_model;
 pub mod renderer;
 pub mod styler;
 

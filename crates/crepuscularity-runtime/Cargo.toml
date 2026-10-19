@@ -22,5 +22,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 
+# Already present in the baseline lock at 1.13.3. The owning integration lane
+# must add the runtime's lock dependency edge before running --locked checks.
+unicode-segmentation = "1.13.3"
+
 [dev-dependencies]
 tempfile = { workspace = true }
