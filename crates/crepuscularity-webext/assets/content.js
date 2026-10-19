@@ -162,10 +162,21 @@
       return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resolveExpr(v)]));
     }
 
+    const reqs = {};
     for (const b of (program.bindings ?? [])) {
       if (b.type === "storage_get") {
-        const res = await api.storage[b.area].get({ [b.key]: undefined }).catch(() => ({}));
-        vars[b.name] = res[b.key];
+        reqs[b.area] = reqs[b.area] || {};
+        reqs[b.area][b.key] = undefined;
+      }
+    }
+    const store = {};
+    await Promise.all(Object.keys(reqs).map(async (area) => {
+      store[area] = await api.storage[area].get(reqs[area]).catch(() => ({}));
+    }));
+
+    for (const b of (program.bindings ?? [])) {
+      if (b.type === "storage_get") {
+        vars[b.name] = store[b.area]?.[b.key];
       } else if (b.type === "runtime_message") {
         vars[b.name] = await api.runtime.sendMessage(resolveObj(b.payload)).catch(() => null);
       }
