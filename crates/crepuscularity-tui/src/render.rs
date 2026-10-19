@@ -1993,23 +1993,37 @@ fn element_is_statically_unfocusable(el: &Element) -> bool {
         })
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /// Resolve active classes for an element (static + conditional).
-fn active_classes(el: &Element, ctx: &TemplateContext) -> Vec<String> {
-    let mut classes: Vec<String> = el
-        .classes
-        .iter()
-        .filter_map(|c| active_class(ctx, &interpolate_str(ctx, c)))
-        .collect();
-    for cc in &el.conditional_classes {
-        if eval_condition(ctx, &cc.condition) {
-            if let Some(class) = active_class(ctx, &interpolate_str(ctx, &cc.class)) {
-                classes.push(class);
+fn active_classes(el: &Element, ctx: &TemplateContext) -> Result<Vec<String>, CrepusError> {
+    let mut classes = Vec::new();
+    for class in &el.classes {
+        classes.extend(
+            ctx.interpolate(class)?
+                .split_whitespace()
+                .filter_map(|token| active_class(ctx, token)),
+        );
+    }
+    for binding in &el.bindings {
+        if binding.origin == BindingOrigin::Attribute && binding.prop == "class" {
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                classes.extend(
+                    value_to_str(&value)
+                        .split_whitespace()
+                        .filter_map(|token| active_class(ctx, token)),
+                );
             }
         }
     }
-    classes
+    for cc in &el.conditional_classes {
+        if ctx.eval_condition(&cc.condition)? {
+            classes.extend(
+                ctx.interpolate(&cc.class)?
+                    .split_whitespace()
+                    .filter_map(|token| active_class(ctx, token)),
+            );
+        }
+    }
+    Ok(classes)
 }
 
 fn active_class(ctx: &TemplateContext, class: &str) -> Option<String> {
