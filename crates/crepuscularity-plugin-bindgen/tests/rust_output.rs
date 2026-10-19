@@ -59,7 +59,11 @@ fn assert_rust_output(repo_root: &Path, header: Option<PathBuf>, functions: usiz
     assert_eq!(
         header
             .lines()
-            .filter(|line| line.contains("crepus_") && line.trim_end().ends_with(';'))
+            .filter(|line| {
+                !line.trim_start().starts_with("typedef")
+                    && line.contains('(')
+                    && line.trim_end().ends_with(';')
+            })
             .count(),
         functions,
         "update the signature checks when the ABI adds functions"
