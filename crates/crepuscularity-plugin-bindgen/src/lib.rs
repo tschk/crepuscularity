@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use equilibrium_ffi::{generate_imports, ImportOptions, Language};
 use serde::Deserialize;
 
+mod crepus_abi;
+
 #[derive(Debug, Deserialize)]
 struct PluginsManifest {
     contract: Contract,
@@ -49,7 +51,12 @@ pub fn resolve_abi_header(repo_root: &Path, contract_rel: &str) -> PathBuf {
 
 /// Map `crepuscularity-plugins.toml` language id → equilibrium consumer (if any).
 fn equilibrium_language(id: &str) -> Option<Language> {
-    Language::from_cli_name(id)
+    // These names are repository adapters, even when equilibrium adds a new
+    // consumer with the same name (notably TypeScript/ScriptC).
+    match id {
+        "go" | "python" | "java" | "kotlin" | "swift" | "php" | "ruby" | "typescript" => None,
+        _ => Language::from_cli_name(id),
+    }
 }
 
 fn output_filename(language: &str) -> &'static str {
@@ -95,8 +102,9 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
         ));
     }
 
+    let checked = crepus_abi::check_header(&header)?;
     let import_opts = ImportOptions::default();
-    let mut written = Vec::new();
+    let mut prepared = Vec::new();
 
     for pkg in &manifest.package {
         let base = opts
@@ -104,17 +112,33 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             .clone()
             .unwrap_or_else(|| opts.repo_root.clone());
         let pkg_dir = base.join(&pkg.path);
-        std::fs::create_dir_all(&pkg_dir)
-            .map_err(|e| format!("mkdir {}: {e}", pkg_dir.display()))?;
-
         let code = if let Some(lang) = equilibrium_language(&pkg.language) {
-            let generated = generate_imports(&header, lang, &import_opts)?;
-            if pkg.language == "go" {
-                patch_go_cgo(&generated.code)
-            } else if pkg.language == "csharp" {
-                patch_csharp(&generated.code)
+            if checked.canonical {
+                crepus_abi::generate(&header, lang)?
             } else {
-                generated.code
+                if let Some(error) = &checked.fallback_error {
+                    return Err(error.clone());
+                }
+                let generated = generate_imports(&header, lang, &import_opts)?;
+                if !generated.warnings.is_empty() {
+                    return Err(format!(
+                        "{} bindings for {} are incomplete: {}",
+                        pkg.language,
+                        header.display(),
+                        generated.warnings.join("; ")
+                    ));
+                }
+                if !generated.companions.is_empty() {
+                    return Err(format!(
+                        "{} bindings require companion files; this backend is not supported",
+                        pkg.language
+                    ));
+                }
+                if pkg.language == "csharp" {
+                    patch_csharp(&generated.code)
+                } else {
+                    generated.code
+                }
             }
         } else {
             generate_extra(&pkg.language, &header)?
@@ -136,14 +160,24 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             )
         };
 
-        std::fs::write(&out_path, &full)
-            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
-        written.push(GeneratedFile {
-            language: pkg.language.clone(),
-            path: out_path,
-        });
+        prepared.push((
+            GeneratedFile {
+                language: pkg.language.clone(),
+                path: out_path,
+            },
+            full,
+        ));
     }
 
+    // A warning or unsupported later package must not replace earlier outputs.
+    let mut written = Vec::new();
+    for (file, content) in prepared {
+        let parent = file.path.parent().expect("generated file has a parent");
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::write(&file.path, content)
+            .map_err(|e| format!("write {}: {e}", file.path.display()))?;
+        written.push(file);
+    }
     Ok(written)
 }
 

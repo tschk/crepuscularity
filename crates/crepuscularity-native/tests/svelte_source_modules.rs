@@ -1130,7 +1130,8 @@ fn authored_component_spreads_use_target_specific_prop_layers() {
         assert!(compiled.source.contains(helper), "{}", compiled.source);
         assert!(!compiled.source.contains("__crepusSvelteSpread0"));
         assert!(
-            compile_moonshine_svelte("<title {...props}/>", Path::new("Bad.svelte"), target).is_err()
+            compile_moonshine_svelte("<title {...props}/>", Path::new("Bad.svelte"), target)
+                .is_err()
         );
         assert!(compile_moonshine_module(
             "import Child from './Child';export default function App(){return <Child {...props}/>}",

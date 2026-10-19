@@ -169,6 +169,8 @@ impl Template {
         &self.ctx
     }
 
+    /// Mutate inputs tracked by the render snapshot, including virtual files and slots.
+    /// Equivalent replacements keep cached cells; external disk changes need [`Self::invalidate`].
     pub fn context_mut(&mut self) -> &mut TemplateContext {
         &mut self.ctx
     }
@@ -177,6 +179,7 @@ impl Template {
         self.components.register(name, source);
         std::sync::Arc::make_mut(&mut self.ctx.virtual_files)
             .insert(name.to_string(), source.to_string());
+        self.invalidate_render();
         self
     }
 
@@ -185,6 +188,7 @@ impl Template {
     }
 
     pub fn components_mut(&mut self) -> &mut ComponentRegistry {
+        self.invalidate_render();
         &mut self.components
     }
 
@@ -211,6 +215,12 @@ impl Template {
             }
         }
         self
+    }
+
+    /// Invalidate cached output after a resource outside the context changes.
+    /// The last coherent cells remain available if the next render fails.
+    pub fn invalidate(&mut self) {
+        self.invalidate_render();
     }
 
     pub(crate) fn invalidate_render(&mut self) {

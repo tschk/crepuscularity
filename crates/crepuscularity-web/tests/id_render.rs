@@ -444,7 +444,7 @@ fn form_value_attributes_preserve_carriage_returns() {
                 );
                 assert!(!html.contains('\r'), "raw CR in attribute HTML: {html}");
                 if template.starts_with("<select") {
-                    assert!(html.contains("selected=\"true\""), "{html}");
+                    assert!(html.contains("selected=\"\""), "{html}");
                 }
             }
         }

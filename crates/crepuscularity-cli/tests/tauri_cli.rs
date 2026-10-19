@@ -20,21 +20,7 @@ fn crepus() -> Command {
             .expect("cargo build slim crepus");
         assert!(status.success(), "slim crepus build failed");
     });
-    let pkg_dir = env!("CARGO_MANIFEST_DIR");
-    let profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
-    let bin = std::path::Path::new(pkg_dir)
-        .join("../../target")
-        .join(profile)
-        .join(if cfg!(windows) {
-            "crepus.exe"
-        } else {
-            "crepus"
-        });
-    Command::new(bin)
+    Command::new(env!("CARGO_BIN_EXE_crepus"))
 }
 
 /// Run a command and panic with full diagnostics (exit code, stderr, stdout) on failure.
@@ -85,6 +71,17 @@ fn converts_v1_and_v2_static_crepus_bundles() {
             .output()
             .unwrap();
         assert_success(&out, "converts_v1_and_v2");
+        let desktop_manifest: toml::Value = toml::from_str(
+            &std::fs::read_to_string(destination.join("desktop/Cargo.toml")).unwrap(),
+        )
+        .expect("generated desktop Cargo.toml must be valid TOML");
+        let platform = &desktop_manifest["dependencies"]["gpui_platform"];
+        assert_eq!(platform["package"].as_str(), Some("gpui_ce_platform"));
+        assert!(platform["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature.as_str() == Some("font-kit")));
         assert!(destination.join("fixture.json").is_file());
         assert!(destination
             .join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift")

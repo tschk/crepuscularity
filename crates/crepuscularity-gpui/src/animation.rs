@@ -90,6 +90,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_div_factory() {
+        let _ = div();
+    }
+
+    #[test]
     fn transition_identity_retains_typed_parent_and_tracks_arguments() {
         let id = |property, duration, from, to| {
             transition_id(ElementId::Integer(7), property, duration, from, to)

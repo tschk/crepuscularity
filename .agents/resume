@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Fast orb wake: restore Cargo PATH and the pinned stable toolchain.
+set -euo pipefail
+
+if [[ -f "${HOME}/.cargo/env" ]]; then
+  # shellcheck disable=SC1091
+  source "${HOME}/.cargo/env"
+fi
+
+if command -v rustup >/dev/null 2>&1; then
+  rustup default stable >/dev/null
+  rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
+fi
+
+command -v rustc >/dev/null
+command -v cargo >/dev/null
