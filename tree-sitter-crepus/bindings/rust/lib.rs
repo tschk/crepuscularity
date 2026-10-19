@@ -66,7 +66,7 @@ mod tests {
             .expect("Error loading Crepus grammar");
         let tree = parser
             .parse(r#"button @click="" px-4 py-2 bg-blue-500 text-white"#, None)
-            .unwrap();
+            .expect("Error parsing test code");
         assert!(!tree.root_node().has_error());
     }
 }
