@@ -1701,3 +1701,175 @@ fn check_generated_state_shadow_resets(first: &'static str, second: &'static str
         }
     }
 }
+
+#[gpui::test]
+fn dynamic_focus_ring_reset_participates_in_keyboard_navigation(cx: &mut gpui::TestAppContext) {
+    struct RingFocusView;
+    impl gpui::Render for RingFocusView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let classes = "focus:ring-0";
+            view! {r#"div flex flex-col
+  button w-[100px] h-[40px] focus:bg-red-500
+  button w-[100px] h-[40px] ring-2 class={classes}
+"#}
+        }
+    }
+    let (_, cx) = cx.add_window_view(|_, _| RingFocusView);
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    let first = cx.update(|window, app| window.focused(app).unwrap());
+    cx.update(|window, app| window.focus_next(app));
+    let next = cx.update(|window, app| window.focused(app).unwrap());
+    assert_ne!(first, next);
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(50.0)),
+        gpui::Modifiers::default(),
+    );
+    assert_eq!(cx.update(|window, app| window.focused(app).unwrap()), next);
+}
+
+#[gpui::test]
+fn keyboard_handlers_receive_filtered_events_without_focus_classes(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct KeyProbe(Arc<AtomicUsize>);
+    impl gpui::Render for KeyProbe {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let hits = self.0.clone();
+            let release_hits = self.0.clone();
+            view! {r#"div w-[100px] h-[40px] @keydown|ctrl+s={move |_, _, _| { hits.fetch_add(1, Ordering::SeqCst); }} @keyup|ctrl+s={move |_, _, _| { release_hits.fetch_add(10, Ordering::SeqCst); }}"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let probe_hits = hits.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| KeyProbe(probe_hits));
+    cx.update(|window, app| window.focus_next(app));
+    assert!(cx.update(|window, app| window.focused(app).is_some()));
+    cx.simulate_keystrokes("ctrl-s ctrl-x s ctrl-s");
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    for key in ["ctrl-x", "s", "ctrl-s", "ctrl-s"] {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 22);
+}
+
+#[gpui::test]
+fn disabled_bindings_block_handlers_and_tab_navigation_until_enabled(
+    cx: &mut gpui::TestAppContext,
+) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Controls {
+        disabled: bool,
+        hits: Arc<AtomicUsize>,
+    }
+    impl Controls {
+        fn click(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+        }
+        fn key(&mut self, _: &KeyDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.hits.fetch_add(10, Ordering::SeqCst);
+        }
+    }
+    impl gpui::Render for Controls {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let disabled = self.disabled;
+            view! {r#"div flex flex-col
+  button w-[100px] h-[40px] focus:bg-red-500 bind:disabled={disabled} @click=click @keydown|ctrl+s=key
+  button w-[100px] h-[40px] focus:bg-blue-500
+  button w-[100px] h-[40px] disabled @click=click @keydown|ctrl+s=key
+"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let probe_hits = hits.clone();
+    let (controls, cx) = cx.add_window_view(move |_, _| Controls {
+        disabled: true,
+        hits: probe_hits,
+    });
+    for y in [10.0, 90.0] {
+        cx.simulate_click(
+            gpui::point(gpui::px(10.0), gpui::px(y)),
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_keystrokes("ctrl-s");
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(50.0)),
+        gpui::Modifiers::default(),
+    );
+    let enabled_focus = cx.update(|window, app| window.focused(app).unwrap());
+    cx.update(|window, app| window.focus_next(app));
+    assert_eq!(
+        cx.update(|window, app| window.focused(app).unwrap()),
+        enabled_focus
+    );
+    cx.update(|_, app| {
+        controls.update(app, |controls, cx| {
+            controls.disabled = false;
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_keystrokes("ctrl-s");
+    assert_eq!(hits.load(Ordering::SeqCst), 11);
+    assert_ne!(
+        cx.update(|window, app| window.focused(app).unwrap()),
+        enabled_focus
+    );
+    cx.update(|_, app| {
+        controls.update(app, |controls, cx| {
+            controls.disabled = true;
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("ctrl-s");
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 11);
+    cx.update(|window, app| window.focus_next(app));
+    assert_eq!(
+        cx.update(|window, app| window.focused(app).unwrap()),
+        enabled_focus
+    );
+}
+
+#[test]
+fn disabled_bindings_evaluate_once_and_preserve_enabled_styles() {
+    let mut evaluations = 0;
+    let mut actual = view! {r#"button opacity-100 bind:disabled={{ evaluations += 1; true }}"#};
+    assert_eq!(evaluations, 1);
+    let mut expected = gpui::div().cursor_not_allowed().opacity(0.5);
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let mut actual = view! {r#"button opacity-100 bind:disabled={false}"#};
+    let mut expected = gpui::div().cursor_pointer().opacity(1.0);
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let mut actual = view! {r#"<button disabled />"#};
+    let mut expected = gpui::div().cursor_not_allowed().opacity(0.5);
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
