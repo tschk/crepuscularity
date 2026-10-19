@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crepuscularity_core::analysis::{classify_node, Region};
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
-use crepuscularity_core::eval::eval_expr;
+use crepuscularity_core::eval::{eval_binding, eval_expr};
 use crepuscularity_core::parser::parse_component_file;
 use crepuscularity_core::preprocess::{slot_rotate_child_phrases, slot_rotate_words_json_attr};
 use crepuscularity_core::CrepusError;
@@ -282,7 +282,7 @@ impl<'a> Walker<'a> {
 
         if let Some(dom_id) = &el.id {
             out.push_str(" id=\"");
-            out.push_str(&crate::escape_html(dom_id));
+            out.push_str(&crate::escape_html_attribute(dom_id));
             out.push('"');
         }
         if inject_root {
@@ -303,7 +303,7 @@ impl<'a> Walker<'a> {
         }
 
         push_bindings(&mut out, el, ctx, false)?;
-        push_handlers_and_animations(&mut out, el);
+        push_handlers_and_animations(&mut out, el)?;
 
         if crate::void_html::is_void_html_tag(&el.tag) {
             out.push_str(" />");
@@ -358,7 +358,7 @@ impl<'a> Walker<'a> {
         }
         if let Some(dom_id) = &el.id {
             out.push_str(" id=\"");
-            out.push_str(&crate::escape_html(dom_id));
+            out.push_str(&crate::escape_html_attribute(dom_id));
             out.push('"');
         }
         if let Some(id) = id_opt {
@@ -373,15 +373,15 @@ impl<'a> Walker<'a> {
             out.push('"');
         }
         out.push_str(" data-slot-words=\"");
-        out.push_str(&crate::escape_html(&words_json));
+        out.push_str(&crate::escape_html_attribute(&words_json));
         out.push('"');
         out.push_str(" data-slot-interval=\"");
-        out.push_str(&crate::escape_html(&interval_ms.to_string()));
+        out.push_str(&crate::escape_html_attribute(&interval_ms.to_string()));
         out.push('"');
         out.push_str(" aria-live=\"polite\"");
 
         push_bindings(&mut out, el, ctx, true)?;
-        push_handlers_and_animations(&mut out, el);
+        push_handlers_and_animations(&mut out, el)?;
 
         out.push_str("></span>");
         Ok(out)
@@ -496,37 +496,186 @@ impl<'a> Walker<'a> {
     }
 }
 
-fn push_bindings(
+#[cfg(feature = "hydration")]
+pub(crate) fn textarea_content(
+    el: &Element,
+    ctx: &TemplateContext,
+    depth: usize,
+) -> Result<Option<String>, CrepusError> {
+    textarea_content_with_slot(el, ctx, depth, None, false)
+}
+
+fn textarea_content_with_slot(
+    el: &Element,
+    ctx: &TemplateContext,
+    depth: usize,
+    slot: Option<&SlotFrame<'_>>,
+    virtual_only: bool,
+) -> Result<Option<String>, CrepusError> {
+    if !el.tag.eq_ignore_ascii_case("textarea") {
+        return Ok(None);
+    }
+    let mut content = if let Some(binding) = el.bindings.iter().find(|binding| {
+        binding.prop.eq_ignore_ascii_case("value") && binding.origin != BindingOrigin::Attribute
+    }) {
+        crate::escape_html(&value_to_str(&eval_expr(&binding.value, ctx)?))
+    } else {
+        // Textarea content is raw text in HTML; SSR spans would become visible text.
+        Walker::plain(depth)
+            .with_virtual_only(virtual_only)
+            .nodes_with_slot(&el.children, ctx, slot, None)?
+    };
+    // Character references keep CR intact through HTML newline preprocessing.
+    content = content.replace('\r', "&#13;");
+    // HTML parsing consumes one newline immediately after the textarea opening tag.
+    if content.starts_with('\n') {
+        content.insert(0, '\n');
+    }
+    Ok(Some(content))
+}
+
+pub(crate) fn push_bindings(
     out: &mut String,
     el: &Element,
     ctx: &TemplateContext,
     skip_interval: bool,
 ) -> Result<(), CrepusError> {
     for binding in &el.bindings {
-        if skip_interval && binding.prop == "interval" {
+        if el.tag == "slot-rotate"
+            && binding.origin == BindingOrigin::Attribute
+            && binding.prop.eq_ignore_ascii_case("class")
+        {
             continue;
         }
-        let value = value_to_str(&eval_expr(&binding.value, ctx)?);
+        if el.tag.eq_ignore_ascii_case("textarea")
+            && binding.prop.eq_ignore_ascii_case("value")
+            && binding.origin != BindingOrigin::Attribute
+        {
+            continue;
+        }
+        if skip_interval && binding.prop == "interval" && binding.origin != BindingOrigin::Attribute
+        {
+            continue;
+        }
+        let Some(evaluated) = eval_binding(binding, ctx)? else {
+            continue;
+        };
+        if matches!(evaluated, TemplateValue::Bool(false) | TemplateValue::Null)
+            && matches!(
+                binding.prop.to_ascii_lowercase().as_str(),
+                "allowfullscreen"
+                    | "async"
+                    | "autofocus"
+                    | "autoplay"
+                    | "checked"
+                    | "controls"
+                    | "default"
+                    | "defer"
+                    | "disabled"
+                    | "download"
+                    | "formnovalidate"
+                    | "hidden"
+                    | "inert"
+                    | "ismap"
+                    | "itemscope"
+                    | "loop"
+                    | "multiple"
+                    | "muted"
+                    | "nomodule"
+                    | "novalidate"
+                    | "open"
+                    | "playsinline"
+                    | "readonly"
+                    | "required"
+                    | "reversed"
+                    | "selected"
+            )
+        {
+            continue;
+        }
+        let value = if binding.prop.eq_ignore_ascii_case("download")
+            && matches!(evaluated, TemplateValue::Bool(true))
+        {
+            String::new()
+        } else {
+            value_to_str(&evaluated)
+        };
         if crate::is_url_attr(&binding.prop) && !crate::is_safe_url_value(&binding.prop, &value) {
             continue;
         }
         out.push(' ');
         out.push_str(&binding.prop);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&value));
+        out.push_str(&crate::escape_html_attribute(&value));
         out.push('"');
     }
     Ok(())
 }
 
-fn push_handlers_and_animations(out: &mut String, el: &Element) {
-    for handler in &el.event_handlers {
+pub(crate) fn push_handlers_and_animations(
+    out: &mut String,
+    el: &Element,
+) -> Result<(), CrepusError> {
+    for (index, handler) in el.event_handlers.iter().enumerate() {
+        for modifier in &handler.modifiers {
+            if matches!(
+                modifier.as_str(),
+                "prevent" | "stop" | "immediate" | "trusted" | "self" | "once" | "capture"
+            ) {
+                continue;
+            }
+            let lower = modifier.to_lowercase();
+            let parts: Vec<_> = lower.split('+').collect();
+            if !matches!(
+                handler.event.to_ascii_lowercase().as_str(),
+                "keydown" | "keyup"
+            ) || parts.last().is_none_or(|key| key.is_empty())
+                || parts[..parts.len() - 1]
+                    .iter()
+                    .any(|part| !matches!(*part, "ctrl" | "cmd" | "shift" | "alt" | "opt"))
+            {
+                return Err(CrepusError::Parse(format!(
+                    "Unsupported web event modifier `{modifier}` on `{}`",
+                    handler.event
+                )));
+            }
+        }
+        if el.event_handlers[..index]
+            .iter()
+            .any(|previous| previous.event.eq_ignore_ascii_case(&handler.event))
+        {
+            continue;
+        }
         out.push(' ');
         out.push_str("data-on");
         out.push_str(&handler.event);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&handler.handler));
+        out.push_str(&crate::escape_html_attribute(&handler.handler));
         out.push('"');
+        let handlers: Vec<_> = el
+            .event_handlers
+            .iter()
+            .filter(|entry| entry.event.eq_ignore_ascii_case(&handler.event))
+            .map(|entry| json!({ "handler": entry.handler, "modifiers": entry.modifiers }))
+            .collect();
+        if handlers.len() > 1 {
+            out.push_str(" data-crepus-handlers-");
+            out.push_str(&handler.event);
+            out.push_str("=\"");
+            out.push_str(&crate::escape_html_attribute(
+                &serde_json::to_string(&handlers).expect("event handlers serialize"),
+            ));
+            out.push('"');
+        }
+        if !handler.modifiers.is_empty() {
+            out.push_str(" data-crepus-modifiers-");
+            out.push_str(&handler.event);
+            out.push_str("=\"");
+            let modifiers = serde_json::to_string(&handler.modifiers)
+                .expect("event modifiers contain only strings");
+            out.push_str(&crate::escape_html_attribute(&modifiers));
+            out.push('"');
+        }
     }
 
     for animation in &el.animations {
@@ -534,12 +683,16 @@ fn push_handlers_and_animations(out: &mut String, el: &Element) {
         out.push_str("data-animate-");
         out.push_str(&animation.property);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&format!(
+        out.push_str(&crate::escape_html_attribute(&format!(
             "{} {}",
             animation.duration_expr, animation.easing
         )));
+        if animation.repeat {
+            out.push_str(" repeat");
+        }
         out.push('"');
     }
+    Ok(())
 }
 
 fn text_parts_manifest(parts: &[TextPart]) -> Value {
