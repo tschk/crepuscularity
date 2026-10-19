@@ -1,28 +1,36 @@
 //! Filesystem output identities for preflight collision checks.
 //!
 //! Resolves existing symlinks and missing suffixes without creating files. This
-//! detects path aliases, not hard links, and does not protect against filesystem
-//! changes between validation and a later write.
+//! compares UTF-8 path components under a conservative portable naming policy:
+//! canonical Unicode normalization and default full case folding (Unicode 16.0
+//! folding tables). Names distinct on a case-sensitive filesystem can therefore
+//! collide here. This does not model every filesystem equivalence, detect hard
+//! links, or protect against filesystem changes before a later write.
 
+use caseless::Caseless;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use unicode_normalization::UnicodeNormalization;
 
 /// Reject output files resolving to the same location or an ancestor of another output.
 ///
 /// Labels identify the conflicting outputs in the error. Existing symlinks are
 /// resolved before processing `..`, including links to not-yet-created outputs.
 /// Symlink loops and inaccessible ancestors return errors. Distinct files in the
-/// same output directory are allowed.
+/// same output directory are allowed when their portable names are distinct.
+/// Non-UTF-8 resolved path components return an error before any output writes.
 pub fn validate_output_paths<'a>(
     paths: impl IntoIterator<Item = (&'a str, &'a Path)>,
 ) -> Result<(), String> {
-    let mut seen: HashMap<PathBuf, (&str, &Path)> = HashMap::new();
+    let mut seen: HashMap<Vec<String>, (&str, &Path)> = HashMap::new();
     for (label, path) in paths {
         let identity = resolve_identity(path)
+            .and_then(|resolved| portable_identity(&resolved))
             .map_err(|error| format!("output {label:?} ({}): {error}", path.display()))?;
-        if let Some((_, (previous_label, previous_path))) = seen.iter().find(|(previous, _)| {
-            identity.starts_with(previous.as_path()) || previous.starts_with(&identity)
-        }) {
+        if let Some((_, (previous_label, previous_path))) = seen
+            .iter()
+            .find(|(previous, _)| identity.starts_with(previous) || previous.starts_with(&identity))
+        {
             return Err(format!(
                 "output collision: {previous_label:?} ({}) and {label:?} ({}) overlap as file destinations",
                 previous_path.display(), path.display()
@@ -31,6 +39,20 @@ pub fn validate_output_paths<'a>(
         seen.insert(identity, (label, path));
     }
     Ok(())
+}
+
+// Keep boundaries as components: folding a name never creates a path separator.
+// NFD before and after full folding implements canonical caseless comparison.
+fn portable_identity(path: &Path) -> Result<Vec<String>, String> {
+    path.components()
+        .map(|component| {
+            let name = component
+                .as_os_str()
+                .to_str()
+                .ok_or_else(|| "portable output names must be valid UTF-8".to_owned())?;
+            Ok(name.nfd().default_case_fold().nfd().collect())
+        })
+        .collect()
 }
 
 fn resolve_identity(path: &Path) -> Result<PathBuf, String> {
@@ -136,6 +158,82 @@ fn resolve_from(path: &Path, links: &mut usize, base: &Path) -> Result<PathBuf, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_names_collide_without_creating_missing_outputs() {
+        let directory = tempfile::tempdir().unwrap();
+        for (first, second) in [
+            ("missing/Output.json", "missing/output.json"),
+            ("missing/Éclair.json", "missing/E\u{301}clair.json"),
+            ("missing/Straße.json", "missing/STRASSE.json"),
+            ("missing/\u{1c90}.json", "missing/\u{10d0}.json"),
+        ] {
+            let first = directory.path().join(first);
+            let second = directory.path().join(second);
+            for paths in [[&first, &second], [&second, &first]] {
+                let error = validate_output_paths([
+                    ("first", paths[0].as_path()),
+                    ("second", paths[1].as_path()),
+                ])
+                .unwrap_err();
+                assert!(
+                    error.contains("first") && error.contains("second"),
+                    "{error}"
+                );
+            }
+        }
+        validate_output_paths([
+            ("one", directory.path().join("missing/one.json").as_path()),
+            ("two", directory.path().join("missing/two.json").as_path()),
+        ])
+        .unwrap();
+        assert!(!directory.path().join("missing").exists());
+    }
+
+    #[test]
+    fn portable_file_ancestors_collide_in_both_orders() {
+        let directory = tempfile::tempdir().unwrap();
+        for (parent, child) in [
+            ("missing/Output", "missing/output/child.json"),
+            ("missing/Éclair", "missing/E\u{301}clair/child.json"),
+            ("missing/Straße", "missing/STRASSE/child.json"),
+        ] {
+            let parent = directory.path().join(parent);
+            let child = directory.path().join(child);
+            for paths in [[&parent, &child], [&child, &parent]] {
+                assert!(validate_output_paths([
+                    ("parent", paths[0].as_path()),
+                    ("child", paths[1].as_path()),
+                ])
+                .is_err());
+            }
+        }
+        validate_output_paths([
+            ("one", directory.path().join("missing/Output").as_path()),
+            (
+                "two",
+                directory
+                    .path()
+                    .join("missing/output-other/child.json")
+                    .as_path(),
+            ),
+        ])
+        .unwrap();
+        assert!(!directory.path().join("missing").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_portable_output_names_fail_without_writes() {
+        use std::os::unix::ffi::OsStringExt;
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff]));
+        let error = validate_output_paths([("invalid", output.as_path())]).unwrap_err();
+        assert!(error.contains("UTF-8"), "{error}");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
 
     #[cfg(windows)]
     #[test]
