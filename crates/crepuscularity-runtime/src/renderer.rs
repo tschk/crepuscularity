@@ -235,6 +235,111 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> AnyElement {
     d.into_any_element()
 }
 
+fn element_id(el: &Element, ctx: &TemplateContext) -> Option<SharedString> {
+    let value = if let Some(id) = &el.id {
+        id.clone()
+    } else {
+        let binding = el.bindings.iter().find(|binding| binding.prop == "id")?;
+        let value = crepuscularity_core::eval::eval_binding(binding, ctx)
+            .ok()
+            .flatten()?;
+        value_to_str(&value)
+    };
+    (!value.is_empty()).then(|| SharedString::from(value))
+}
+
+fn element_state_style(
+    el: &Element,
+    ctx: &TemplateContext,
+    state: &str,
+    base: Option<&gpui::StyleRefinement>,
+) -> gpui::StyleRefinement {
+    let mut style = gpui::StyleRefinement::default();
+    for class in el.classes.iter().map(String::as_str).chain(
+        el.conditional_classes
+            .iter()
+            .filter(|class| eval_condition_bool(ctx, &class.condition))
+            .map(|class| class.class.as_str()),
+    ) {
+        let is_list = class.starts_with('{') && class.ends_with('}');
+        let resolved = if is_list {
+            ctx.interpolate(class).unwrap_or_default()
+        } else {
+            class.to_owned()
+        };
+        let classes = if is_list {
+            resolved.split_whitespace().collect::<Vec<_>>()
+        } else {
+            vec![resolved.as_str()]
+        };
+        for class in classes {
+            style = state_style_with_initial(style, std::iter::once(class), state, Some(ctx), base);
+        }
+    }
+    if style.box_shadow.as_ref() == base.and_then(|base| base.box_shadow.as_ref()) {
+        style.box_shadow = None;
+    }
+    style
+}
+
+fn finish_element(mut d: gpui::Div, el: &Element, ctx: &TemplateContext, path: &str) -> AnyElement {
+    let hover = element_state_style(el, ctx, "hover", Some(d.style()));
+    let focus = element_state_style(el, ctx, "focus", Some(d.style()));
+    let active = element_state_style(el, ctx, "active", Some(d.style()));
+    let focusable = focus != gpui::StyleRefinement::default();
+    let scrolling = [d.style(), &hover, &focus, &active].iter().any(|style| {
+        style.overflow.x == Some(gpui::Overflow::Scroll)
+            || style.overflow.y == Some(gpui::Overflow::Scroll)
+    });
+    let needs_id = scrolling || focusable || active != gpui::StyleRefinement::default();
+    let d = d.hover(|_| hover).focus(|_| focus);
+    let id = element_id(el, ctx)
+        .or_else(|| needs_id.then(|| SharedString::from(format!("crepus-node-{path}"))));
+    if let Some(id) = id {
+        let mut d = d.id(id.clone()).active(|_| active);
+        if focusable {
+            d = d.focusable().tab_index(0);
+        }
+        if !el.animations.is_empty() {
+            render_with_animations(d, &el.animations, path, Some(id))
+        } else {
+            d.into_any_element()
+        }
+    } else if !el.animations.is_empty() {
+        render_with_animations(d, &el.animations, path, None)
+    } else {
+        d.into_any_element()
+    }
+}
+
+fn animation_id(path: &str, explicit_id: Option<SharedString>) -> SharedString {
+    explicit_id.unwrap_or_else(|| SharedString::from(format!("crepus-anim-{path}")))
+}
+
+// GPUI retains the sequence index and start time under this ID. Configuration
+// edits must start fresh, especially when a shorter sequence replaces an old one.
+fn animation_state_id(
+    path: &str,
+    explicit_id: Option<SharedString>,
+    animations: &[AnimationSpec],
+) -> SharedString {
+    let mut config = DefaultHasher::new();
+    animations.len().hash(&mut config);
+    for spec in animations {
+        spec.property.hash(&mut config);
+        parse_duration_ms(&spec.duration_expr)
+            .unwrap_or(300)
+            .hash(&mut config);
+        spec.easing.hash(&mut config);
+        spec.repeat.hash(&mut config);
+    }
+    SharedString::from(format!(
+        "{}-{:016x}",
+        animation_id(path, explicit_id),
+        config.finish()
+    ))
+}
+
 /// Wrap a div with GPUI animations based on the parsed animation specs.
 fn render_with_animations<E: Styled + IntoElement + 'static>(
     d: E,
@@ -1740,5 +1845,40 @@ mod include_target_tests {
         );
         assert!(child.get("private_parent_value").is_none());
         assert_eq!(child.get_bool("is_macos"), parent.get_bool("is_macos"));
+    }
+}
+
+#[cfg(test)]
+mod attribute_id_tests {
+    use super::*;
+
+    #[test]
+    fn attribute_ids_use_null_omission_and_scalar_string_coercion() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "Attribute 雪");
+        for (expression, expected) in [
+            ("null", None),
+            ("undefined", None),
+            ("false", Some("false")),
+            ("42", Some("42")),
+            ("title", Some("Attribute 雪")),
+            ("\"\"", None),
+            ("1 +", None),
+        ] {
+            let mut nodes = crepuscularity_core::parse_template("div").unwrap();
+            let Node::Element(element) = &mut nodes[0] else {
+                panic!("expected element")
+            };
+            element.bindings.push(crepuscularity_core::ast::Binding {
+                origin: crepuscularity_core::ast::BindingOrigin::Attribute,
+                prop: "id".into(),
+                value: expression.into(),
+            });
+            assert_eq!(
+                element_id(element, &ctx).as_deref(),
+                expected,
+                "{expression}"
+            );
+        }
     }
 }
