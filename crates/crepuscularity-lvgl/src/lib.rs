@@ -540,21 +540,10 @@ fn color_value(value: &str) -> Option<String> {
         "black" => Some("#000000".into()),
         "white" => Some("#ffffff".into()),
         "transparent" => Some("#000000".into()),
-        "red-500" => Some("#ef4444".into()),
-        "green-500" => Some("#22c55e".into()),
-        "blue-500" => Some("#3b82f6".into()),
-        "yellow-500" => Some("#eab308".into()),
-        "zinc-50" => Some("#fafafa".into()),
-        "zinc-100" => Some("#f4f4f5".into()),
-        "zinc-400" => Some("#a1a1aa".into()),
-        "zinc-500" => Some("#71717a".into()),
-        "zinc-800" => Some("#27272a".into()),
-        "zinc-900" => Some("#18181b".into()),
-        "zinc-950" => Some("#09090b".into()),
         _ if value.starts_with("[#") && value.ends_with(']') => {
             Some(value[1..value.len() - 1].into())
         }
-        _ => None,
+        _ => crepuscularity_colors::lookup_named_color(value).map(str::to_owned),
     }
 }
 
@@ -623,7 +612,7 @@ div #root w-full h-full flex flex-col gap-2 bg-[#101820] p-4
         assert!(xml.contains(
             r##"<lv_label text_color="#ffffff" text_font="montserrat_16" text="Temp 24"/>"##
         ));
-        assert!(xml.contains(r##"<lv_button id="refresh" bg_color="#3b82f6""##));
+        assert!(xml.contains(r##"<lv_button id="refresh" bg_color="#2b7fff""##));
         assert!(xml.contains(r#"<lv_label text="Refresh"/>"#));
     }
 
