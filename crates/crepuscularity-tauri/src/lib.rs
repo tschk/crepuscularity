@@ -763,6 +763,36 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_config() {
+        let root = tempfile::tempdir().unwrap();
+        let err = TauriProject::open(root.path()).unwrap_err();
+        assert!(err.contains("no Tauri config under"));
+    }
+
+    #[test]
+    fn rejects_malformed_config() {
+        let root = project("tauri.conf.json", "{ malformed json", "dist");
+        assert!(TauriProject::open(root.path()).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_build_object() {
+        let root = project("tauri.conf.json", "{}", "dist");
+        let err = TauriProject::open(root.path()).unwrap_err();
+        assert_eq!(err, "tauri config missing build object");
+    }
+
+    #[test]
+    fn rejects_missing_dist_dir() {
+        let root = project("tauri.conf.json", r#"{"build":{}}"#, "dist");
+        let err = TauriProject::open(root.path()).unwrap_err();
+        assert_eq!(
+            err,
+            "tauri config missing build.frontendDist (v2) or build.distDir (v1)"
+        );
+    }
+
+    #[test]
     fn reads_v2_frontend_dist() {
         let root = project(
             "tauri.conf.json",
@@ -874,6 +904,18 @@ mod tests {
             .iter()
             .any(|use_| use_.api == "command" && use_.coverage == Coverage::Backend));
         assert!(report.native_ready().is_err());
+    }
+
+    #[test]
+    fn emit_all_payload_passing() {
+        let app = Builder::default().build();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let observed = seen.clone();
+        let _listener = app.listen("test_event", move |event| {
+            observed.lock().unwrap().push(event.payload.clone())
+        });
+        app.emit_all("test_event", serde_json::json!(42)).unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![serde_json::json!(42)]);
     }
 
     #[test]

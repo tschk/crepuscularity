@@ -24,8 +24,8 @@ pub use vue::{
 
 pub(crate) use indent::{collect_lines, parse_nodes};
 pub(crate) use jsx::parse_jsx_template;
-pub(crate) use svelte::parse_svelte_template;
 pub use svelte::entities as svelte_entities;
+pub(crate) use svelte::parse_svelte_template;
 pub use svelte::{
     parse_svelte_component, parse_svelte_module, parse_svelte_module_with_boundary,
     parse_svelte_module_with_styles_and_boundary, SvelteComponent, SvelteModule, SvelteSnippet,

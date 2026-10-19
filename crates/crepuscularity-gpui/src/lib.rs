@@ -44,11 +44,9 @@ impl From<Anchor> for Corner {
 
 pub const GPUI_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
-/// Embed a view with paint recycling when its parent re-renders.
+/// Convert a view into its type-erased representation.
 ///
-/// Mirrors Zed's `AnyView::cached` pattern: previous layout/paint is reused unless
-/// the child entity called `cx.notify()` (or the window is force-refreshed).
-/// Style must fill the parent slot — default style lays out as empty block.
+/// GPUI CE exposes no public paint-cache wrapper here; this conversion does not cache paints.
 #[deprecated(
     note = "gpui-ce no longer exposes a public `.cached()` API on AnyView; this is now an identity conversion and should be removed from callers"
 )]

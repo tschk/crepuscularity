@@ -177,7 +177,7 @@ fn element_id(el: &Element, ctx: &TemplateContext) -> Result<Option<String>, Cre
     }
     el.bindings
         .iter()
-        .find(|binding| binding.prop == "id")
+        .find(|binding| binding.matches_prop("id"))
         .map(|binding| crepuscularity_core::eval::eval_binding(binding, ctx))
         .transpose()
         .map(Option::flatten)
@@ -972,7 +972,11 @@ fn build_element(
 
     let is_text_only = text_only(&el.children);
     let properties = (|| -> Result<ScrollConfig, CrepusError> {
-        if let Some(binding) = el.bindings.iter().find(|binding| binding.prop == "title") {
+        if let Some(binding) = el
+            .bindings
+            .iter()
+            .find(|binding| binding.matches_prop("title"))
+        {
             hints.title = crepuscularity_core::eval::eval_binding(binding, ctx)?
                 .map(|value| value_to_str(&value));
         }
@@ -2224,7 +2228,7 @@ fn active_classes(el: &Element, ctx: &TemplateContext) -> Result<Vec<String>, Cr
         );
     }
     for binding in &el.bindings {
-        if binding.origin == BindingOrigin::Attribute && binding.prop == "class" {
+        if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
             if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
                 classes.extend(
                     value_to_str(&value)

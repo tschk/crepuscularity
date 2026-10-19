@@ -259,7 +259,6 @@ impl Inspect<'_> {
                 self.reject(
                     "Solid client resources require explicit @jsxImportSource solid-js provenance",
                 );
-
             }
             return;
         }

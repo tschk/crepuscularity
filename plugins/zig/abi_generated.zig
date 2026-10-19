@@ -5,14 +5,5 @@ const c = @cImport({
     @cInclude("crepuscularity_abi.h");
 });
 
-pub const crepus_session_free = c.crepus_session_free;
-pub const crepus_session_set_template_string = c.crepus_session_set_template_string;
-pub const crepus_session_set_component = c.crepus_session_set_component;
-pub const crepus_session_set_files_json = c.crepus_session_set_files_json;
-pub const crepus_session_set_context_json = c.crepus_session_set_context_json;
-pub const crepus_session_apply_context_patch_json = c.crepus_session_apply_context_patch_json;
-pub const *crepus_session_render_ir_json = c.*crepus_session_render_ir_json;
-pub const *crepus_session_dispatch_event_json = c.*crepus_session_dispatch_event_json;
-pub const *crepus_session_take_last_error = c.*crepus_session_take_last_error;
-pub const *crepus_last_error = c.*crepus_last_error;
+pub const crepus_last_error = c.crepus_last_error;
 pub const crepus_string_free = c.crepus_string_free;

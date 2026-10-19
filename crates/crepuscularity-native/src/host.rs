@@ -268,4 +268,61 @@ mod tests {
         assert_eq!(parse_java_major("abc.def"), None);
         assert_eq!(parse_java_major("  "), None);
     }
+
+    // Checked-in executables avoid writing a script immediately before executing it.
+    // Shell builtin printf also keeps these fixtures independent of external utilities.
+    #[cfg(unix)]
+    fn java_fixture(name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/java")
+            .join(name);
+        let metadata = std::fs::metadata(&path)
+            .unwrap_or_else(|error| panic!("Java fixture {}: {error}", path.display()));
+        assert!(
+            metadata.is_file(),
+            "Java fixture {} must be a regular file",
+            path.display()
+        );
+        assert!(
+            metadata.permissions().mode() & 0o111 != 0,
+            "Java fixture {} must be executable",
+            path.display()
+        );
+        path
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_success() {
+        let java = java_fixture("java17.sh");
+        assert!(
+            java_version_at_least(&java, 17),
+            "Java 17 fixture {} failed; metadata: {:?}",
+            java.display(),
+            std::fs::metadata(&java)
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_failure() {
+        assert!(!java_version_at_least(&java_fixture("java11.sh"), 17));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_invalid_output() {
+        assert!(!java_version_at_least(&java_fixture("invalid.sh"), 17));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_java_version_at_least_command_fails() {
+        assert!(!java_version_at_least(
+            Path::new("/does/not/exist/java"),
+            17
+        ));
+    }
 }
