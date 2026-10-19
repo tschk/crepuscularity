@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 #[cfg(target_os = "android")]
-use jni::objects::{JClass, JString};
+use jni::objects::{JClass, JObject, JString};
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
 
@@ -1144,7 +1144,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_dis
         Ok(action) => dispatch_action_json(action.to_string_lossy().as_ref()),
         Err(_) => "{\"ok\":false,\"action\":\"\",\"error\":\"invalid action string\",\"state\":{\"syncCount\":0,\"previewCount\":0,\"lastAction\":\"\"}}".to_string(),
     };
-    env.new_string(result).unwrap()
+    env.new_string(result).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1166,7 +1166,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_dis
             &MobileActionState::default(),
         ),
     };
-    env.new_string(result).unwrap()
+    env.new_string(result).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1198,7 +1198,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_dis
             &MobileActionState::default(),
         ),
     };
-    env.new_string(result).unwrap()
+    env.new_string(result).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1241,8 +1241,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_eva
     let expr = get_jni_string(&mut env, &expr);
     let scope_name = get_jni_string_opt(&mut env, &scope_name);
     let scope = get_jni_string_opt(&mut env, &scope);
-    env.new_string(eval_text(&expr, scope_name.as_deref(), scope.as_deref()))
-        .unwrap()
+    env.new_string(eval_text(&expr, scope_name.as_deref(), scope.as_deref())).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1291,8 +1290,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_eva
         &expr,
         scope_name.as_deref(),
         scope.as_deref(),
-    ))
-    .unwrap()
+    )).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1311,7 +1309,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_las
         unsafe { crepus_mobile_free_string(ptr) };
         result
     };
-    env.new_string(result).unwrap()
+    env.new_string(result).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
@@ -1330,7 +1328,7 @@ pub extern "system" fn Java_dev_crepuscularity_nativeshell_CrepusRustActions_las
         unsafe { crepus_mobile_free_string(ptr) };
         result
     };
-    env.new_string(result).unwrap()
+    env.new_string(result).unwrap_or_else(|_| JObject::null().into())
 }
 
 #[cfg(target_os = "android")]
