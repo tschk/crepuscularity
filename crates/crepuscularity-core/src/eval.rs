@@ -758,8 +758,8 @@ fn arith(
     Ok(TemplateValue::Null)
 }
 
-fn apply_property(val: TemplateValue, prop: &str) -> TemplateValue {
-    match (&val, prop) {
+fn apply_property(val: &TemplateValue, prop: &str) -> Result<TemplateValue, &'static str> {
+    Ok(match (val, prop) {
         (TemplateValue::Str(s), "len") | (TemplateValue::Str(s), "length") => {
             TemplateValue::Int(s.chars().count() as i64)
         }
@@ -775,19 +775,76 @@ fn apply_property(val: TemplateValue, prop: &str) -> TemplateValue {
         (TemplateValue::List(l), "is_empty") | (TemplateValue::List(l), "empty") => {
             TemplateValue::Bool(l.is_empty())
         }
-        (TemplateValue::Int(n), "abs") => TemplateValue::Int(n.abs()),
-        (TemplateValue::Float(f), "abs") => TemplateValue::Float(f.abs()),
-        (TemplateValue::Float(f), "floor") => TemplateValue::Int(f.floor() as i64),
-        (TemplateValue::Float(f), "ceil") => TemplateValue::Int(f.ceil() as i64),
-        (TemplateValue::Float(f), "round") => TemplateValue::Int(f.round() as i64),
+        (TemplateValue::Int(n), "abs") => {
+            TemplateValue::Int(n.checked_abs().ok_or("integer arithmetic overflow")?)
+        }
+        (TemplateValue::Float(f), "abs") => {
+            if !f.is_finite() {
+                return Err("non-finite numeric property result");
+            }
+            TemplateValue::Float(f.abs())
+        }
+        (TemplateValue::Float(f), "floor" | "ceil" | "round") => {
+            let rounded = match prop {
+                "floor" => f.floor(),
+                "ceil" => f.ceil(),
+                _ => f.round(),
+            };
+            // i64::MAX rounds up to 2^63 in f64, so the upper bound is exclusive.
+            if !rounded.is_finite() || rounded < i64::MIN as f64 || rounded >= -(i64::MIN as f64) {
+                return Err("numeric property result out of integer range");
+            }
+            TemplateValue::Int(rounded as i64)
+        }
         (TemplateValue::Scope(ctx), prop) => {
             ctx.vars.get(prop).cloned().unwrap_or(TemplateValue::Null)
         }
         _ => TemplateValue::Null,
-    }
+    })
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+pub(crate) fn is_variable_name(name: &str) -> bool {
+    matches!(tokenize(name).as_deref(), Ok([Token::Ident(identifier), Token::Eof]) if identifier == name)
+}
+
+/// Evaluate one literal operand without accepting names or compound expressions.
+pub fn eval_literal(expr: &str) -> Option<TemplateValue> {
+    if expr
+        .trim_start()
+        .strip_prefix('-')
+        .is_some_and(|rest| rest.trim_start().starts_with('-'))
+    {
+        return None;
+    }
+    let tokens = tokenize(expr).ok()?;
+    match tokens.as_slice() {
+        [Token::Int(_), Token::Eof]
+        | [Token::Float(_), Token::Eof]
+        | [Token::Str(_), Token::Eof]
+        | [Token::Bool(_), Token::Eof]
+        | [Token::Null, Token::Eof] => eval_expr(expr, &TemplateContext::new()).ok(),
+        [Token::Minus, Token::Int(_), Token::Eof] => eval_expr(expr, &TemplateContext::new()).ok(),
+        [Token::Minus, Token::Float(_), Token::Eof] => {
+            eval_expr(expr, &TemplateContext::new()).ok()
+        }
+        _ => None,
+    }
+}
+
+/// Check DSL expression syntax without reading variables or evaluating operations.
+pub fn validate_expr(expr: &str) -> Result<(), CrepusError> {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return Err(CrepusError::eval(expr, "expression must not be empty"));
+    }
+    let ctx = TemplateContext::new();
+    let mut parser = Parser::new(tokenize(expr)?, &ctx);
+    parser.skip_evaluation = true;
+    let value = parser.parse_expr();
+    parser.finish(expr, value).map(|_| ())
+}
 
 pub fn eval_expr(expr: &str, ctx: &TemplateContext) -> Result<TemplateValue, CrepusError> {
     let _span = if tracing::enabled!(tracing::Level::TRACE) {
@@ -799,23 +856,25 @@ pub fn eval_expr(expr: &str, ctx: &TemplateContext) -> Result<TemplateValue, Cre
     if expr.is_empty() {
         return Ok(TemplateValue::Null);
     }
-    let tokens = tokenize(expr);
+    let tokens = tokenize(expr)?;
     let mut parser = Parser::new(tokens, ctx);
     let value = parser.parse_expr();
-    if parser.depth_exceeded {
-        return Err(CrepusError::eval(
-            expr,
-            "expression nesting too deep to evaluate",
-        ));
+    parser.finish(expr, value)
+}
+
+/// Evaluate a binding while retaining HTML attribute presence semantics.
+pub fn eval_binding(
+    binding: &crate::ast::Binding,
+    ctx: &TemplateContext,
+) -> Result<Option<TemplateValue>, CrepusError> {
+    let value = eval_expr(&binding.value, ctx)?;
+    if binding.origin == crate::ast::BindingOrigin::Attribute {
+        return Ok(match value {
+            TemplateValue::Null => None,
+            value => Some(TemplateValue::Str(crate::context::value_to_str(&value))),
+        });
     }
-    if parser.is_at_end() {
-        Ok(value)
-    } else {
-        Err(CrepusError::eval(
-            expr,
-            "unexpected tokens after expression",
-        ))
-    }
+    Ok(Some(value))
 }
 
 /// Evaluate an expression as a boolean condition.
@@ -1006,6 +1065,44 @@ mod tests {
         assert!(matches!(
             eval_expr("!false", &ctx).unwrap(),
             TemplateValue::Bool(true)
+        ));
+    }
+
+    #[test]
+    fn nested_property_reads_preserve_owned_public_results() {
+        let mut scope = TemplateContext::new();
+        scope.set("label", "雪");
+        scope.vars.insert(
+            "items".into(),
+            TemplateValue::List(vec![TemplateContext::new(); 2]),
+        );
+        let mut ctx = TemplateContext::new();
+        ctx.vars.insert("scope".into(), TemplateValue::Scope(scope));
+        for expression in ["scope.items.len", "scope.items.length"] {
+            assert!(matches!(
+                eval_expr(expression, &ctx).unwrap(),
+                TemplateValue::Int(2)
+            ));
+        }
+        assert!(matches!(
+            eval_expr("scope.items.is_empty", &ctx).unwrap(),
+            TemplateValue::Bool(false)
+        ));
+        assert!(matches!(
+            eval_expr("scope.label.length", &ctx).unwrap(),
+            TemplateValue::Int(1)
+        ));
+        assert!(matches!(
+            eval_expr("scope.missing.length", &ctx).unwrap(),
+            TemplateValue::Null
+        ));
+        let TemplateValue::List(mut owned) = eval_expr("scope.items", &ctx).unwrap() else {
+            panic!("expected list")
+        };
+        owned.clear();
+        assert!(matches!(
+            eval_expr("scope.items.length", &ctx).unwrap(),
+            TemplateValue::Int(2)
         ));
     }
 
@@ -1290,6 +1387,40 @@ mod tests {
     }
 
     #[test]
+    fn numeric_properties_check_range_and_preserve_valid_results() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("minimum", i64::MIN);
+        ctx.set("lower", i64::MIN as f64);
+        ctx.set("upper", -(i64::MIN as f64));
+        ctx.set("infinite", f64::INFINITY);
+        ctx.set("nan", f64::NAN);
+        ctx.set("fraction", -1.5);
+        for source in [
+            "minimum.abs",
+            "upper.floor",
+            "infinite.ceil",
+            "nan.round",
+            "infinite.abs",
+        ] {
+            assert!(eval_expr(source, &ctx).is_err(), "{source}");
+        }
+        for (source, expected) in [
+            ("lower.round", i64::MIN),
+            ("fraction.floor", -2),
+            ("fraction.ceil", -1),
+            ("fraction.round", -2),
+        ] {
+            assert!(
+                matches!(eval_expr(source, &ctx).unwrap(), TemplateValue::Int(value) if value == expected),
+                "{source}"
+            );
+        }
+        assert!(
+            matches!(eval_expr("fraction.abs", &ctx).unwrap(), TemplateValue::Float(value) if value == 1.5)
+        );
+    }
+
+    #[test]
     fn floating_point_arithmetic_rejects_non_finite_results() {
         let mut ctx = TemplateContext::new();
         ctx.set("large", f64::MAX);
@@ -1430,4 +1561,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn decimal_scanning_preserves_numeric_property_access() {
+        let ctx = TemplateContext::new();
+        assert!(matches!(
+            eval_expr("42.empty", &ctx).unwrap(),
+            TemplateValue::Null
+        ));
+        for source in ["42.abs", "42. abs", "42 .abs"] {
+            assert!(
+                matches!(eval_expr(source, &ctx).unwrap(), TemplateValue::Int(42)),
+                "{source}"
+            );
+        }
+        assert!(
+            matches!(eval_expr("(-.5).abs",&ctx).unwrap(),TemplateValue::Float(value) if value == 0.5)
+        );
+    }
+}
+
+#[cfg(test)]
+mod variable_name_tests {
+    #[test]
+    fn loop_names_match_the_expression_identifier_grammar() {
+        for name in ["item", "_row", "item2", "Nullish"] {
+            assert!(super::is_variable_name(name), "{name}");
+        }
+        for name in [
+            "",
+            "2item",
+            "item.name",
+            "item other",
+            "true",
+            "false",
+            "null",
+            "none",
+            "None",
+            "Null",
+            "é",
+            "$item",
+        ] {
+            assert!(!super::is_variable_name(name), "{name}");
+        }
+    }
 }
