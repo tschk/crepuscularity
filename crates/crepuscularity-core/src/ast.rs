@@ -39,10 +39,61 @@ pub struct EventHandler {
     pub handler: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingOrigin {
+    Expression,
+    Literal,
+    /// An HTML attribute binding: null removes it; other values become strings.
+    Attribute,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
+    pub origin: BindingOrigin,
     pub prop: String,
     pub value: String,
+}
+
+impl Binding {
+    /// Match a known HTML semantic property without changing its serialized spelling.
+    /// Property/directive names retain their existing case-sensitive behavior.
+    pub fn matches_prop(&self, name: &str) -> bool {
+        if self.origin == BindingOrigin::Attribute {
+            self.prop.eq_ignore_ascii_case(name)
+        } else {
+            self.prop == name
+        }
+    }
+}
+
+#[cfg(test)]
+mod binding_origin_tests {
+    use super::*;
+
+    #[test]
+    fn attribute_semantic_matching_preserves_authored_spelling() {
+        let attribute = Binding {
+            origin: BindingOrigin::Attribute,
+            prop: "ClAsS".into(),
+            value: "name".into(),
+        };
+        assert!(attribute.matches_prop("class"));
+        assert_eq!(attribute.prop, "ClAsS");
+        for origin in [BindingOrigin::Expression, BindingOrigin::Literal] {
+            let property = Binding {
+                origin,
+                ..attribute.clone()
+            };
+            assert!(!property.matches_prop("class"));
+            assert!(property.matches_prop("ClAsS"));
+        }
+        let svg = Binding {
+            origin: BindingOrigin::Attribute,
+            prop: "viewBox".into(),
+            value: "box".into(),
+        };
+        assert_eq!(svg.prop, "viewBox");
+    }
 }
 
 /// An animation specification parsed from `animate:property={duration easing}`.

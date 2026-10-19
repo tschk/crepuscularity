@@ -329,7 +329,7 @@ impl<'a> Walker<'a> {
         }
         let mut interval_ms = 3200u64;
         for b in &el.bindings {
-            if b.prop == "interval" {
+            if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
                 let v = value_to_str(&eval_expr(&b.value, ctx)?);
                 let v = v.trim_matches('"').trim();
                 interval_ms = v.parse().unwrap_or(3200);
@@ -365,13 +365,21 @@ impl<'a> Walker<'a> {
             out.push_str(&format!(r#" data-crepus-id="c{id}""#));
             out.push_str(" data-crepus-kind=\"slot-rotate\"");
         }
-        if let Some(class_attr) =
-            crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
-        {
-            out.push_str(" class=\"");
-            out.push_str(&class_attr);
-            out.push('"');
+        let mut class_attr = crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
+            .unwrap_or_default();
+        for binding in &el.bindings {
+            if binding.origin == BindingOrigin::Attribute
+                && binding.prop.eq_ignore_ascii_case("class")
+            {
+                if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
+                    class_attr.push(' ');
+                    class_attr.push_str(&crate::escape_html(&value_to_str(&value)));
+                }
+            }
         }
+        out.push_str(" class=\"");
+        out.push_str(&class_attr);
+        out.push('"');
         out.push_str(" data-slot-words=\"");
         out.push_str(&crate::escape_html(&words_json));
         out.push('"');
@@ -496,17 +504,26 @@ impl<'a> Walker<'a> {
     }
 }
 
-fn push_bindings(
+pub(crate) fn push_bindings(
     out: &mut String,
     el: &Element,
     ctx: &TemplateContext,
     skip_interval: bool,
 ) -> Result<(), CrepusError> {
     for binding in &el.bindings {
-        if skip_interval && binding.prop == "interval" {
+        if skip_interval
+            && binding.origin == BindingOrigin::Attribute
+            && binding.prop.eq_ignore_ascii_case("class")
+        {
             continue;
         }
-        let evaluated = eval_expr(&binding.value, ctx)?;
+        if skip_interval && binding.prop == "interval" && binding.origin != BindingOrigin::Attribute
+        {
+            continue;
+        }
+        let Some(evaluated) = crepuscularity_core::eval::eval_binding(binding, ctx)? else {
+            continue;
+        };
         let value = match evaluated {
             TemplateValue::Bool(false)
                 if is_boolean_html_attribute(&binding.prop)

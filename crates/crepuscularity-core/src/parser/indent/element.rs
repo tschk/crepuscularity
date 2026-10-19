@@ -101,7 +101,11 @@ pub(crate) fn parse_element_line(line: &str, children: Vec<Node>) -> Element {
                 let value = rest[eq_pos + 1..]
                     .trim_matches(|c| c == '{' || c == '}')
                     .to_string();
-                bindings.push(Binding { prop, value });
+                bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
+                    prop,
+                    value,
+                });
             }
         } else if let Some(rest) = token.strip_prefix("animate:") {
             // animate:property={duration easing} or animate:property={duration easing repeat}
@@ -157,6 +161,7 @@ pub(crate) fn parse_element_line(line: &str, children: Vec<Node>) -> Element {
                         format!("\"{}\"", unquoted)
                     };
                     bindings.push(Binding {
+                        origin: crate::ast::BindingOrigin::Expression,
                         prop: key.to_string(),
                         value: expr,
                     });
@@ -178,6 +183,7 @@ pub(crate) fn parse_element_line(line: &str, children: Vec<Node>) -> Element {
         ) {
             // Boolean HTML attributes
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: token.clone(),
                 value: "\"\"".to_string(),
             });

@@ -542,6 +542,7 @@ struct EventHandler {
 
 #[derive(Debug, Clone)]
 struct Binding {
+    origin: crepuscularity_core::ast::BindingOrigin,
     prop: String,
     value: String,
 }
@@ -616,6 +617,7 @@ fn core_node_to_macro(node: &crepuscularity_core::ast::Node) -> Result<Node, Str
                 .bindings
                 .iter()
                 .map(|b| Binding {
+                    origin: b.origin,
                     prop: b.prop.clone(),
                     value: b.value.clone(),
                 })
@@ -799,6 +801,16 @@ fn generate_child_call(node: &Node) -> Result<TokenStream2, String> {
 }
 
 fn generate_element(element: &Element) -> Result<TokenStream2, String> {
+    if let Some(binding) = element
+        .bindings
+        .iter()
+        .find(|binding| binding.origin == crepuscularity_core::ast::BindingOrigin::Attribute)
+    {
+        return Err(format!(
+            "GPUI macros do not support HTML attribute binding `attr.{}`",
+            binding.prop
+        ));
+    }
     let tag_expr = element_tag_to_tokens(&element.tag);
 
     let class_methods: Vec<TokenStream2> = element
@@ -1683,4 +1695,20 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #path_value))
     }}
     .into()
+}
+
+#[cfg(test)]
+mod binding_origin_tests {
+    use super::*;
+    #[test]
+    fn attribute_binding_provenance_reaches_explicit_gpui_rejection() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<input [attr.checked]=\"false\"/>",
+            Some(std::path::Path::new("View.ng")),
+        )
+        .unwrap();
+        let node = core_node_to_macro(&nodes[0]).unwrap();
+        let error = generate_node(&node).unwrap_err();
+        assert!(error.contains("attr.checked"), "{error}");
+    }
 }
