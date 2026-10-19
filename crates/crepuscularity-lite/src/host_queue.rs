@@ -77,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn test_host_command_queue_concurrency() {
+    fn test_host_command_queue_concurrency() -> Result<(), String> {
         let queue = HostCommandQueue::new();
         let queue_clone = Arc::clone(&queue);
 
@@ -96,15 +96,19 @@ mod tests {
         // Final drain after the producer thread is done
         all_drained.extend(queue.drain());
 
-        producer.join().unwrap();
+        if producer.join().is_err() {
+            return Err("Producer thread panicked".to_string());
+        }
 
         assert_eq!(all_drained.len(), 1000);
         for (i, cmd) in all_drained.into_iter().enumerate() {
             if let HostDeferred::SetWindowTitle(title) = cmd {
                 assert_eq!(title, format!("Title {}", i));
             } else {
-                panic!("Unexpected command");
+                return Err("Unexpected command".to_string());
             }
         }
+
+        Ok(())
     }
 }
