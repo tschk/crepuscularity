@@ -536,10 +536,18 @@ pub fn escape_html(input: &str) -> String {
 /// True for attributes whose value a browser resolves as a URL, and which
 /// therefore carry a scheme that `escape_html` cannot neutralise.
 pub(crate) fn is_url_attr(prop: &str) -> bool {
-    matches!(
-        prop,
-        "href" | "src" | "srcset" | "action" | "formaction" | "poster" | "data" | "xlink:href"
-    )
+    [
+        "href",
+        "src",
+        "srcset",
+        "action",
+        "formaction",
+        "poster",
+        "data",
+        "xlink:href",
+    ]
+    .iter()
+    .any(|name| prop.eq_ignore_ascii_case(name))
 }
 
 /// Scheme as a browser reads it: leading C0 whitespace is skipped and tab, LF
@@ -569,7 +577,9 @@ fn url_scheme(value: &str) -> String {
 pub(crate) fn is_safe_url_value(prop: &str, value: &str) -> bool {
     match url_scheme(value).as_str() {
         "javascript" | "vbscript" => false,
-        "data" => !matches!(prop, "href" | "xlink:href" | "action" | "formaction"),
+        "data" => !["href", "xlink:href", "action", "formaction"]
+            .iter()
+            .any(|name| prop.eq_ignore_ascii_case(name)),
         _ => true,
     }
 }
@@ -718,5 +728,25 @@ mod attribute_origin_hydration_tests {
             "{html}"
         );
         assert_eq!(html.matches(" class=").count(), 1, "{html}");
+    }
+    #[test]
+    fn hydration_filters_mixed_case_url_attributes_without_rewriting_names() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            r#"<a [attr.HREF]="'javascript:alert(1)'">unsafe</a><button [attr.FORMAction]="'data:text/html,bad'">unsafe</button><img [attr.SRC]="'data:image/png;base64,AA=='"/>"#,
+            Some(std::path::Path::new("Entry.ng")),
+        ).unwrap();
+        let html = super::render_nodes_with_hydration_impl(
+            &nodes,
+            &super::TemplateContext::new(),
+            &std::sync::atomic::AtomicU32::new(0),
+            true,
+        )
+        .unwrap();
+        assert!(!html.contains(" HREF="), "{html}");
+        assert!(!html.contains(" FORMAction="), "{html}");
+        assert!(
+            html.contains("SRC=\"data:image/png;base64,AA==\""),
+            "{html}"
+        );
     }
 }

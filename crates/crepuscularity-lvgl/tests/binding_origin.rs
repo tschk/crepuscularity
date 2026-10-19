@@ -50,3 +50,24 @@ fn malformed_attribute_expression_propagates() {
         render_nodes_to_lvgl_xml(&nodes, &TemplateContext::new(), &LvglOptions::default()).is_err()
     );
 }
+
+#[test]
+fn known_html_attribute_names_map_case_insensitively_without_changing_custom_xml_names() {
+    let nodes = parse_template_with_path(
+        r#"<input [attr.PLACEHOLDER]="'Hint'" [attr.VALUE]="'typed'" [attr.SRC]="'image.png'" [attr.viewBox]="'0 0 10 10'"/>"#,
+        Some(Path::new("Entry.ng")),
+    ).unwrap();
+    let xml =
+        render_nodes_to_lvgl_xml(&nodes, &TemplateContext::new(), &LvglOptions::default()).unwrap();
+    for expected in [
+        "placeholder_text=\"Hint\"",
+        "value=\"typed\"",
+        "src=\"image.png\"",
+        "viewBox=\"0 0 10 10\"",
+    ] {
+        assert!(xml.contains(expected), "{xml}");
+    }
+    for unexpected in ["PLACEHOLDER=", "VALUE=", "SRC=", "viewbox="] {
+        assert!(!xml.contains(unexpected), "{xml}");
+    }
+}

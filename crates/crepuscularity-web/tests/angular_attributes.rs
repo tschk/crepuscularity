@@ -64,3 +64,22 @@ fn mixed_case_attribute_classes_match_html_semantics_without_rewriting_svg_names
         assert!(html.contains("viewBox=\"0 0 10 10\""), "{html}");
     }
 }
+
+#[test]
+fn mixed_case_url_attributes_keep_the_same_safety_policy() {
+    for html in variants(
+        r#"<a [attr.HREF]="'javascript:alert(1)'">unsafe</a><a [attr.HREF]="'data:text/html,bad'">unsafe data</a><button [attr.FORMAction]="'data:text/html,bad'">unsafe</button><img [attr.SRC]="'data:image/png;base64,AA=='"/><a [attr.HREF]="'https://example.test/path'">safe</a>"#,
+    ) {
+        assert!(!html.contains("javascript:"), "{html}");
+        assert!(!html.contains("data:text/html"), "{html}");
+        assert!(!html.contains(" FORMAction="), "{html}");
+        assert!(
+            html.contains("SRC=\"data:image/png;base64,AA==\""),
+            "{html}"
+        );
+        assert!(
+            html.contains("HREF=\"https://example.test/path\""),
+            "{html}"
+        );
+    }
+}

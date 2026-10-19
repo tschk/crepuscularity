@@ -251,7 +251,7 @@ fn render_element(
                 continue;
             }
             if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
-                let mut name = lvgl_attr_name(&binding.prop);
+                let mut name = lvgl_html_attribute_name(&binding.prop);
                 let value = if matches!(
                     name.to_ascii_lowercase().as_str(),
                     "hidden" | "disabled" | "checked"
@@ -440,6 +440,17 @@ fn eval_binding(value: &str, ctx: &TemplateContext) -> Result<String, CrepusErro
         ctx.interpolate(trimmed)
             .map_err(|e| CrepusError::render(e.to_string()))
     }
+}
+
+// Only known HTML attribute mappings are case-insensitive. Custom XML names
+// retain their authored case, and ordinary property bindings retain exact matching.
+fn lvgl_html_attribute_name(name: &str) -> String {
+    for known in ["class", "src", "value", "placeholder", "disabled"] {
+        if name.eq_ignore_ascii_case(known) {
+            return lvgl_attr_name(known);
+        }
+    }
+    lvgl_attr_name(name)
 }
 
 fn lvgl_attr_name(name: &str) -> String {
