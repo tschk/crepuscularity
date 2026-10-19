@@ -454,3 +454,16 @@ fn trusted_event_modifier_is_preserved() {
     let nodes = parse("<button on:click|trusted={save} />");
     assert_eq!(el(&nodes[0]).event_handlers[0].modifiers, ["trusted"]);
 }
+#[test]
+fn test_parse_svelte_component_raw() {
+    use super::parse_svelte_component_raw;
+    let src = "<script>let a = 1;</script><style>p { color: red; }</style><p>{a}</p>";
+    let result = parse_svelte_component_raw(src).expect("should parse");
+    assert_eq!(result.script.as_deref(), Some("let a = 1;"));
+    assert_eq!(result.style.as_deref(), Some("p { color: red; }"));
+    assert_eq!(result.nodes.len(), 1);
+
+    let src2 = "<p>ok</p></div>";
+    let err2 = parse_svelte_component_raw(src2).expect_err("expected error");
+    assert!(err2.message.contains("trailing markup"));
+}
