@@ -4,7 +4,118 @@ use crate::ast::*;
 
 use super::attrs::{JsxAttr, JsxAttrValue};
 
-pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<Node>) -> Element {
+/// Canonical DOM events shared by JSX aliases and Svelte 5 event attributes.
+pub(crate) const DOM_EVENTS: &[&str] = &[
+    "click",
+    "dblclick",
+    "input",
+    "beforeinput",
+    "change",
+    "submit",
+    "reset",
+    "select",
+    "focus",
+    "focusin",
+    "focusout",
+    "blur",
+    "keydown",
+    "keyup",
+    "keypress",
+    "mousedown",
+    "mouseup",
+    "mousemove",
+    "mouseenter",
+    "mouseleave",
+    "mouseover",
+    "mouseout",
+    "contextmenu",
+    "wheel",
+    "scroll",
+    "toggle",
+    "load",
+    "error",
+    "copy",
+    "cut",
+    "paste",
+    "gotpointercapture",
+    "lostpointercapture",
+    "pointerdown",
+    "pointerup",
+    "pointermove",
+    "pointerenter",
+    "pointerleave",
+    "touchstart",
+    "touchend",
+    "touchmove",
+    "touchcancel",
+    "dragstart",
+    "dragend",
+    "dragover",
+    "dragenter",
+    "dragleave",
+    "drop",
+    "animationend",
+    "transitionend",
+    "abort",
+    "animationcancel",
+    "animationiteration",
+    "animationstart",
+    "auxclick",
+    "beforematch",
+    "beforetoggle",
+    "cancel",
+    "canplay",
+    "canplaythrough",
+    "close",
+    "compositionend",
+    "compositionstart",
+    "compositionupdate",
+    "cuechange",
+    "drag",
+    "durationchange",
+    "emptied",
+    "encrypted",
+    "ended",
+    "fullscreenchange",
+    "fullscreenerror",
+    "invalid",
+    "loadeddata",
+    "loadedmetadata",
+    "loadstart",
+    "pause",
+    "play",
+    "playing",
+    "pointercancel",
+    "progress",
+    "ratechange",
+    "resize",
+    "scrollend",
+    "seeked",
+    "seeking",
+    "stalled",
+    "suspend",
+    "timeupdate",
+    "transitioncancel",
+    "transitionrun",
+    "transitionstart",
+    "volumechange",
+    "waiting",
+];
+
+pub(crate) fn jsx_build_element(
+    tag: &str,
+    attrs: Vec<JsxAttr>,
+    children: Vec<Node>,
+) -> Result<Element, &'static str> {
+    jsx_build_element_with_class_literals(tag, attrs, children, true)
+}
+
+pub(crate) fn jsx_build_element_with_class_literals(
+    tag: &str,
+    attrs: Vec<JsxAttr>,
+    children: Vec<Node>,
+    literal_classes: bool,
+) -> Result<Element, &'static str> {
     let mut id = None;
     let mut classes = Vec::new();
     let mut conditional_classes = Vec::new();
@@ -19,9 +130,16 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         if key == "class" || key == "className" {
             match &attr.value {
                 JsxAttrValue::Str(s) => {
-                    classes.extend(s.split_whitespace().map(|c| c.to_string()));
+                    if literal_classes {
+                        classes.extend(s.split_whitespace().map(super::super::literal_class_token));
+                    } else {
+                        classes.extend(super::super::indent::split_class_tokens(s));
+                    }
                 }
                 JsxAttrValue::Expr(e) => {
+                    if e.trim().is_empty() {
+                        return Err("class attributes require a nonempty expression");
+                    }
                     // Dynamic expression — keep as a single {expr} class token
                     classes.push(format!("{{{}}}", e));
                 }
@@ -31,10 +149,34 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         }
 
         if key == "id" {
-            if let Some(value) = attr.as_expr() {
-                let trimmed = value.trim();
-                if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-                    id = Some(trimmed[1..trimmed.len() - 1].to_string());
+            if id.is_some()
+                || bindings
+                    .iter()
+                    .any(|binding: &Binding| binding.prop == "id")
+            {
+                return Err("an element may have only one id attribute");
+            }
+            match &attr.value {
+                JsxAttrValue::Str(value) => id = Some(value.clone()),
+                JsxAttrValue::Expr(expression) => {
+                    let expression = expression.trim();
+                    if expression.is_empty() {
+                        return Err("id attributes require a nonempty expression");
+                    }
+                    if let Some(crate::context::TemplateValue::Str(value)) =
+                        crate::eval::eval_literal(expression)
+                    {
+                        id = Some(value);
+                    } else {
+                        bindings.push(Binding {
+                            origin: crate::ast::BindingOrigin::Expression,
+                            prop: "id".to_string(),
+                            value: expression.to_string(),
+                        });
+                    }
+                }
+                JsxAttrValue::Bool(_) => {
+                    return Err("id attributes require a literal or expression")
                 }
             }
             continue;
@@ -42,9 +184,16 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
 
         // class:name={condition}
         if let Some(class_name) = key.strip_prefix("class:") {
+            if class_name.is_empty() {
+                return Err("conditional class directives require a class name");
+            }
+            let condition = attr.as_expr().unwrap_or_default();
+            if condition.trim().is_empty() {
+                return Err("conditional class directives require a nonempty condition");
+            }
             conditional_classes.push(ConditionalClass {
                 class: class_name.to_string(),
-                condition: attr.as_expr().unwrap_or_default(),
+                condition,
             });
             continue;
         }
@@ -57,7 +206,7 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
                 cond_src.trim().to_string()
             };
             if condition.is_empty() {
-                continue;
+                return Err("when directives require a nonempty condition");
             }
             match &attr.value {
                 JsxAttrValue::Str(s) => {
@@ -83,7 +232,9 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
                         }
                     }
                 }
-                JsxAttrValue::Expr(_) | JsxAttrValue::Bool(_) => {}
+                JsxAttrValue::Expr(_) | JsxAttrValue::Bool(_) => {
+                    return Err("when directives require a literal class list");
+                }
             }
             continue;
         }
@@ -91,15 +242,22 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         // @event={handler}
         if let Some(event_part) = key.strip_prefix('@') {
             let event = event_part.split('|').next().unwrap_or("").to_string();
-            let modifiers = event_part
+            if event.is_empty() {
+                return Err("event directives require an event name");
+            }
+            let modifiers: Vec<String> = event_part
                 .split('|')
                 .skip(1)
                 .map(|s| s.to_string())
                 .collect();
+            if modifiers.iter().any(|modifier| modifier.trim().is_empty()) {
+                return Err("event directives require nonempty modifier entries");
+            }
             event_handlers.push(EventHandler {
+                model_before_listener: None,
                 event,
                 modifiers,
-                handler: attr.as_expr().unwrap_or_default(),
+                handler: attr.event_handler()?,
             });
             continue;
         }
@@ -108,16 +266,39 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         if key.starts_with("on") && key.len() > 2 {
             let rest = &key[2..];
             if rest.starts_with(|c: char| c.is_ascii_uppercase()) {
-                let first = rest.chars().next().unwrap();
-                let event = format!(
-                    "{}{}",
-                    first.to_ascii_lowercase(),
-                    &rest[first.len_utf8()..]
-                );
+                let canonical = |name: &str| {
+                    let lower = name.to_ascii_lowercase();
+                    if lower == "doubleclick" {
+                        "dblclick".to_string()
+                    } else {
+                        lower
+                    }
+                };
+                let lower = canonical(rest);
+                let (event, modifiers) = if DOM_EVENTS.contains(&lower.as_str()) {
+                    (lower, vec![])
+                } else if let Some(base) = rest
+                    .strip_suffix("Capture")
+                    .map(canonical)
+                    .filter(|base| DOM_EVENTS.contains(&base.as_str()))
+                {
+                    (base, vec!["capture".to_string()])
+                } else {
+                    let first = rest.chars().next().unwrap();
+                    (
+                        format!(
+                            "{}{}",
+                            first.to_ascii_lowercase(),
+                            &rest[first.len_utf8()..]
+                        ),
+                        vec![],
+                    )
+                };
                 event_handlers.push(EventHandler {
+                    model_before_listener: None,
                     event,
-                    modifiers: vec![],
-                    handler: attr.as_expr().unwrap_or_default(),
+                    modifiers,
+                    handler: attr.event_handler()?,
                 });
                 continue;
             }
@@ -125,8 +306,17 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
 
         // animate:property={duration easing}
         if let Some(prop) = key.strip_prefix("animate:") {
-            let val = attr.as_expr().unwrap_or_default();
+            if prop.is_empty() {
+                return Err("animation directives require a property name");
+            }
+            let val = match &attr.value {
+                JsxAttrValue::Str(value) | JsxAttrValue::Expr(value) => value.clone(),
+                JsxAttrValue::Bool(_) => attr.as_expr().unwrap_or_default(),
+            };
             let parts: Vec<&str> = val.split_whitespace().collect();
+            if parts.len() > 3 || parts.get(2).is_some_and(|token| *token != "repeat") {
+                return Err("animation settings accept duration, easing, and optional repeat only");
+            }
             animations.push(AnimationSpec {
                 property: prop.to_string(),
                 duration_expr: parts.first().unwrap_or(&"300ms").to_string(),
@@ -138,16 +328,30 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
 
         // bind:prop={expr}
         if let Some(prop) = key.strip_prefix("bind:") {
+            if prop.is_empty() {
+                return Err("binding directives require a property name");
+            }
+            if prop == "id" && (id.is_some() || bindings.iter().any(|binding| binding.prop == "id"))
+            {
+                return Err("an element may have only one id attribute");
+            }
+            let value = attr.as_expr().unwrap_or_default();
+            if value.trim().is_empty() {
+                return Err("binding directives require a nonempty expression");
+            }
             bindings.push(Binding {
                 origin: crate::ast::BindingOrigin::Expression,
                 prop: prop.to_string(),
-                value: attr.as_expr().unwrap_or_default(),
+                value,
             });
             continue;
         }
 
         // All other attributes with values → binding
         if let Some(value) = attr.as_expr() {
+            if value.trim().is_empty() {
+                return Err("attribute bindings require a nonempty expression");
+            }
             bindings.push(Binding {
                 origin: crate::ast::BindingOrigin::Expression,
                 prop: key.clone(),
@@ -156,7 +360,7 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         }
     }
 
-    Element {
+    Ok(Element {
         tag: tag.to_string(),
         id,
         classes,
@@ -165,7 +369,28 @@ pub(crate) fn jsx_build_element(tag: &str, attrs: Vec<JsxAttr>, children: Vec<No
         bindings,
         animations,
         children,
+    })
+}
+
+pub(crate) fn jsx_validate_source_attrs(tag: &str, attrs: &[JsxAttr]) -> Result<(), String> {
+    for (index, attribute) in attrs.iter().enumerate() {
+        if attrs[..index]
+            .iter()
+            .any(|previous| previous.key == attribute.key)
+        {
+            return Err(format!("duplicate directive attribute {:?}", attribute.key));
+        }
     }
+    let mut sources = attrs
+        .iter()
+        .filter(|attribute| matches!(attribute.key.as_str(), "src" | "path"));
+    let source = sources.next().and_then(|attribute| attribute.as_str());
+    if sources.next().is_some() || source.is_none_or(|path| path.trim().is_empty()) {
+        return Err(format!(
+            "<{tag}> requires exactly one literal source path (src or path)"
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn jsx_build_include(attrs: Vec<JsxAttr>, slot: Vec<Node>) -> Node {

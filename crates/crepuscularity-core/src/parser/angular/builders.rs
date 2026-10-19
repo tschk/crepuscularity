@@ -33,7 +33,7 @@ fn directive_expr(attr: &JsxAttr) -> String {
 
 /// Plain attributes are literals, except for a whole-value `{{ expr }}`, which
 /// is the interpolated form of a property binding.
-fn literal_expr(attr: &JsxAttr) -> Result<String, RawParseError> {
+fn literal_expr(attr: &JsxAttr, decode_entities: bool) -> Result<String, RawParseError> {
     match &attr.value {
         JsxAttrValue::Str(s) => {
             let trimmed = s.trim();
@@ -42,7 +42,13 @@ fn literal_expr(attr: &JsxAttr) -> Result<String, RawParseError> {
                 .and_then(|r| r.strip_suffix("}}"))
             {
                 if !inner.contains("{{") {
-                    return Ok(inner.trim().to_string());
+                    let expression = inner.trim();
+                    if expression.is_empty() {
+                        return Err(unsupported(
+                            "attribute interpolation requires an expression",
+                        ));
+                    }
+                    return Ok(expression.to_string());
                 }
             }
             if trimmed.contains("{{") {
@@ -51,7 +57,12 @@ fn literal_expr(attr: &JsxAttr) -> Result<String, RawParseError> {
                      supported; use a `[prop]=\"…\"` binding instead"
                 )));
             }
-            Ok(format!("\"{}\"", s.replace('"', "\\\"")))
+            let value = if decode_entities {
+                super::super::svelte_entities::decode_html_entities(s, true)
+            } else {
+                s.clone()
+            };
+            Ok(super::super::quote_expression_string(&value))
         }
         JsxAttrValue::Expr(e) => Ok(e.clone()),
         JsxAttrValue::Bool(b) => Ok(b.to_string()),
@@ -63,6 +74,17 @@ pub(crate) fn angular_build_element(
     attrs: Vec<JsxAttr>,
     children: Vec<Node>,
 ) -> Result<AngularElement, RawParseError> {
+    if attrs
+        .iter()
+        .filter(|attribute| matches!(attribute.key.as_str(), "id" | "[id]" | "[attr.id]"))
+        .take(2)
+        .count()
+        > 1
+    {
+        return Err(unsupported(
+            "an element may have only one id attribute or binding",
+        ));
+    }
     let mut id = None;
     let mut classes: Vec<String> = Vec::new();
     let mut conditional_classes: Vec<ConditionalClass> = Vec::new();
@@ -76,14 +98,47 @@ pub(crate) fn angular_build_element(
         let key = attr.key.as_str();
 
         if key == "class" {
-            if let JsxAttrValue::Str(s) = &attr.value {
-                classes.extend(s.split_whitespace().map(|c| c.to_string()));
+            if matches!(&attr.value, JsxAttrValue::Expr(_)) {
+                return Err(unsupported(
+                    "class expressions are not supported here; use `[class]=\"…\"` instead",
+                ));
+            }
+            if let JsxAttrValue::Str(value) = &attr.value {
+                if value.contains("{{") {
+                    classes.push(format!("{{{}}}", literal_expr(attr, false)?));
+                } else {
+                    classes.extend(
+                        value
+                            .split_whitespace()
+                            .map(super::super::literal_class_token),
+                    );
+                }
             }
             continue;
         }
         if key == "id" {
-            if let JsxAttrValue::Str(s) = &attr.value {
-                id = Some(s.clone());
+            if let JsxAttrValue::Str(value) = &attr.value {
+                if value.contains("{{") {
+                    bindings.push(Binding {
+                        origin: crate::ast::BindingOrigin::Expression,
+                        prop: "id".to_string(),
+                        value: literal_expr(attr, false)?,
+                    });
+                } else {
+                    id = Some(value.clone());
+                }
+            } else {
+                let expression = directive_expr(attr);
+                if expression.is_empty() {
+                    return Err(unsupported(
+                        "id attributes require a literal or nonempty expression",
+                    ));
+                }
+                bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
+                    prop: "id".to_string(),
+                    value: expression,
+                });
             }
             continue;
         }
@@ -91,6 +146,9 @@ pub(crate) fn angular_build_element(
         if let Some(name) = key.strip_prefix('*') {
             match name {
                 "ngIf" => {
+                    if if_condition.is_some() {
+                        return Err(unsupported("an element may have only one *ngIf directive"));
+                    }
                     let expr = directive_expr(attr);
                     if expr.contains(';') {
                         return Err(unsupported(
@@ -103,7 +161,12 @@ pub(crate) fn angular_build_element(
                     }
                     if_condition = Some(expr);
                 }
-                "ngFor" => for_spec = Some(parse_for_head(&directive_expr(attr))?),
+                "ngFor" => {
+                    if for_spec.is_some() {
+                        return Err(unsupported("an element may have only one *ngFor directive"));
+                    }
+                    for_spec = Some(parse_for_head(&directive_expr(attr))?);
+                }
                 other => {
                     return Err(unsupported(format!(
                         "unsupported structural directive `*{other}` \
@@ -120,16 +183,25 @@ pub(crate) fn angular_build_element(
                     "two-way binding `[({inner})]` is not supported (only `[(ngModel)]` is)"
                 )));
             }
+            let expr = directive_expr(attr);
+            if expr.is_empty() {
+                return Err(unsupported("`[(ngModel)]` requires an expression"));
+            }
             bindings.push(Binding {
                 origin: crate::ast::BindingOrigin::Expression,
                 prop: "bind".to_string(),
-                value: directive_expr(attr),
+                value: expr,
             });
             continue;
         }
 
         if let Some(inner) = key.strip_prefix('[').and_then(|k| k.strip_suffix(']')) {
             let expr = directive_expr(attr);
+            if inner.is_empty() || expr.is_empty() {
+                return Err(unsupported(format!(
+                    "{key} requires a property name and a nonempty expression"
+                )));
+            }
             if let Some(class) = inner.strip_prefix("class.") {
                 if class.is_empty() {
                     return Err(unsupported("`[class.]` is missing a class name"));
@@ -160,12 +232,17 @@ pub(crate) fn angular_build_element(
                 });
                 continue;
             }
-            if inner == "innerHTML" {
-                replacement_children = Some(vec![Node::RawHtml(expr)]);
-                continue;
-            }
-            if inner == "innerText" || inner == "textContent" {
-                replacement_children = Some(vec![Node::Text(vec![TextPart::Expr(expr)])]);
+            if matches!(inner, "innerHTML" | "innerText" | "textContent") {
+                if replacement_children.is_some() {
+                    return Err(unsupported(
+                        "an element may have only one content binding (innerHTML, innerText, or textContent)",
+                    ));
+                }
+                replacement_children = Some(vec![if inner == "innerHTML" {
+                    Node::RawHtml(expr)
+                } else {
+                    Node::Text(vec![TextPart::Expr(expr)])
+                }]);
                 continue;
             }
             if matches!(inner, "ngIf" | "ngFor" | "ngForOf" | "ngSwitch") {
@@ -187,6 +264,13 @@ pub(crate) fn angular_build_element(
         }
 
         if let Some(inner) = key.strip_prefix('(').and_then(|k| k.strip_suffix(')')) {
+            if let Some((target, _)) = inner.split_once(':') {
+                if matches!(target, "window" | "document" | "body") {
+                    return Err(unsupported(format!(
+                        "global event target `({inner})` is not supported: the shared EventHandler has no target field"
+                    )));
+                }
+            }
             if let Some((event, pseudo)) = inner.split_once('.') {
                 return Err(unsupported(format!(
                     "pseudo-event `({event}.{pseudo})` is not supported: the shared \
@@ -196,10 +280,15 @@ pub(crate) fn angular_build_element(
             if inner.is_empty() {
                 return Err(unsupported("`()` is missing an event name"));
             }
+            let handler = directive_expr(attr);
+            if handler.is_empty() {
+                return Err(unsupported(format!("{key} requires a handler expression")));
+            }
             event_handlers.push(EventHandler {
+                model_before_listener: None,
                 event: inner.to_string(),
                 modifiers: Vec::new(),
-                handler: directive_expr(attr),
+                handler,
             });
             continue;
         }
@@ -216,10 +305,16 @@ pub(crate) fn angular_build_element(
             )));
         }
 
+        let value = literal_expr(attr, true)?;
+        if value.trim().is_empty() {
+            return Err(unsupported(
+                "attribute bindings require a nonempty expression",
+            ));
+        }
         bindings.push(Binding {
             origin: crate::ast::BindingOrigin::Expression,
             prop: key.to_string(),
-            value: literal_expr(attr)?,
+            value,
         });
     }
 
@@ -277,7 +372,15 @@ pub(crate) fn parse_for_head(src: &str) -> Result<(String, String), RawParseErro
         // `track` / `trackBy` are pure DOM-diffing concerns the shared IR does
         // not model, so they are accepted and dropped. Everything else in the
         // head binds a variable that would be undefined at render time.
-        if extra.starts_with("track") {
+        let tracking = extra.strip_prefix("trackBy:").or_else(|| {
+            extra
+                .strip_prefix("track")
+                .filter(|tail| tail.starts_with(char::is_whitespace))
+        });
+        if let Some(expression) = tracking {
+            if expression.trim().is_empty() {
+                return Err(unsupported("loop tracking requires an expression"));
+            }
             continue;
         }
         return Err(unsupported(format!(
@@ -286,9 +389,10 @@ pub(crate) fn parse_for_head(src: &str) -> Result<(String, String), RawParseErro
         )));
     }
 
-    let lhs_rhs = [" of ", " in "]
-        .iter()
-        .find_map(|kw| main.find(kw).map(|pos| (&main[..pos], &main[pos + 4..])));
+    let lhs_rhs = super::super::scan_top_level(main, |i, _| {
+        main[i..].starts_with(" of ") || main[i..].starts_with(" in ")
+    })
+    .map(|pos| (&main[..pos], &main[pos + 4..]));
     let Some((lhs, iterator)) = lhs_rhs else {
         return Err(unsupported(format!(
             "could not parse for-loop head {src:?} (expected `let item of items`)"
@@ -320,6 +424,9 @@ pub(crate) fn parse_for_head(src: &str) -> Result<(String, String), RawParseErro
             "for-loop head {src:?} has no iterable expression"
         )));
     }
+    if !crate::eval::is_variable_name(pattern) {
+        return Err(unsupported("loop requires a supported item variable name"));
+    }
     Ok((pattern.to_string(), iterator.to_string()))
 }
 
@@ -327,10 +434,15 @@ fn split_top_level_semicolons(src: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
     let mut quote: Option<char> = None;
+    let mut escaped = false;
     let mut start = 0usize;
     for (i, c) in src.char_indices() {
         if let Some(q) = quote {
-            if c == q {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
                 quote = None;
             }
             continue;

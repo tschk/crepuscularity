@@ -86,6 +86,13 @@ pub(crate) fn strip_trailing_inline_css(
 }
 
 fn looks_like_css_line(line: &str) -> bool {
+    // Attribute expressions can contain Rust paths and semicolons, just like CSS.
+    if line
+        .split_once('{')
+        .is_some_and(|(prefix, _)| prefix.trim_end().ends_with('='))
+    {
+        return false;
+    }
     if line.starts_with('@') || line.starts_with("/*") || line.starts_with('}') {
         return true;
     }

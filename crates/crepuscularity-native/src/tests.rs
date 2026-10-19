@@ -1074,7 +1074,7 @@ fn vue_sfc_lowers_to_view_ir_with_class_tokens() {
     <button class="px-4 py-2" @click.prevent="increment">Add</button>
     <input type="text" v-model="query" />
     <ul class="list">
-      <li v-for="(item, i) in items" class="row">{{ item }}</li>
+      <li v-for="item in items" class="row">{{ item }}</li>
     </ul>
   </div>
 </template>

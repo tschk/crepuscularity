@@ -69,36 +69,27 @@ impl TemplateContext {
 
     /// Interpolate a string with `{expr}` placeholders.
     /// Expressions are fully evaluated (arithmetic, property access, etc.).
+    /// Quoted braces remain part of the expression; empty or unclosed placeholders error.
     pub fn interpolate(&self, template: &str) -> Result<String, crate::error::CrepusError> {
         let mut result = String::new();
-        let mut chars = template.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '{' {
-                let mut expr = String::new();
-                let mut depth = 1usize;
-                for c in chars.by_ref() {
-                    match c {
-                        '{' => {
-                            depth += 1;
-                            expr.push(c);
-                        }
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                            expr.push(c);
-                        }
-                        _ => expr.push(c),
-                    }
-                }
-                let val = crate::eval::eval_expr(expr.trim(), self)?;
-                result.push_str(&value_to_str(&val));
-            } else {
-                result.push(ch);
+        let mut remaining = template;
+        while let Some(start) = remaining.find('{') {
+            result.push_str(&remaining[..start]);
+            let placeholder = &remaining[start..];
+            let end = crate::parser::match_delimiter(placeholder, '{', '}').ok_or_else(|| {
+                crate::error::CrepusError::render("unclosed interpolation placeholder")
+            })?;
+            let expression = placeholder[1..end].trim();
+            if expression.is_empty() {
+                return Err(crate::error::CrepusError::render(
+                    "interpolation requires a nonempty expression",
+                ));
             }
+            let val = crate::eval::eval_expr(expression, self)?;
+            result.push_str(&value_to_str(&val));
+            remaining = &placeholder[end + 1..];
         }
+        result.push_str(remaining);
 
         Ok(result)
     }
@@ -235,22 +226,36 @@ mod tests {
     #[test]
     fn test_interpolate_nested_braces() {
         let ctx = TemplateContext::new();
-        // Assuming your expression evaluator can handle something that evaluates to a string or number,
-        // but maybe nested braces aren't valid expressions unless they are part of string literals?
-        // Wait, the interpolate method supports nested brackets (e.g. `{ { "a": 1 } }` maybe? No wait, that's not expression syntax for dicts maybe?
-        // Let's just check the depth counting logic: it should balance `{` and `}`.
-        // E.g., `{"{"}` should evaluate to `{` since it's a string literal.
+        // Braces inside expression string literals are ordinary text.
         assert_eq!(ctx.interpolate(r#"Brace: {"{"}"#).unwrap(), "Brace: {");
         assert_eq!(ctx.interpolate(r#"Braces: {"{}"}"#).unwrap(), "Braces: {}");
+        assert_eq!(
+            ctx.interpolate(r#"Brace: {"}"} after"#).unwrap(),
+            "Brace: } after"
+        );
+        assert_eq!(ctx.interpolate("{'brace }'}!").unwrap(), "brace }!");
+        assert_eq!(ctx.interpolate(r#"{"\"}"} tail"#).unwrap(), "\"} tail");
+        assert_eq!(
+            ctx.interpolate(r#"{"{"} then {1 + 2}"#).unwrap(),
+            "{ then 3"
+        );
+        assert_eq!(ctx.interpolate(r#"你好 {"雪}"}!"#).unwrap(), "你好 雪}!");
+    }
+
+    #[test]
+    fn test_interpolate_rejects_unclosed_placeholders() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "Alice");
+        for source in ["Hello {name", "{1 + 2", r#"{"text""#] {
+            assert!(ctx.interpolate(source).is_err(), "{source}");
+        }
     }
 
     #[test]
     fn test_interpolate_error_cases() {
         let ctx = TemplateContext::new();
 
-        // Invalid expression that parsing actually fails on.
-        // Note: the basic parser handles `+` as just an empty parse returning Null in some cases,
-        // so we use an expression with extra tokens to trigger an evaluation error.
+        // Invalid expression with trailing tokens.
         assert!(ctx.interpolate("Hello {1 2}").is_err());
     }
 

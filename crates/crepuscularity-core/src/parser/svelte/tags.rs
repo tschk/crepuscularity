@@ -3,12 +3,14 @@
 use crate::ast::Node;
 
 use super::super::jsx::attrs::{jsx_parse_attrs, JsxAttr, JsxAttrValue};
-use super::super::jsx::builders::jsx_build_element;
+use super::super::jsx::builders::{
+    jsx_build_element_with_class_literals, jsx_build_include, jsx_validate_source_attrs, DOM_EVENTS,
+};
 use super::super::jsx::text::jsx_close;
 use super::super::RawParseError;
 use super::{parse_svelte_nodes, svelte_err};
 
-const VOID_TAGS: &[&str] = &[
+pub(super) const VOID_TAGS: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
     "track", "wbr",
 ];
@@ -22,57 +24,6 @@ const UNSUPPORTED_DIRECTIVES: &[&str] = &[
     "animate:",
     "let:",
     "style:",
-];
-
-/// Lowercase DOM events recognised in Svelte 5 attribute form (`onclick={…}`).
-const DOM_EVENTS: &[&str] = &[
-    "click",
-    "dblclick",
-    "input",
-    "change",
-    "submit",
-    "reset",
-    "select",
-    "focus",
-    "focusin",
-    "focusout",
-    "blur",
-    "keydown",
-    "keyup",
-    "keypress",
-    "mousedown",
-    "mouseup",
-    "mousemove",
-    "mouseenter",
-    "mouseleave",
-    "mouseover",
-    "mouseout",
-    "contextmenu",
-    "wheel",
-    "scroll",
-    "toggle",
-    "load",
-    "error",
-    "copy",
-    "cut",
-    "paste",
-    "pointerdown",
-    "pointerup",
-    "pointermove",
-    "pointerenter",
-    "pointerleave",
-    "touchstart",
-    "touchend",
-    "touchmove",
-    "touchcancel",
-    "dragstart",
-    "dragend",
-    "dragover",
-    "dragenter",
-    "dragleave",
-    "drop",
-    "animationend",
-    "transitionend",
 ];
 
 pub(crate) fn parse_svelte_tag<'a>(
@@ -117,16 +68,24 @@ pub(crate) fn parse_svelte_tag<'a>(
     let (attrs, after_gt, self_closing) = jsx_parse_attrs(root, rest)?;
     let attrs = rewrite_svelte_attrs(root, src, attrs)?;
 
-    if self_closing || VOID_TAGS.contains(&tag) {
-        return Ok((
-            Node::Element(jsx_build_element(tag, attrs, vec![])),
-            after_gt,
-        ));
+    if tag == "include" {
+        jsx_validate_source_attrs(tag, &attrs).map_err(|message| svelte_err(root, src, message))?;
     }
-
-    let (children, rest) = parse_svelte_nodes(root, after_gt, depth + 1)?;
-    let rest = jsx_close(root, rest, tag)?;
-    Ok((Node::Element(jsx_build_element(tag, attrs, children)), rest))
+    let (children, rest) = if self_closing || VOID_TAGS.contains(&tag) {
+        (vec![], after_gt)
+    } else {
+        let (children, rest) = parse_svelte_nodes(root, after_gt, depth + 1)?;
+        (children, jsx_close(root, rest, tag)?)
+    };
+    let node = if tag == "include" {
+        jsx_build_include(attrs, children)
+    } else {
+        Node::Element(
+            jsx_build_element_with_class_literals(tag, attrs, children, false)
+                .map_err(|message| svelte_err(root, src, message))?,
+        )
+    };
+    Ok((node, rest))
 }
 
 /// Rewrite Svelte attribute syntax into the keys `jsx_build_element` understands.
@@ -159,6 +118,13 @@ fn rewrite_svelte_attrs(
                      records named bindings only",
                 ));
             }
+            if !crate::eval::is_variable_name(name) {
+                return Err(svelte_err(
+                    root,
+                    src,
+                    "shorthand attributes require a supported variable name",
+                ));
+            }
             out.push(JsxAttr {
                 key: name.to_string(),
                 value: JsxAttrValue::Expr(name.to_string()),
@@ -179,8 +145,37 @@ fn rewrite_svelte_attrs(
 
         // `on:click={h}` / `on:click|once={h}` → `@click` / `@click|once`.
         if let Some(event) = key.strip_prefix("on:") {
+            if event.split('|').next().is_none_or(str::is_empty) {
+                return Err(svelte_err(root, src, "on directives require an event name"));
+            }
+            if matches!(attr.value, JsxAttrValue::Bool(_)) {
+                return Err(svelte_err(
+                    root,
+                    src,
+                    "Svelte event forwarding is not supported",
+                ));
+            }
+            let mut parts = event.split('|');
+            let mut translated = format!("@{}", parts.next().unwrap_or_default());
+            for modifier in parts {
+                let modifier = match modifier {
+                    "preventDefault" => "prevent",
+                    "stopPropagation" => "stop",
+                    "stopImmediatePropagation" => "immediate",
+                    "self" | "once" | "capture" | "trusted" => modifier,
+                    _ => {
+                        return Err(svelte_err(
+                            root,
+                            src,
+                            format!("unsupported Svelte event modifier `{modifier}`"),
+                        ));
+                    }
+                };
+                translated.push('|');
+                translated.push_str(modifier);
+            }
             out.push(JsxAttr {
-                key: format!("@{event}"),
+                key: translated,
                 value: attr.value,
             });
             continue;
@@ -194,6 +189,27 @@ fn rewrite_svelte_attrs(
                     value: attr.value,
                 });
                 continue;
+            }
+        }
+
+        if let Some(name) = key
+            .strip_prefix("class:")
+            .or_else(|| key.strip_prefix("bind:"))
+        {
+            if name.is_empty() {
+                return Err(svelte_err(
+                    root,
+                    src,
+                    "class and bind directives require a name",
+                ));
+            }
+            if matches!(&attr.value, JsxAttrValue::Expr(expression) if expression.trim().is_empty())
+            {
+                return Err(svelte_err(
+                    root,
+                    src,
+                    "class and bind directives require a nonempty expression",
+                ));
             }
         }
 
@@ -213,10 +229,16 @@ fn rewrite_svelte_attrs(
 
         // Svelte's two-way form bindings are the shared AST's `bind=` binding,
         // which every renderer already wires up for inputs, toggles and pickers.
-        if matches!(
-            attr.key.as_str(),
-            "bind:value" | "bind:checked" | "bind:group" | "bind:files"
-        ) {
+        if let Some(name) = attr.key.strip_prefix("bind:") {
+            if !matches!(name, "value" | "checked" | "group" | "files") {
+                return Err(svelte_err(
+                    root,
+                    src,
+                    format!(
+                        "unsupported Svelte binding `bind:{name}` in the shared template frontend"
+                    ),
+                ));
+            }
             attr.key = "bind:bind".to_string();
         }
 

@@ -1882,6 +1882,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "crepuscularity-colors"
+version = "0.1.0"
+
+[[package]]
 name = "crepuscularity-components"
 version = "0.1.0"
 dependencies = [
@@ -1894,9 +1898,11 @@ name = "crepuscularity-core"
 version = "0.5.0"
 dependencies = [
  "caseless",
+ "crepuscularity-colors",
  "notify 8.2.0",
  "serde_json",
  "sha2 0.11.0",
+ "stacker",
  "tempfile",
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
