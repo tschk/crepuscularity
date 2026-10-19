@@ -1248,3 +1248,160 @@ fn generated_text_overflow_and_whitespace_match_supported_gpui_styles() {
     let _ =
         view! { "div hover:text-ellipsis focus:whitespace-normal class:text-ellipsis={enabled}" };
 }
+
+#[test]
+fn generated_color_opacity_suffixes_match_runtime_alpha_policy() {
+    let mut actual = view! { "div bg-white/50.5 bg-white/NaN text-[#1234]/25 text-[#12]/50 border-transparent/50" };
+    let mut expected = gpui::div()
+        .bg(gpui::rgba(0xffffff80))
+        .text_color(gpui::rgba(0x1122333f))
+        .border_color(gpui::rgba(0));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let mut actual = view! { "div bg-red-500/50 border-[#aabbcc80]/100" };
+    let mut expected = gpui::div()
+        .bg(gpui::rgba(0xfb2c367f))
+        .border_color(gpui::rgba(0xaabbccff));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let enabled = true;
+    let _ = view! { "div hover:bg-white/50 focus:text-[#123]/75 class:border-white/50={enabled}" };
+}
+
+#[test]
+fn bound_color_opacity_suffixes_evaluate_once_and_preserve_invalid_overrides() {
+    let mut reads = 0;
+    let mut color = || {
+        reads += 1;
+        0x123456u32
+    };
+    let mut actual = view! { "div bg-{color()}/50 bg-{color()}/NaN" };
+    let mut expected = gpui::div().bg(gpui::rgba(0x1234567f));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    assert_eq!(reads, 1);
+    let color = 0xaabbccu32;
+    let mut actual = view! { "div text-{color}/25 border-{color}/100" };
+    let mut expected = gpui::div()
+        .text_color(gpui::rgba(0xaabbcc3f))
+        .border_color(gpui::rgba(0xaabbccff));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let color = 0x224466u32;
+    let mut actual = view! { "div bg-{color/2}" };
+    let mut expected = gpui::div().bg(gpui::rgb(0x112233));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[test]
+fn malformed_bound_color_suffixes_do_not_execute_the_expression() {
+    let reads = std::cell::Cell::new(0);
+    let color = || {
+        reads.set(reads.get() + 1);
+        0x123456u32
+    };
+    let mut actual = view! { "div bg-white bg-{color()}junk text-{color()}junk/50" };
+    let mut expected = gpui::div().bg(gpui::white());
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    assert_eq!(reads.get(), 0);
+    let _ = color();
+}
+
+#[test]
+fn bound_color_expressions_preserve_quoted_braces_through_template_parsing() {
+    let color = |value: &str| match value {
+        "}" => 0x123456u32,
+        "{" => 0xaabbccu32,
+        _ => 0u32,
+    };
+    let mut actual = view! {r#"div bg-{color("}")} text-{color("{")}/50"#};
+    let mut expected = gpui::div()
+        .bg(gpui::rgb(0x123456))
+        .text_color(gpui::rgba(0xaabbcc7f));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_color_opacity_blends_static_and_bound_colors() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::AppContext;
+    struct OpacityPaintView;
+    impl gpui::Render for OpacityPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let color = 0x0000ffu32;
+            view! {r#"div flex flex-row bg-white
+  div w-[40px] h-[40px] bg-[#f00]/50
+  div w-[40px] h-[40px] bg-{color}/50
+  div w-[40px] h-[40px] bg-transparent/100
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(120.0), gpui::px(60.0)), |_, app| {
+            app.new(|_| OpacityPaintView)
+        })
+        .unwrap()
+        .into();
+    cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+        .unwrap();
+    let image = cx.capture_screenshot(window).unwrap();
+    let scale = image.width() / 120;
+    let actual = [10, 50, 90].map(|x| image.get_pixel(x * scale, 10 * scale).0);
+    assert_eq!(
+        actual,
+        [
+            [255, 128, 128, 255],
+            [128, 128, 255, 255],
+            [255, 255, 255, 255]
+        ]
+    );
+}
+
+#[test]
+fn generated_named_and_bracketed_colors_share_runtime_resolution() {
+    let mut actual = view! { "div bg-[white] text-[red-500] border-white border-transparent" };
+    let mut expected = gpui::div()
+        .bg(gpui::white())
+        .text_color(gpui::rgb(0xfb2c36))
+        .border_color(gpui::rgba(0));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let mut actual = view! { "div bg-clear text-white text-clear border-[black]" };
+    let mut expected = gpui::div()
+        .bg(gpui::rgba(0))
+        .text_color(gpui::rgba(0))
+        .border_color(gpui::black());
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
