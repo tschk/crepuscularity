@@ -1257,13 +1257,23 @@ fn build_slot(
     _parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
-    let (nodes, slot_ctx) = if let Some((slot_nodes, slot_ctx_box)) = &ctx.slot {
-        (slot_nodes.as_slice(), slot_ctx_box.as_ref())
+    let (nodes, slot_ctx, caller_slot) = if let Some(frame) = slot {
+        (frame.nodes, frame.context, frame.caller_slot)
+    } else if let Some((slot_nodes, slot_ctx_box)) = &ctx.slot {
+        (slot_nodes.as_slice(), slot_ctx_box.as_ref(), None)
     } else {
-        (el.children.as_slice(), ctx)
+        (el.children.as_slice(), ctx, slot)
     };
-    let children = build_children(nodes, slot_ctx, Direction::Vertical, inherited, renderer);
+    let children = build_children(
+        nodes,
+        slot_ctx,
+        Direction::Vertical,
+        inherited,
+        renderer,
+        caller_slot,
+    );
     WidgetChild {
         node: WidgetNode::Container {
             direction: Direction::Vertical,
