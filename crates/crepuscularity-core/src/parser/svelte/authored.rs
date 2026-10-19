@@ -1767,14 +1767,14 @@ impl Markup<'_> {
             } else {
                 match attribute.value {
                     JsxAttrValue::Bool(true)
-                        if !component
-                            && !(dynamic && key == "xmlns")
-                            && !matches!(
+                        if !(component
+                            || (dynamic && key == "xmlns")
+                            || matches!(
                                 key.as_str(),
                                 "checked" | "defaultChecked" | "defaultValue"
                             )
-                            && !(key == "value"
-                                && matches!(name, "textarea" | "select" | "option")) =>
+                            || (key == "value"
+                                && matches!(name, "textarea" | "select" | "option"))) =>
                     {
                         "\"\"".to_string()
                     }
