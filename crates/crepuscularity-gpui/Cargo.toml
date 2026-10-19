@@ -15,8 +15,8 @@ path = "src/lib.rs"
 # Default enables font-kit (cross-platform) but NO platform backend.
 # You must enable at least one of: wayland, x11, macos, or windows.
 default = ["font-kit"]
-font-kit = ["gpui/font-kit"]
-full-gpui = ["gpui/default"]
+font-kit = ["gpui/font-kit", "gpui_platform/font-kit", "crepuscularity-runtime/font-kit"]
+full-gpui = ["gpui/default", "font-kit"]
 # Platform backends (choose at least one for your target). With gpui-ce the backend crates are
 # selected automatically per-target by `gpui_platform`; these features propagate the backend
 # choice (Linux needs wayland and/or x11, macOS/Windows are automatic).
@@ -42,6 +42,6 @@ gpui = { package = "gpui-ce", version = "0.2.2", default-features = false }
 gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
-crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20" }
+crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", default-features = false }
 # gpui-symbols = { version = "0.6", optional = true } # incompatible with gpui-ce
 pollster = "0.4"

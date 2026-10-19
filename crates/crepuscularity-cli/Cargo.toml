@@ -54,7 +54,7 @@ benchmark = []
 
 [dependencies]
 gpui                   = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"], optional = true }
-gpui_platform          = { package = "gpui_ce_platform", version = "0.1.0", optional = true }
+gpui_platform          = { package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"], optional = true }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", optional = true }
 crepuscularity-tui = { path = "../crepuscularity-tui", version = "0.4.24", optional = true }
