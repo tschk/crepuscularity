@@ -224,3 +224,31 @@ fn failed_draw_with_smaller_area_preserves_neighbor_widgets() {
     let text: String = (0..11).map(|x| buffer[(x, 0)].symbol()).collect();
     assert_eq!(text, "OriNeighbor");
 }
+
+#[test]
+fn explicit_invalidate_refreshes_disk_only_include_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("root.crepus");
+    let child = directory.path().join("child.crepus");
+    std::fs::write(&entry, "include child.crepus").unwrap();
+    std::fs::write(&child, "span \"Before\"").unwrap();
+    let mut template = Template::from_path(&entry).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(30, 2)).unwrap();
+    terminal
+        .draw(|frame| assert!(template.draw_if_changed(frame, frame.area()).unwrap()))
+        .unwrap();
+    std::fs::write(&child, "span \"After\"").unwrap();
+    template.invalidate();
+    terminal
+        .draw(|frame| assert!(template.draw_if_changed(frame, frame.area()).unwrap()))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("After"), "{text}");
+    assert!(!text.contains("Before"), "{text}");
+}

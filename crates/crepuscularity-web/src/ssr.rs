@@ -225,7 +225,11 @@ pub fn wrap_ssr_document(inner: &str, doc: &SsrDocument<'_>) -> String {
 </body>
 </html>
 "#,
-        doc.lang, title_esc, head_safe, body_class, inner
+        crate::escape_html(doc.lang),
+        title_esc,
+        head_safe,
+        body_class,
+        inner
     )
 }
 
@@ -261,7 +265,7 @@ pub fn render_ssr_document_with_nodes(
     Ok(wrap_ssr_document(&inner, doc))
 }
 
-fn append_hydration_payload(
+pub(crate) fn append_hydration_payload(
     html: &mut String,
     ctx: &TemplateContext,
     bind: &BindMap,

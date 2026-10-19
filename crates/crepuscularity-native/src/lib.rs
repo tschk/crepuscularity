@@ -30,6 +30,7 @@ pub mod hot_reload;
 pub mod imba;
 mod include_expand;
 pub mod ir;
+pub mod js_expr;
 pub mod moonshine;
 pub mod moonshine_dom;
 #[cfg(feature = "web-modules")]
@@ -55,8 +56,6 @@ mod svelte_attributes;
 mod svelte_await;
 #[cfg(feature = "web-modules")]
 mod svelte_bindings;
-#[cfg(feature = "web-modules")]
-mod svelte_groups;
 #[cfg(feature = "web-modules")]
 mod svelte_boundary;
 #[cfg(feature = "web-modules")]
@@ -84,13 +83,19 @@ mod svelte_each;
 #[cfg(feature = "web-modules")]
 mod svelte_effect;
 #[cfg(feature = "web-modules")]
+mod svelte_groups;
+#[cfg(feature = "web-modules")]
 use crepuscularity_core::parser::svelte_entities;
+#[cfg(feature = "web-modules")]
+mod svelte_element;
 #[cfg(feature = "web-modules")]
 mod svelte_events;
 #[cfg(feature = "web-modules")]
 mod svelte_exports;
 #[cfg(feature = "web-modules")]
 mod svelte_expression;
+#[cfg(feature = "web-modules")]
+mod svelte_head;
 #[cfg(feature = "web-modules")]
 mod svelte_html;
 #[cfg(feature = "web-modules")]
@@ -120,11 +125,8 @@ mod svelte_store;
 #[cfg(feature = "web-modules")]
 mod svelte_text;
 #[cfg(feature = "web-modules")]
-mod svelte_head;
-#[cfg(feature = "web-modules")]
-mod svelte_element;
-#[cfg(feature = "web-modules")]
 pub use svelte_module::{compile_moonshine_svelte, rewrite_moonshine_imports};
+mod utils;
 pub mod vue;
 
 pub use capabilities::{
@@ -164,12 +166,10 @@ pub use moonshine::{emit_moonshine_app, emit_moonshine_component};
 pub use moonshine_dom::{emit_moonshine_dom_component, emit_moonshine_ssr_component};
 #[cfg(feature = "web-modules")]
 pub use moonshine_module::{
-    compile_moonshine_module, compile_moonshine_module_with_resolver,
-    try_compile_moonshine_module, try_compile_moonshine_module_with_resolver, MoonshineModule,
-    MoonshineModuleLanguage, MoonshineModuleTarget,
+    compile_moonshine_module, compile_moonshine_module_with_resolver, try_compile_moonshine_module,
+    try_compile_moonshine_module_with_resolver, MoonshineModule, MoonshineModuleLanguage,
+    MoonshineModuleTarget,
 };
-#[cfg(feature = "web-modules")]
-pub use solid_component_resolver::SolidComponentModule;
 pub use mutations::{apply_mutations, diff_ir, IrMutation};
 pub use native::{
     FilePickerRequest, FilePickerResponse, NativeCapability, NativePluginRequest,
@@ -180,6 +180,8 @@ pub use render::{
     render_template_to_ir_with_path,
 };
 pub use solid::emit_solid_component;
+#[cfg(feature = "web-modules")]
+pub use solid_component_resolver::SolidComponentModule;
 pub use svelte::emit_svelte_component;
 pub use vue::emit_vue_component;
 
