@@ -1,6 +1,6 @@
 //! Retained single-line text input for the pinned GPUI-CE backend.
 //! Runtime `input` nodes use keyed window state. Compiled templates may insert
-//! an Entity<TextInput> as a native expression without changing their GPUI alias.
+//! an `Entity<TextInput>` as a native expression without changing their GPUI alias.
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use crepuscularity_core::{ast, TemplateContext};
