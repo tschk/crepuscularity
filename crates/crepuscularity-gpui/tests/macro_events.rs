@@ -625,6 +625,190 @@ fn generated_visible_overflow_resets_only_requested_axes() {
 }
 
 #[test]
+fn generated_scroll_utilities_compile_without_explicit_ids_and_set_axes() {
+    let cases = [
+        (view! { "div overflow-auto" }, true, true),
+        (view! { "div overflow-scroll" }, true, true),
+        (view! { "div overflow-x-auto" }, true, false),
+        (view! { "div overflow-x-scroll" }, true, false),
+        (view! { "div overflow-y-auto" }, false, true),
+        (view! { "div overflow-y-scroll" }, false, true),
+    ];
+    for (mut actual, x, y) in cases {
+        assert_eq!(
+            actual.style().overflow.x,
+            x.then_some(gpui::Overflow::Scroll)
+        );
+        assert_eq!(
+            actual.style().overflow.y,
+            y.then_some(gpui::Overflow::Scroll)
+        );
+        assert!(gpui::Element::id(&actual).is_some());
+    }
+    let enabled = true;
+    let _ =
+        view! { "div hover:overflow-auto focus:overflow-x-scroll class:overflow-y-auto={enabled}" };
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_static_and_dynamic_scroll_containers_move_independently() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::{AppContext, InputEvent};
+    struct ScrollPaintView;
+    impl gpui::Render for ScrollPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let classes = "overflow-x-auto";
+            view! {r#"div flex flex-row gap-[10px] bg-white
+  div flex flex-col w-[40px] h-[40px] overflow-y-auto
+    div shrink-0 w-[40px] h-[40px] bg-[#ff0000]
+    div shrink-0 w-[40px] h-[40px] bg-[#0000ff]
+  div flex flex-row w-[40px] h-[40px] class={classes}
+    div shrink-0 w-[40px] h-[40px] bg-[#ff0000]
+    div shrink-0 w-[40px] h-[40px] bg-[#0000ff]
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(120.0), gpui::px(100.0)), |_, app| {
+            app.new(|_| ScrollPaintView)
+        })
+        .unwrap()
+        .into();
+    let pixels = |cx: &mut gpui::HeadlessAppContext| {
+        cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+            .unwrap();
+        let image = cx.capture_screenshot(window).unwrap();
+        let scale = image.width() / 120;
+        [10, 60].map(|x| image.get_pixel(x * scale, 10 * scale).0)
+    };
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    assert_eq!(pixels(&mut cx), [red, red]);
+    for (x, dx, dy, expected) in [
+        (10.0, 0.0, -40.0, [blue, red]),
+        (60.0, -40.0, 0.0, [blue, blue]),
+    ] {
+        cx.update_window(window, |_, window, app| {
+            window.dispatch_event(
+                gpui::ScrollWheelEvent {
+                    position: gpui::point(gpui::px(x), gpui::px(10.0)),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(dx), gpui::px(dy))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                app,
+            );
+        })
+        .unwrap();
+        assert_eq!(pixels(&mut cx), expected);
+        assert_eq!(pixels(&mut cx), expected);
+    }
+}
+
+#[gpui::test]
+fn generated_loop_focus_identities_are_distinct_across_iterations(cx: &mut gpui::TestAppContext) {
+    struct LoopFocusView;
+    impl gpui::Render for LoopFocusView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            view! {r#"div flex flex-col
+  for _outer in [1, 2].into_iter()
+    for _inner in [1, 2].into_iter()
+      button w-[100px] h-[20px] focus:bg-red-500
+"#}
+        }
+    }
+    let (_, cx) = cx.add_window_view(|_, _| LoopFocusView);
+    let mut handles = Vec::new();
+    for y in [10.0, 30.0, 50.0, 70.0] {
+        cx.simulate_click(
+            gpui::point(gpui::px(10.0), gpui::px(y)),
+            gpui::Modifiers::default(),
+        );
+        let handle = cx.update(|window, app| window.focused(app).unwrap());
+        assert!(!handles.contains(&handle));
+        handles.push(handle);
+    }
+    cx.update(|window, app| window.focus_prev(app));
+    assert_eq!(
+        cx.update(|window, app| window.focused(app).unwrap()),
+        handles[2]
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires a Metal device"]
+fn generated_loop_scroll_containers_move_independently() {
+    let _guard = METAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use gpui::{AppContext, InputEvent};
+    struct ScrollPaintView;
+    impl gpui::Render for ScrollPaintView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let items = ["flex-col overflow-y-auto", "flex-row overflow-x-auto"];
+            view! {r#"div flex flex-row gap-[10px] bg-white
+  for classes in items.into_iter()
+    div w-[40px] h-[40px] flex class={classes}
+      div shrink-0 w-[40px] h-[40px] bg-[#ff0000]
+      div shrink-0 w-[40px] h-[40px] bg-[#0000ff]
+"#}
+        }
+    }
+    let platform = gpui_platform::current_platform(true);
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        platform.text_system(),
+        std::sync::Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx
+        .open_window(gpui::size(gpui::px(120.0), gpui::px(100.0)), |_, app| {
+            app.new(|_| ScrollPaintView)
+        })
+        .unwrap()
+        .into();
+    let pixels = |cx: &mut gpui::HeadlessAppContext| {
+        cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+            .unwrap();
+        let image = cx.capture_screenshot(window).unwrap();
+        let scale = image.width() / 120;
+        [10, 60].map(|x| image.get_pixel(x * scale, 10 * scale).0)
+    };
+    let red = [255, 0, 0, 255];
+    let blue = [0, 0, 255, 255];
+    assert_eq!(pixels(&mut cx), [red, red]);
+    for (x, dx, dy, expected) in [
+        (10.0, 0.0, -40.0, [blue, red]),
+        (60.0, -40.0, 0.0, [blue, blue]),
+    ] {
+        cx.update_window(window, |_, window, app| {
+            window.dispatch_event(
+                gpui::ScrollWheelEvent {
+                    position: gpui::point(gpui::px(x), gpui::px(10.0)),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(dx), gpui::px(dy))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                app,
+            );
+        })
+        .unwrap();
+        assert_eq!(pixels(&mut cx), expected);
+        assert_eq!(pixels(&mut cx), expected);
+    }
+}
+
+#[test]
 fn unsupported_gpui_utilities_do_not_generate_nonexistent_methods() {
     let mut actual = view! { "div relative p-2 fixed sticky select-none pointer-events-none hover:fixed focus:sticky" };
     let mut expected = gpui::div().relative().p_2();
