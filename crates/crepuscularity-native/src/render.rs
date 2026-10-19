@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext};
-use crepuscularity_core::eval::eval_expr;
+use crepuscularity_core::eval::{eval_binding, eval_expr};
 use crepuscularity_core::preprocess::slot_rotate_child_phrases;
 use crepuscularity_core::CrepusError;
 
@@ -159,6 +159,21 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<ViewNode, Crepu
     let mut node = render_element_inner(el, ctx)?;
     if let Some(id) = &el.id {
         node.set_id(id.clone());
+    } else if let Some(binding) = el
+        .bindings
+        .iter()
+        .find(|binding| binding.matches_prop("id"))
+    {
+        if let Some(value) = eval_binding(binding, ctx)? {
+            node.set_id(value_to_str(&value));
+        }
+    }
+    if let Some(binding) = el.bindings.iter().find(|binding| {
+        binding.matches_prop("hidden") && binding.origin == BindingOrigin::Attribute
+    }) {
+        if eval_binding(binding, ctx)?.is_some() {
+            node.style_mut().get_or_insert_with(Default::default).hidden = Some(true);
+        }
     }
     Ok(node)
 }
@@ -181,7 +196,7 @@ fn render_element_inner(el: &Element, ctx: &TemplateContext) -> Result<ViewNode,
         let phrases = slot_rotate_child_phrases(&el.children).map_err(CrepusError::render)?;
         let mut interval_ms = 3200u64;
         for b in &el.bindings {
-            if b.prop == "interval" {
+            if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
                 let v = value_to_str(&eval_expr(&b.value, ctx)?);
                 let v = v.trim_matches('"').trim();
                 interval_ms = v.parse().unwrap_or(3200);
@@ -355,11 +370,7 @@ fn render_form_element(
 
     if tag == "dropzone" {
         let label = collect_primary_text(&el.children, ctx).unwrap_or_default();
-        let accept = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "accept")
-            .and_then(|b| eval_expr(&b.value, ctx).ok().map(|v| value_to_str(&v)));
+        let accept = binding_value_string(el, "accept", ctx);
         let on_drop = el
             .event_handlers
             .iter()
@@ -379,15 +390,16 @@ fn render_form_element(
     if tag == "file-picker" || tag == "filepicker" || tag == "media-picker" {
         let label =
             collect_primary_text(&el.children, ctx).unwrap_or_else(|_| "Choose file".to_string());
-        let accept = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "accept")
-            .and_then(|b| eval_expr(&b.value, ctx).ok().map(|v| value_to_str(&v)))
+        let accept = binding_value_string(el, "accept", ctx)
             .map(|value| split_accept(&value))
             .unwrap_or_default();
-        let multiple = el.bindings.iter().any(|b| b.prop == "multiple")
-            || classes.iter().any(|c| c == "multiple");
+        // Portable picker flags historically use authored presence, including DSL
+        // bare flags. Only HTML attribute bindings omit their null value.
+        let multiple = el.bindings.iter().any(|binding| {
+            binding.matches_prop("multiple")
+                && (binding.origin != BindingOrigin::Attribute
+                    || eval_binding(binding, ctx).ok().flatten().is_some())
+        }) || classes.iter().any(|c| c == "multiple");
         let on_pick = el
             .event_handlers
             .iter()
@@ -405,17 +417,9 @@ fn render_form_element(
 
     if tag == "input" || tag == "textfield" || tag == "textinput" || tag == "textarea" {
         let bind = binding_raw(el, "bind").unwrap_or_default();
-        let placeholder = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "placeholder")
-            .map(|b| {
-                let v = b.value.trim();
-                v.trim_matches(|c| c == '"' || c == '\'').to_string()
-            })
-            .unwrap_or_default();
+        let placeholder = binding_value_string(el, "placeholder", ctx).unwrap_or_default();
         let multiline = classes.iter().any(|c| c == "multiline") || tag == "textarea";
-        let secure = binding_raw(el, "type")
+        let secure = binding_value_string(el, "type", ctx)
             .map(|value| value.eq_ignore_ascii_case("password"))
             .unwrap_or(false)
             || classes.iter().any(|c| c == "secure");
@@ -438,15 +442,7 @@ fn render_form_element(
                 let inner_tag = inner.tag.to_ascii_lowercase();
                 if matches!(inner_tag.as_str(), "span" | "button" | "option") {
                     let label = collect_primary_text(&inner.children, ctx)?;
-                    let value = inner
-                        .bindings
-                        .iter()
-                        .find(|b| b.prop == "value")
-                        .map(|b| {
-                            let v = b.value.trim();
-                            v.trim_matches(|c| c == '"' || c == '\'').to_string()
-                        })
-                        .filter(|s| !s.is_empty())
+                    let value = binding_string(inner, "value", ctx)
                         .unwrap_or_else(|| slug_option_value(&label));
                     options.push(PickerOption { value, label });
                 }
@@ -504,7 +500,7 @@ fn render_layout_element(
             if let Node::Element(inner) = child {
                 let inner_tag = inner.tag.to_ascii_lowercase();
                 if matches!(inner_tag.as_str(), "tab" | "page") {
-                    let value = binding_raw(inner, "value").unwrap_or_else(|| {
+                    let value = binding_string(inner, "value", ctx).unwrap_or_else(|| {
                         binding_string(inner, "label", ctx)
                             .map(|label| slug_option_value(&label))
                             .unwrap_or_default()
@@ -542,28 +538,15 @@ fn render_media_element(
     if tag == "iframe" {
         let hints = style::extract_stack_hints(classes.to_vec(), Some(ctx));
         return Ok(Some(ViewNode::WebView {
-            src: binding_string(el, "src", ctx).unwrap_or_default(),
+            src: binding_value_string(el, "src", ctx).unwrap_or_default(),
             style: hints.style.opt(),
         }));
     }
 
     if tag == "img" || tag == "image" {
-        let src = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "src")
-            .and_then(|b| eval_expr(&b.value, ctx).ok().map(|v| value_to_str(&v)))
-            .unwrap_or_default();
-        let alt = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "alt")
-            .and_then(|b| eval_expr(&b.value, ctx).ok().map(|v| value_to_str(&v)));
-        let placeholder = el
-            .bindings
-            .iter()
-            .find(|b| b.prop == "placeholder")
-            .and_then(|b| eval_expr(&b.value, ctx).ok().map(|v| value_to_str(&v)));
+        let src = binding_value_string(el, "src", ctx).unwrap_or_default();
+        let alt = binding_value_string(el, "alt", ctx);
+        let placeholder = binding_value_string(el, "placeholder", ctx);
         let hints = style::extract_stack_hints(classes.to_vec(), Some(ctx));
         return Ok(Some(ViewNode::Image {
             src,
@@ -577,9 +560,9 @@ fn render_media_element(
     if tag == "a" || tag == "link" {
         let hints = style::extract_stack_hints(classes.to_vec(), Some(ctx));
         return Ok(Some(ViewNode::Link {
-            href: binding_string(el, "href", ctx).unwrap_or_default(),
-            target: binding_string(el, "target", ctx),
-            rel: binding_string(el, "rel", ctx),
+            href: binding_value_string(el, "href", ctx).unwrap_or_default(),
+            target: binding_value_string(el, "target", ctx),
+            rel: binding_value_string(el, "rel", ctx),
             style: hints.style.opt(),
             children: render_nodes_list(&el.children, ctx)?,
         }));
@@ -648,7 +631,7 @@ fn optional_component_label(
 fn binding_raw(el: &Element, prop: &str) -> Option<String> {
     el.bindings
         .iter()
-        .find(|binding| binding.prop == prop)
+        .find(|binding| binding.prop == prop && binding.origin != BindingOrigin::Attribute)
         .map(|binding| {
             binding
                 .value
@@ -659,21 +642,17 @@ fn binding_raw(el: &Element, prop: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn binding_string(el: &Element, prop: &str, ctx: &TemplateContext) -> Option<String> {
+fn binding_value_string(el: &Element, prop: &str, ctx: &TemplateContext) -> Option<String> {
     el.bindings
         .iter()
-        .find(|binding| binding.prop == prop)
-        .and_then(|binding| {
-            eval_expr(&binding.value, ctx)
-                .ok()
-                .map(|v| value_to_str(&v))
-        })
-        .map(|value| {
-            value
-                .trim()
-                .trim_matches(|c| c == '"' || c == '\'')
-                .to_string()
-        })
+        .find(|binding| binding.matches_prop(prop))
+        .and_then(|binding| eval_binding(binding, ctx).ok().flatten())
+        .map(|value| value_to_str(&value))
+}
+
+fn binding_string(el: &Element, prop: &str, ctx: &TemplateContext) -> Option<String> {
+    binding_value_string(el, prop, ctx)
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
@@ -682,11 +661,19 @@ fn binding_f32(el: &Element, prop: &str, ctx: &TemplateContext) -> Option<f32> {
 }
 
 fn binding_bool(el: &Element, prop: &str, ctx: &TemplateContext) -> Option<bool> {
-    binding_string(el, prop, ctx).and_then(|value| match value.as_str() {
+    let binding = el
+        .bindings
+        .iter()
+        .find(|binding| binding.matches_prop(prop))?;
+    let value = eval_binding(binding, ctx).ok().flatten()?;
+    if binding.origin == BindingOrigin::Attribute {
+        return Some(true);
+    }
+    match value_to_str(&value).trim() {
         "true" | "1" | "yes" | "on" => Some(true),
         "false" | "0" | "no" | "off" => Some(false),
         _ => None,
-    })
+    }
 }
 
 fn event_handler(el: &Element, event: &str) -> Option<String> {
@@ -723,6 +710,14 @@ fn active_classes(el: &Element, ctx: &TemplateContext) -> Result<Vec<String>, Cr
     let mut expanded = Vec::new();
     for c in el.classes.iter() {
         expanded.push(ctx.interpolate(c)?);
+    }
+    // Attribute class values are already evaluated strings, never interpolation source.
+    for binding in el.bindings.iter().filter(|binding| {
+        binding.matches_prop("class") && binding.origin == BindingOrigin::Attribute
+    }) {
+        if let Some(value) = eval_binding(binding, ctx)? {
+            expanded.extend(value_to_str(&value).split_whitespace().map(str::to_string));
+        }
     }
     for cc in &el.conditional_classes {
         if ctx.eval_condition(&cc.condition)? {

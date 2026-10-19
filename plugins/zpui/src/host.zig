@@ -54,11 +54,27 @@ pub fn condition(comptime View: type, self: *View, expression: []const u8, scope
 pub fn collection(comptime View: type, self: *View, bind: []const u8, scope: ?*const Scope) ![]const Item {
     const value = try readAt(View, self, bind, scope);
     if (value != .list) return error.BindingTypeMismatch;
-    for (value.list, 0..) |item, index| {
-        if (item.key.len == 0) return error.EmptyCollectionKey;
-        for (value.list[0..index]) |previous| if (std.mem.eql(u8, previous.key, item.key)) return error.DuplicateCollectionKey;
-    }
+    try validateCollectionKeys(std.heap.page_allocator, value.list);
     return value.list;
+}
+
+fn validateCollectionKeys(a: std.mem.Allocator, items: []const Item) !void {
+    // Preserve validation under memory pressure or beyond safe map capacity.
+    if (items.len > @min(std.math.maxInt(u32) / 4, std.math.maxInt(usize) / 64)) return validateCollectionKeysSlow(items);
+    var keys: std.StringHashMapUnmanaged(void) = .empty;
+    defer keys.deinit(a);
+    keys.ensureTotalCapacity(a, @intCast(items.len)) catch return validateCollectionKeysSlow(items);
+    for (items) |item| {
+        if (item.key.len == 0) return error.EmptyCollectionKey;
+        if (keys.getOrPutAssumeCapacity(item.key).found_existing) return error.DuplicateCollectionKey;
+    }
+}
+
+fn validateCollectionKeysSlow(items: []const Item) !void {
+    for (items, 0..) |item, index| {
+        if (item.key.len == 0) return error.EmptyCollectionKey;
+        for (items[0..index]) |previous| if (std.mem.eql(u8, previous.key, item.key)) return error.DuplicateCollectionKey;
+    }
 }
 
 pub fn checked(comptime View: type, self: *View, node: *const ir.Node) !bool {
@@ -174,4 +190,36 @@ fn cloneValue(a: std.mem.Allocator, source: Value, depth: usize) anyerror!Value 
             break :blk .{ .list = owned };
         },
     };
+}
+
+test "collection key validation preserves order with allocation failure" {
+    const t = std.testing;
+    const valid = [_]Item{ .{ .key = "one", .value = .{ .number = 1 } }, .{ .key = "two", .value = .{ .number = 2 } } };
+    const duplicate_first = [_]Item{ valid[0], valid[0], .{ .key = "", .value = .{ .number = 3 } } };
+    const empty_first = [_]Item{ valid[0], .{ .key = "", .value = .{ .number = 3 } }, valid[0] };
+    for ([_]std.mem.Allocator{ t.allocator, t.failing_allocator }) |a| {
+        try validateCollectionKeys(a, &.{});
+        try validateCollectionKeys(a, &valid);
+        try t.expectError(error.DuplicateCollectionKey, validateCollectionKeys(a, &duplicate_first));
+        try t.expectError(error.EmptyCollectionKey, validateCollectionKeys(a, &empty_first));
+    }
+}
+
+test "collection returns the original ordered slice and preserves reader errors" {
+    const View = struct {
+        items: []const Item,
+        pub fn crepusValue(self: *@This(), bind: []const u8) ?Value {
+            if (std.mem.eql(u8, bind, "rows")) return .{ .list = self.items };
+            if (std.mem.eql(u8, bind, "scalar")) return .{ .number = 1 };
+            return null;
+        }
+    };
+    const items = [_]Item{ .{ .key = "z", .value = .{ .text = "last alphabetically" } }, .{ .key = "a", .value = .{ .text = "first alphabetically" } } };
+    var view: View = .{ .items = &items };
+    const found = try collection(View, &view, "rows", null);
+    try std.testing.expect(found.ptr == &items);
+    try std.testing.expectEqualStrings("z", found[0].key);
+    try std.testing.expectEqualStrings("first alphabetically", found[1].value.text);
+    try std.testing.expectError(error.UnknownBinding, collection(View, &view, "missing", null));
+    try std.testing.expectError(error.BindingTypeMismatch, collection(View, &view, "scalar", null));
 }

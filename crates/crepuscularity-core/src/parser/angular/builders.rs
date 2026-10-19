@@ -121,6 +121,7 @@ pub(crate) fn angular_build_element(
                 )));
             }
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: "bind".to_string(),
                 value: directive_expr(attr),
             });
@@ -149,7 +150,11 @@ pub(crate) fn angular_build_element(
                 continue;
             }
             if let Some(name) = inner.strip_prefix("attr.") {
+                if name.is_empty() {
+                    return Err(unsupported("`[attr.]` is missing an attribute name"));
+                }
                 bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Attribute,
                     prop: name.to_string(),
                     value: expr,
                 });
@@ -174,6 +179,7 @@ pub(crate) fn angular_build_element(
                 )));
             }
             bindings.push(Binding {
+                origin: crate::ast::BindingOrigin::Expression,
                 prop: inner.to_string(),
                 value: expr,
             });
@@ -211,9 +217,27 @@ pub(crate) fn angular_build_element(
         }
 
         bindings.push(Binding {
+            origin: crate::ast::BindingOrigin::Expression,
             prop: key.to_string(),
             value: literal_expr(attr)?,
         });
+    }
+
+    for (index, binding) in bindings.iter().enumerate() {
+        if binding.origin != BindingOrigin::Attribute {
+            continue;
+        }
+        if bindings.iter().enumerate().any(|(other_index, other)| {
+            other_index != index && other.prop.eq_ignore_ascii_case(&binding.prop)
+        }) || (binding.prop.eq_ignore_ascii_case("id") && id.is_some())
+            || (binding.prop.eq_ignore_ascii_case("class")
+                && (!classes.is_empty() || !conditional_classes.is_empty()))
+        {
+            return Err(unsupported(format!(
+                "attribute binding `{}` cannot be combined with another binding or class list for the same attribute",
+                binding.prop
+            )));
+        }
     }
 
     if if_condition.is_some() && for_spec.is_some() {

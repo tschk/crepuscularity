@@ -66,13 +66,13 @@ pub fn State(comptime View: type) type {
     };
 }
 
-pub fn attach(comptime View: type, window: *zpui.Window, cx: *zpui.Context(View), initial: zpui.StatefulDiv, identity: []const u8, handler: []const u8, scope: ?*const host.Scope) !zpui.StatefulDiv {
+pub fn attach(comptime View: type, window: *zpui.Window, cx: *zpui.Context(View), initial: zpui.StatefulDiv, identity: []const u8, handler: []const u8, scope: ?*const host.Scope, callbacks: std.mem.Allocator) !zpui.StatefulDiv {
     const S = State(View);
     const gid = window.pushElementId(.from(zpui.fmt("{s}/hold", .{identity})));
     defer window.popElementId();
     const entity = window.useKeyedState(S, gid, S.init);
     const Payload = struct { entity: zpui.Entity(S), view: zpui.WeakEntity(View), handler: []const u8, scope: ?*const host.Scope };
-    const payload = try zpui.frameAllocator().create(Payload);
+    const payload = try callbacks.create(Payload);
     payload.* = .{ .entity = entity, .view = cx.weakEntity(), .handler = handler, .scope = scope };
     const Callback = struct {
         fn down(_: *View, data: *const Payload, event: *const input.MouseDownEvent, w: *zpui.Window, _: *zpui.Context(View)) void {

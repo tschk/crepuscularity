@@ -285,6 +285,7 @@ mod tests {
         // test bindings
         let mut el = dummy_element();
         el.bindings.push(Binding {
+            origin: crate::ast::BindingOrigin::Expression,
             prop: "src".to_string(),
             value: "url".to_string(),
         });
@@ -418,6 +419,7 @@ mod tests {
             Node::Element({
                 let mut el = dummy_element();
                 el.bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
                     prop: "src".to_string(),
                     value: "url".to_string(),
                 });
@@ -429,5 +431,31 @@ mod tests {
         assert_eq!(map.static_indices, vec![0, 2]);
         assert_eq!(map.dynamic_indices, vec![1, 3]);
         assert_eq!(map.expr_count, 2);
+    }
+
+    #[test]
+    fn test_classify_node_inner_match_arms() {
+        let match_node = Node::Match(MatchBlock {
+            expr: "value".to_string(),
+            arms: vec![
+                MatchArm {
+                    pattern: "Some(x)".to_string(),
+                    body: vec![Node::LetDecl(LetDecl {
+                        name: "y".to_string(),
+                        expr: "x + 1".to_string(),
+                        is_default: false,
+                    })],
+                },
+                MatchArm {
+                    pattern: "None".to_string(),
+                    body: vec![Node::RawText("empty".to_string())],
+                },
+            ],
+        });
+
+        let (region, count) = classify_node_inner(&match_node);
+        assert_eq!(region, Region::Dynamic);
+        // 1 for the match expression + 1 for LetDecl + 1 for RawText = 3
+        assert_eq!(count, 3);
     }
 }

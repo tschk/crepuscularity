@@ -84,9 +84,36 @@ pub fn resolve_include_path(base_dir: Option<&Path>, path: &str) -> Result<PathB
     }
 }
 
+/// Parser/cache identity for an include, retaining its authored filename.
+///
+/// Canonical resolution can change a symlink's extension. Use this path only for
+/// frontend selection; reads, admission checks and child bases use `resolved`.
+pub fn include_frontend_path(resolved: &Path, authored: &str) -> PathBuf {
+    match Path::new(authored).file_name() {
+        Some(name) => resolved.with_file_name(name),
+        None => resolved.to_path_buf(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_include_path;
+
+    #[test]
+    fn frontend_identity_preserves_authored_basename_and_resolved_parent() {
+        let resolved = std::path::Path::new("canonical/target.txt");
+        for name in [
+            "view.vue",
+            "view.jsx",
+            "view.component.html",
+            "view.ng.html",
+        ] {
+            assert_eq!(
+                super::include_frontend_path(resolved, &format!("alias/{name}")),
+                std::path::Path::new("canonical").join(name)
+            );
+        }
+    }
 
     #[test]
     fn include_path_rejects_parent_dir() {
