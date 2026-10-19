@@ -136,10 +136,14 @@
   }
 
   async function runBrowserProgramData(api, program) {
-    const vars = {};
+    const vars = Object.create(null);
 
     function resolveExpr(expr) {
       if (expr !== null && typeof expr === "object" && "$var" in expr) return vars[expr.$var];
+      if (expr !== null && typeof expr === "object" && "$member" in expr) {
+        const [object, property] = expr.$member;
+        return vars[object][property];
+      }
       return expr;
     }
     function resolveObj(obj) {
