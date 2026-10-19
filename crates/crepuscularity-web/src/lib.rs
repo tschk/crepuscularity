@@ -393,27 +393,23 @@ fn render_nodes_with_hydration_impl(
 ) -> Result<String, CrepusError> {
     use std::sync::atomic::Ordering;
 
-    // Process LetDecl nodes first.
-    let mut overlay = Some(ctx.clone());
-    for node in nodes {
-        if let Node::LetDecl(decl) = node {
-            let overlay_ctx = overlay.as_mut().expect("overlay for hydration");
-            if decl.is_default && overlay_ctx.vars.contains_key(&decl.name) {
-                continue;
-            }
-            let val = crepuscularity_core::eval::eval_expr(&decl.expr, overlay_ctx)?;
-            overlay_ctx.vars.insert(decl.name.clone(), val);
-        }
-    }
-    let ctx = overlay.as_ref().expect("overlay for hydration");
+    let mut overlay: Option<TemplateContext> = None;
 
     let mut html = String::new();
     let mut is_first = is_root;
 
     for node in nodes {
-        if let Node::LetDecl(_) = node {
+        if let Node::LetDecl(decl) = node {
+            let current = overlay.as_ref().unwrap_or(ctx);
+            if decl.is_default && current.vars.contains_key(&decl.name) {
+                continue;
+            }
+            let current = overlay.get_or_insert_with(|| ctx.clone());
+            let value = eval_expr(&decl.expr, current)?;
+            current.vars.insert(decl.name.clone(), value);
             continue;
         }
+        let ctx = overlay.as_ref().unwrap_or(ctx);
         if let Node::Element(el) = node {
             let dyn_id = if node_is_dynamic(node) {
                 Some(counter.fetch_add(1, Ordering::Relaxed))
