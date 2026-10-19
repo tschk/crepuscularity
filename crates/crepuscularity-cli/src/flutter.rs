@@ -109,14 +109,19 @@ mod tests {
     }
 
     #[test]
-    fn insert_places_block_under_dependencies() {
+    fn insert_places_block_under_dependencies() -> Result<(), &'static str> {
         let source = "name: demo\ndependencies:\n  flutter:\n    sdk: flutter\n";
         let block = dependency_block(None, "main", 2);
-        let updated = insert_under_dependencies(source, &block).unwrap();
-        let deps_idx = updated.find("dependencies:").unwrap();
-        let pkg_idx = updated.find("crepuscularity_flutter:").unwrap();
-        let flutter_idx = updated.find("  flutter:").unwrap();
+        let updated = insert_under_dependencies(source, &block).ok_or("Failed to insert block")?;
+        let deps_idx = updated
+            .find("dependencies:")
+            .ok_or("Failed to find dependencies")?;
+        let pkg_idx = updated
+            .find("crepuscularity_flutter:")
+            .ok_or("Failed to find crepuscularity_flutter")?;
+        let flutter_idx = updated.find("  flutter:").ok_or("Failed to find flutter")?;
         assert!(deps_idx < pkg_idx && pkg_idx < flutter_idx);
+        Ok(())
     }
 
     #[test]
