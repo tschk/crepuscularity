@@ -573,6 +573,21 @@ pub fn eval_expr(expr: &str, ctx: &TemplateContext) -> Result<TemplateValue, Cre
     }
 }
 
+/// Evaluate a binding while retaining HTML attribute presence semantics.
+pub fn eval_binding(
+    binding: &crate::ast::Binding,
+    ctx: &TemplateContext,
+) -> Result<Option<TemplateValue>, CrepusError> {
+    let value = eval_expr(&binding.value, ctx)?;
+    if binding.origin == crate::ast::BindingOrigin::Attribute {
+        return Ok(match value {
+            TemplateValue::Null => None,
+            value => Some(TemplateValue::Str(crate::context::value_to_str(&value))),
+        });
+    }
+    Ok(Some(value))
+}
+
 /// Evaluate an expression as a boolean condition.
 pub fn eval_condition(expr: &str, ctx: &TemplateContext) -> Result<bool, CrepusError> {
     Ok(is_truthy(&eval_expr(expr, ctx)?))
