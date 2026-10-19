@@ -853,6 +853,13 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     for (prefix, apply) in LENGTH_PROPS {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(len) = parse_length(rest) {
+                if matches!(
+                    *prefix,
+                    "w-" | "h-" | "min-w-" | "min-h-" | "max-w-" | "max-h-" | "size-" | "basis-"
+                ) && matches!(len, Length::Definite(value) if value.to_pixels(px(1.0).into(), px(1.0)) < px(0.0))
+                {
+                    return d;
+                }
                 return apply(d, len);
             }
         }
@@ -875,6 +882,9 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     for (prefix, apply) in DEFINITE_PROPS {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(len) = parse_definite_length(rest) {
+                if len.to_pixels(px(1.0).into(), px(1.0)) < px(0.0) {
+                    return d;
+                }
                 return apply(d, len);
             }
         }
@@ -918,7 +928,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     ] {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
-                if let Some(abs) = parse_absolute_length(inner) {
+                if let Some(abs) = parse_nonnegative_absolute_length(inner) {
                     return apply_fn(d, abs);
                 }
             }
@@ -947,7 +957,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     ] {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
-                if let Some(abs) = parse_absolute_length(inner) {
+                if let Some(abs) = parse_nonnegative_absolute_length(inner) {
                     return apply_fn(d, abs);
                 }
             }
@@ -956,43 +966,43 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
 
     // ── Grid placement: col-span-N, col-start-N, col-end-N, row-span-N, etc. ──
     if let Some(rest) = class.strip_prefix("col-span-") {
-        if let Ok(n) = rest.parse::<u16>() {
+        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
             return d.col_span(n);
         }
     }
     if let Some(rest) = class.strip_prefix("col-start-") {
-        if let Ok(n) = rest.parse::<i16>() {
+        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
             return d.col_start(n);
         }
     }
     if let Some(rest) = class.strip_prefix("col-end-") {
-        if let Ok(n) = rest.parse::<i16>() {
+        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
             return d.col_end(n);
         }
     }
     if let Some(rest) = class.strip_prefix("row-span-") {
-        if let Ok(n) = rest.parse::<u16>() {
+        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
             return d.row_span(n);
         }
     }
     if let Some(rest) = class.strip_prefix("row-start-") {
-        if let Ok(n) = rest.parse::<i16>() {
+        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
             return d.row_start(n);
         }
     }
     if let Some(rest) = class.strip_prefix("row-end-") {
-        if let Ok(n) = rest.parse::<i16>() {
+        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
             return d.row_end(n);
         }
     }
     // Dynamic grid-cols-N and grid-rows-N beyond the static 1-12
     if let Some(rest) = class.strip_prefix("grid-cols-") {
-        if let Ok(n) = rest.parse::<u16>() {
+        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
             return d.grid_cols(n);
         }
     }
     if let Some(rest) = class.strip_prefix("grid-rows-") {
-        if let Ok(n) = rest.parse::<u16>() {
+        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
             return d.grid_rows(n);
         }
     }
@@ -1011,10 +1021,10 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix("tracking-[") {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_absolute_length(inner) {
-                    let px_val = match abs {
-                        gpui::AbsoluteLength::Pixels(p) => p,
-                        gpui::AbsoluteLength::Rems(r) => px(r.0 * 16.0),
-                    };
+                    let px_val = abs.to_pixels(px(16.0));
+                    if !f32::from(px_val).is_finite() {
+                        return d;
+                    }
                     return d.letter_spacing(px_val);
                 }
             }
@@ -1028,11 +1038,12 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                 let w = num.parse::<f32>().ok();
                 let h = den.parse::<f32>().ok();
                 w.zip(h)
-                    .and_then(|(w, h)| if h != 0.0 { Some(w / h) } else { None })
+                    .filter(|(w, h)| w.is_finite() && *w > 0.0 && h.is_finite() && *h > 0.0)
+                    .map(|(w, h)| w / h)
             } else {
                 inner.parse::<f32>().ok()
             };
-            if let Some(r) = ratio {
+            if let Some(r) = ratio.filter(|r| r.is_finite() && *r > 0.0) {
                 let mut d = d;
                 d.style().aspect_ratio = Some(r);
                 return d;
@@ -1044,24 +1055,18 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     if let Some(rest) = class.strip_prefix("ring-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             if let Some(abs) = parse_absolute_length(inner) {
-                let spread = match abs {
-                    gpui::AbsoluteLength::Pixels(p) => p,
-                    gpui::AbsoluteLength::Rems(r) => px(r.0 * 16.0),
-                };
-                return d.shadow(vec![BoxShadow {
-                    color: hsla(0.603, 0.912, 0.602, 0.5),
-                    offset: point(px(0.), px(0.)),
-                    blur_radius: px(0.),
-                    spread_radius: spread,
-                    inset: false,
-                }]);
+                let spread = abs.to_pixels(px(16.0));
+                if !f32::from(spread).is_finite() {
+                    return d;
+                }
+                return apply_ring(d, spread, false);
             }
         }
     }
 
     // ── line-clamp-N ──
     if let Some(rest) = class.strip_prefix("line-clamp-") {
-        if let Ok(n) = rest.parse::<usize>() {
+        if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
             return d.line_clamp(n);
         }
     }
@@ -1070,21 +1075,17 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     if let Some(rest) = class.strip_prefix("font-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
-            return d.font_family(family);
+            if !family.trim().is_empty() {
+                return d.font_family(family);
+            }
         }
     }
 
     // ── text-[size] — arbitrary text size ──
     if let Some(rest) = class.strip_prefix("text-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            // Check if it's a color first: text-[#rrggbb]
-            if let Some(hex_str) = inner.strip_prefix('#') {
-                if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                    return d.text_color(rgb(hex));
-                }
-            }
-            // Otherwise it's a size
-            if let Some(len) = parse_absolute_length(inner) {
+            // Color values fall through to the shared color-family handling.
+            if let Some(len) = parse_nonnegative_absolute_length(inner) {
                 return d.text_size(len);
             }
         }
@@ -1093,7 +1094,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     // ── leading-[value] — arbitrary line height ──
     if let Some(rest) = class.strip_prefix("leading-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(abs) = parse_absolute_length(inner) {
+            if let Some(abs) = parse_nonnegative_absolute_length(inner) {
                 return d.line_height(abs);
             }
         }
@@ -1101,17 +1102,17 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
 
     // ── opacity-N ──
     if let Some(rest) = class.strip_prefix("opacity-") {
-        if let Ok(n) = rest.parse::<f32>() {
-            return d.opacity(n / 100.0);
+        if let Some(opacity) = parse_opacity_percentage(rest) {
+            return d.opacity(opacity);
         }
     }
 
     // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
     if let Some(rest) = class.strip_prefix("decoration-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(hex_str) = inner.strip_prefix('#') {
-                if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                    return d.text_decoration_color(rgb(hex));
+            if inner.starts_with('#') {
+                if let Some(color) = parse_runtime_hex_color(inner) {
+                    return d.text_decoration_color(color);
                 }
             }
         }
@@ -1130,9 +1131,9 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     // ── text-bg: text-bg-[#hex] or text-bg-family-shade ──
     if let Some(rest) = class.strip_prefix("text-bg-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(hex_str) = inner.strip_prefix('#') {
-                if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                    return d.text_bg(rgb(hex));
+            if inner.starts_with('#') {
+                if let Some(color) = parse_runtime_hex_color(inner) {
+                    return d.text_bg(color);
                 }
             }
         }
@@ -1157,16 +1158,11 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             // Arbitrary hex: bg-[#rrggbb] or bg-[#rrggbbaa]
             if rest.starts_with('[') && rest.ends_with(']') {
                 let inner = &rest[1..rest.len() - 1];
-                if let Some(hex_str) = inner.strip_prefix('#') {
-                    if hex_str.len() == 8 {
-                        // 8-digit hex: RRGGBBAA
-                        if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                            return d.bg(rgba(hex));
-                        }
-                    }
-                    if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                        return apply_fn(d, hex);
-                    }
+                if inner.starts_with('#') {
+                    return match parse_runtime_hex_color(inner) {
+                        Some(color) => apply_color(d, prefix, color),
+                        None => d,
+                    };
                 }
                 // hsla: bg-[hsla(h,s,l,a)]
                 if let Some(hsla_str) = inner.strip_prefix("hsla(") {
@@ -1175,11 +1171,25 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                         if parts.len() == 4 {
                             if let (Ok(h), Ok(s), Ok(l), Ok(a)) = (
                                 parts[0].parse::<f32>(),
-                                parts[1].trim_end_matches('%').parse::<f32>(),
-                                parts[2].trim_end_matches('%').parse::<f32>(),
+                                parts[1]
+                                    .strip_suffix('%')
+                                    .unwrap_or(parts[1])
+                                    .parse::<f32>(),
+                                parts[2]
+                                    .strip_suffix('%')
+                                    .unwrap_or(parts[2])
+                                    .parse::<f32>(),
                                 parts[3].parse::<f32>(),
                             ) {
-                                let color = hsla(h / 360.0, s / 100.0, l / 100.0, a);
+                                if ![h, s, l, a].iter().all(|value| value.is_finite()) {
+                                    return d;
+                                }
+                                let color = hsla(
+                                    h.rem_euclid(360.0) / 360.0,
+                                    s.clamp(0.0, 100.0) / 100.0,
+                                    l.clamp(0.0, 100.0) / 100.0,
+                                    a.clamp(0.0, 1.0),
+                                );
                                 if *prefix == "bg-" {
                                     return d.bg(color);
                                 }
@@ -1194,19 +1204,23 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                     }
                 }
             }
-            // bg-family/alpha: bg-red-500/50
-            if let Some(slash_pos) = rest.rfind('/') {
-                let color_part = &rest[..slash_pos];
-                let alpha_str = &rest[slash_pos + 1..];
-                if let Ok(alpha_pct) = alpha_str.parse::<u32>() {
-                    if let Some(dash_pos) = color_part.rfind('-') {
-                        let family = &color_part[..dash_pos];
-                        let shade = &color_part[dash_pos + 1..];
-                        if let Some(hex) = tailwind_color(family, shade) {
-                            let alpha_byte = alpha_pct * 255 / 100;
-                            let rgba_val = (hex << 8) | alpha_byte;
-                            return d.bg(rgba(rgba_val));
+            // A suffix overrides the color alpha, including bracketed CSS hex colors.
+            if let Some((color_part, opacity_part)) = rest.rsplit_once('/') {
+                let color_part = color_part
+                    .strip_prefix('[')
+                    .and_then(|part| part.strip_suffix(']'))
+                    .unwrap_or(color_part);
+                if let (Some(normalized), Some(opacity)) = (
+                    resolve_css_color(color_part),
+                    parse_opacity_percentage(opacity_part),
+                ) {
+                    if let Some(mut color) = parse_runtime_hex_color(&normalized) {
+                        if !color_part.trim().eq_ignore_ascii_case("transparent")
+                            && !color_part.trim().eq_ignore_ascii_case("clear")
+                        {
+                            color.alpha = (opacity * 255.0).floor() / 255.0;
                         }
+                        return apply_color(d, prefix, color);
                     }
                 }
             }
@@ -1319,6 +1333,305 @@ mod parse_duration_ms_tests {
         assert_eq!(parse_duration_ms("1.5ms"), None);
         assert_eq!(parse_duration_ms("-1s"), Some(0));
         assert_eq!(parse_duration_ms("-100ms"), None);
+    }
+}
+
+#[cfg(test)]
+mod aspect_ratio_tests {
+    use super::*;
+    use gpui::div;
+
+    #[test]
+    fn stretch_and_even_spacing_override_previous_alignment() {
+        let mut actual = apply_class_list(
+            div(),
+            "items-center items-stretch justify-between justify-evenly",
+        );
+        let mut expected = div().items_stretch().justify_evenly();
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+
+    #[test]
+    fn extra_light_font_weight_replaces_the_previous_weight() {
+        let mut element = apply_class(div().font_weight(gpui::FontWeight::BOLD), "font-extralight");
+        assert_eq!(
+            element.text_style().font_weight,
+            Some(gpui::FontWeight::EXTRA_LIGHT)
+        );
+    }
+
+    #[test]
+    fn empty_font_families_and_zero_line_clamps_preserve_text_styles() {
+        for class in ["font-[]", "font-['']", "font-[\"\"]", "font-[___]"] {
+            let mut element = apply_class(div().font_family("system"), class);
+            assert_eq!(
+                element.text_style().font_family.as_deref(),
+                Some("system"),
+                "{class}"
+            );
+        }
+        let mut element = apply_class(div().line_clamp(2), "line-clamp-0");
+        assert_eq!(element.text_style().line_clamp, Some(2));
+        let mut element = apply_class(div(), "line-clamp-3");
+        assert_eq!(element.text_style().line_clamp, Some(3));
+        let mut element = apply_class(div(), "font-[My_Font]");
+        assert_eq!(element.text_style().font_family.as_deref(), Some("My Font"));
+    }
+
+    #[test]
+    fn arbitrary_and_named_color_opacity_suffixes_share_finite_percentages() {
+        for prefix in ["bg", "text", "border"] {
+            for (value, expected) in [
+                ("[#123]/50", 0x1122337f),
+                ("[#1234]/25", 0x1122333f),
+                ("white/50.5", 0xffffff80),
+                ("red-500/50", 0xfb2c367f),
+                ("transparent/50", 0),
+                ("clear/100", 0),
+                ("[TRANSPARENT]/50", 0),
+            ] {
+                let mut actual = apply_class(div(), &format!("{prefix}-{value}"));
+                let mut expected = apply_color(div(), &format!("{prefix}-"), rgba(expected));
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    format!("{:?}", expected.style())
+                );
+            }
+            for invalid in ["[#123]/NaN", "[#123]/inf", "[#12]/50"] {
+                let mut initial = apply_class(div(), &format!("{prefix}-[#abcdef]"));
+                let expected = format!("{:?}", initial.style());
+                let mut actual = apply_class(initial, &format!("{prefix}-{invalid}"));
+                assert_eq!(format!("{:?}", actual.style()), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn decoration_and_text_background_hex_colors_use_css_forms() {
+        for prefix in ["decoration", "text-bg"] {
+            for (short, expanded) in [("#123", 0x112233ff), ("#1234", 0x11223344)] {
+                let mut actual = apply_class(div(), &format!("{prefix}-[{short}]"));
+                let mut expected = if prefix == "decoration" {
+                    div().text_decoration_color(rgba(expanded))
+                } else {
+                    div().text_bg(rgba(expanded))
+                };
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    format!("{:?}", expected.style())
+                );
+            }
+            for invalid in ["#1", "#12", "#12345", "#1234567", "#é12"] {
+                let mut initial = apply_class(div(), &format!("{prefix}-[#aabbcc]"));
+                let expected = format!("{:?}", initial.style());
+                let mut actual = apply_class(initial, &format!("{prefix}-[{invalid}]"));
+                assert_eq!(format!("{:?}", actual.style()), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn negative_radii_borders_and_text_lengths_preserve_prior_styles() {
+        for prefix in [
+            "rounded",
+            "rounded-t",
+            "rounded-b",
+            "rounded-l",
+            "rounded-r",
+            "rounded-tl",
+            "rounded-tr",
+            "rounded-bl",
+            "rounded-br",
+            "border",
+            "border-t",
+            "border-b",
+            "border-l",
+            "border-r",
+            "text",
+            "leading",
+        ] {
+            let mut initial = apply_class(div(), &format!("{prefix}-[2px]"));
+            let expected = format!("{:?}", initial.style());
+            for value in ["-2px", "-0.5rem"] {
+                let mut actual = apply_class(
+                    apply_class(div(), &format!("{prefix}-[2px]")),
+                    &format!("{prefix}-[{value}]"),
+                );
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    expected,
+                    "{prefix}-{value}"
+                );
+            }
+            let mut zero = apply_class(div(), &format!("{prefix}-[0px]"));
+            let mut cleared = apply_class(initial, &format!("{prefix}-[0px]"));
+            assert_eq!(
+                format!("{:?}", zero.style()),
+                format!("{:?}", cleared.style()),
+                "{prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn negative_sizes_and_padding_preserve_prior_styles_but_offsets_remain_signed() {
+        for prefix in [
+            "w", "h", "min-w", "min-h", "max-w", "max-h", "size", "basis", "p", "px", "py", "pt",
+            "pb", "pl", "pr", "gap", "gap-x", "gap-y",
+        ] {
+            for value in ["-2px", "-0.5rem"] {
+                let mut initial = apply_class(div(), &format!("{prefix}-2"));
+                let expected = format!("{:?}", initial.style());
+                let mut actual = apply_class(initial, &format!("{prefix}-[{value}]"));
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    expected,
+                    "{prefix}-{value}"
+                );
+            }
+        }
+        let mut actual = apply_class(div(), "w-[-50%]");
+        let mut empty = div();
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", empty.style())
+        );
+        let mut actual = apply_class(apply_class(div(), "m-[-2px]"), "top-[-3px]");
+        let mut expected = div().m(px(-2.0)).top(px(-3.0));
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+
+    #[test]
+    fn zero_grid_values_preserve_prior_placement_and_track_counts() {
+        for prefix in [
+            "col-span",
+            "row-span",
+            "col-start",
+            "col-end",
+            "row-start",
+            "row-end",
+            "grid-cols",
+            "grid-rows",
+        ] {
+            let mut initial = apply_class(div(), &format!("{prefix}-2"));
+            let expected = format!("{:?}", initial.style());
+            let mut actual = apply_class(initial, &format!("{prefix}-0"));
+            assert_eq!(format!("{:?}", actual.style()), expected, "{prefix}");
+        }
+        let mut actual = apply_class(div(), "col-start--1");
+        let mut expected = div().col_start(-1);
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+
+    #[test]
+    fn bound_hex_colors_match_literal_colors_and_preserve_alpha() {
+        for value in ["#123", "#1234", "#abcdef80", "abcdef", "0x1234"] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("color", value);
+            let normalized = parse_css_hex_color(value).unwrap();
+            for prefix in ["bg", "text", "border"] {
+                let mut bound =
+                    apply_class_with_ctx(div(), &format!("{prefix}-{{color}}"), Some(&ctx));
+                let mut literal = apply_class(div(), &format!("{prefix}-[{normalized}]"));
+                assert_eq!(
+                    format!("{:?}", bound.style()),
+                    format!("{:?}", literal.style())
+                );
+            }
+        }
+        let mut ctx = TemplateContext::new();
+        ctx.set("color", "#11223380");
+        let mut actual = apply_class_with_ctx(div(), "bg-{color}/50", Some(&ctx));
+        let mut expected = div().bg(rgba(0x1122337f));
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+        for invalid in ["#1", "#12", "#12345", "#zzzzzz"] {
+            ctx.set("color", invalid);
+            let mut initial = div().bg(rgb(0xaabbcc));
+            let expected = format!("{:?}", initial.style());
+            let mut actual = apply_class_with_ctx(initial, "bg-{color}", Some(&ctx));
+            assert_eq!(format!("{:?}", actual.style()), expected);
+        }
+    }
+
+    #[test]
+    fn arbitrary_hex_colors_expand_short_forms_and_reject_invalid_lengths() {
+        for (short, expanded) in [
+            ("#123", "#112233"),
+            ("#1234", "#11223344"),
+            ("#abcdef", "#abcdef"),
+            ("#abcdef80", "#abcdef80"),
+        ] {
+            for prefix in ["bg", "text", "border"] {
+                let mut actual = apply_class(div(), &format!("{prefix}-[{short}]"));
+                let mut expected = apply_class(div(), &format!("{prefix}-[{expanded}]"));
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    format!("{:?}", expected.style())
+                );
+            }
+        }
+        for invalid in ["#1", "#12", "#12345", "#1234567", "#xyz", "#é12"] {
+            for prefix in ["bg", "text", "border"] {
+                let mut initial = apply_class(div(), &format!("{prefix}-[#aabbcc]"));
+                let expected = format!("{:?}", initial.style());
+                let mut actual = apply_class(initial, &format!("{prefix}-[{invalid}]"));
+                assert_eq!(format!("{:?}", actual.style()), expected, "{invalid}");
+            }
+        }
+    }
+
+    #[test]
+    fn overflowing_rem_conversions_preserve_tracking_and_shadows() {
+        for class in ["tracking-[1e38rem]", "tracking-[-1e38rem]"] {
+            let mut element = apply_class_with_ctx(div().letter_spacing(px(2.0)), class, None);
+            assert_eq!(element.text_style().letter_spacing, Some(px(2.0)));
+        }
+        let mut before = apply_class_with_ctx(div(), "ring-[2px]", None);
+        let expected = format!("{:?}", before.style().box_shadow);
+        let mut element = apply_class_with_ctx(before, "ring-[1e38rem]", None);
+        assert_eq!(format!("{:?}", element.style().box_shadow), expected);
+        let mut tracking = apply_class_with_ctx(div(), "tracking-[-0.5rem]", None);
+        assert_eq!(tracking.text_style().letter_spacing, Some(px(-8.0)));
+        let mut ring = apply_class_with_ctx(div(), "ring-[0.5rem]", None);
+        assert_eq!(
+            ring.style().box_shadow.as_ref().unwrap()[0].spread_radius,
+            px(8.0)
+        );
+    }
+
+    #[test]
+    fn invalid_aspect_ratios_preserve_the_existing_style() {
+        for class in [
+            "aspect-[NaN]",
+            "aspect-[inf]",
+            "aspect-[-1]",
+            "aspect-[0]",
+            "aspect-[1/0]",
+            "aspect-[0/1]",
+            "aspect-[-4/-3]",
+            "aspect-[1/inf]",
+            "aspect-[inf/1]",
+            "aspect-[1e38/1e-38]",
+        ] {
+            let mut element = apply_class_with_ctx(div().aspect_ratio(1.0), class, None);
+            assert_eq!(element.style().aspect_ratio, Some(1.0), "{class}");
+        }
+        for (class, expected) in [("aspect-[16/9]", 16.0 / 9.0), ("aspect-[1.5]", 1.5)] {
+            let mut element = apply_class_with_ctx(div(), class, None);
+            assert_eq!(element.style().aspect_ratio, Some(expected));
+        }
     }
 }
 
