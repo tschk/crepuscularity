@@ -363,4 +363,55 @@ mod tests {
         assert_eq!(obj.get("num").unwrap().as_f64().unwrap(), 42.0);
         assert!(obj.get("bool").unwrap().as_bool().unwrap());
     }
+
+    #[test]
+    fn test_render_bundle_with_ssr_success() {
+        let bundle = r#"{
+            "entry": "main",
+            "files": {
+                "main": "<h1>Hello</h1>"
+            }
+        }"#;
+        let res = render_bundle_with_ssr(bundle, false).unwrap();
+        assert_eq!(res, "<h1>Hello</h1>");
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_invalid_json() {
+        let err = render_bundle_with_ssr("not json", false).unwrap_err();
+        assert!(err.to_string().contains("bundle JSON:"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_not_object() {
+        let err = render_bundle_with_ssr("[]", false).unwrap_err();
+        assert!(err.to_string().contains("bundle must be a JSON object"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_entry() {
+        let err = render_bundle_with_ssr("{}", false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("bundle missing string field \"entry\""));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_files() {
+        let err = render_bundle_with_ssr(r#"{"entry": "main"}"#, false).unwrap_err();
+        assert!(err.to_string().contains("bundle missing \"files\" object"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_files_not_object() {
+        let err = render_bundle_with_ssr(r#"{"entry": "main", "files": []}"#, false).unwrap_err();
+        assert!(err.to_string().contains("\"files\" must be a JSON object"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_file_not_string() {
+        let err = render_bundle_with_ssr(r#"{"entry": "main", "files": {"main": 123}}"#, false)
+            .unwrap_err();
+        assert!(err.to_string().contains("must be a string"));
+    }
 }
