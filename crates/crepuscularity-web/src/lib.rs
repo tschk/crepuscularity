@@ -72,19 +72,35 @@ pub fn render_from_files(
 ) -> Result<String, CrepusError> {
     let mut ctx = ctx.clone();
     ctx.virtual_files = std::sync::Arc::new(files.clone());
+    let entry_path = entry.split_once('#').map_or(entry, |(path, _)| path);
+    ctx.base_dir = Path::new(entry_path)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|parent| parent.to_path_buf());
 
     if let Some((file_part, comp_name)) = entry.split_once('#') {
         let content = files.get(file_part).ok_or_else(|| {
             CrepusError::render(format!("file not found in virtual fs: {file_part}"))
         })?;
-        return render_component_file_to_html(content, comp_name, &ctx);
+        return crepuscularity_core::render_entry::render_component_file(
+            content,
+            comp_name,
+            &ctx,
+            |nodes, ctx| {
+                render::Walker::plain(0)
+                    .with_virtual_only(true)
+                    .nodes(nodes, ctx)
+            },
+        );
     }
 
     let content = files
         .get(entry)
         .ok_or_else(|| CrepusError::render(format!("file not found in virtual fs: {entry}")))?;
     let nodes = parse_template_with_path(content, Some(Path::new(entry)))?;
-    render_nodes_to_html(&nodes, &ctx)
+    render::Walker::plain(0)
+        .with_virtual_only(true)
+        .nodes(&nodes, &ctx)
 }
 
 /// Render multiple entry points from a virtual file map in parallel (requires `parallel` feature).
@@ -166,9 +182,9 @@ pub fn par_render_component_file(
 
 /// Parse a single `.crepus` template string and render it to escaped HTML.
 ///
-/// This entry point does not resolve filesystem includes. For component trees that use
-/// `include`, prefer [`render_from_files`] so every source file is supplied through the same
-/// virtual file map used by WASM and static-site builds.
+/// Native rendering can resolve filesystem includes relative to `ctx.base_dir`,
+/// after checking `ctx.virtual_files`. Use [`render_from_files`] for self-contained
+/// component trees whose sources must come only from the supplied virtual file map.
 #[tracing::instrument(skip(template, ctx), fields(template_len = template.len()))]
 pub fn render_template_to_html(
     template: &str,
@@ -425,6 +441,7 @@ fn render_element_with_hydration(
     is_root: bool,
     dyn_id: Option<u32>,
 ) -> Result<String, CrepusError> {
+    void_html::validate_children(el)?;
     if el.tag == "slot" {
         return if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
             render_nodes_to_html(slot_nodes, slot_ctx)

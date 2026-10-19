@@ -14,6 +14,18 @@
 //!
 //! - `ctx`: scalar template variables plus simple list/object shapes (see [`serialize_ctx_for_ssr`]).
 //! - `bind`: maps numeric id strings (`"0"`, `"1"`, …) to binding descriptors. Matches `data-crepus-id="c0"` → `"0"`.
+//!
+//! Dynamic regions under table/table-section/row/column-group or select/option
+//! parents use comment ranges instead of invalid span wrappers. Their binding
+//! descriptor adds `"marker": "range"`; IDs, kinds and manifest version remain unchanged:
+//! ```html
+//! <!--crepus:if:c2:start--><tr><td>Cell</td></tr><!--crepus:if:c2:end-->
+//! ```
+//! Pair comments by binding ID and kind, and use DOM Range endpoints immediately
+//! after the start and before the end. HTML parsing can insert implicit `tbody`
+//! or `colgroup` elements, so the comments need not share a parent. Ordinary
+//! regions retain their existing span markers. The reactive hydration API reads
+//! context; automatic reconciliation of these structural regions is not provided.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -94,13 +106,27 @@ pub fn render_template_to_html_with_ssr(
     ctx: &TemplateContext,
     markers: bool,
 ) -> Result<String, CrepusError> {
+    render_template_with_path(template, ctx, markers, None, false)
+}
+
+fn render_template_with_path(
+    template: &str,
+    ctx: &TemplateContext,
+    markers: bool,
+    path: Option<&std::path::Path>,
+    virtual_only: bool,
+) -> Result<String, CrepusError> {
+    let nodes = crepuscularity_core::ast_cache::parse_content_with_path(template, path)?;
     if !markers {
-        return crate::render_template_to_html(template, ctx);
+        return crate::render::Walker::plain(0)
+            .with_virtual_only(virtual_only)
+            .nodes(&nodes, ctx);
     }
-    let nodes = crepuscularity_core::ast_cache::parse_content(template)?;
     let counter = Cell::new(0u32);
     let mut bind = BindMap::new();
-    let mut html = render_nodes_ssr(&nodes, ctx, &counter, &mut bind, true)?;
+    let mut html = crate::render::Walker::ssr(&counter, &mut bind, true)
+        .with_virtual_only(virtual_only)
+        .nodes(&nodes, ctx)?;
     append_hydration_payload(&mut html, ctx, &bind)?;
     Ok(html)
 }
@@ -114,18 +140,29 @@ pub fn render_from_files_with_ssr(
 ) -> Result<String, CrepusError> {
     let mut ctx = ctx.clone();
     ctx.virtual_files = std::sync::Arc::new(files.clone());
+    let entry_path = entry.split_once('#').map_or(entry, |(path, _)| path);
+    ctx.base_dir = std::path::Path::new(entry_path)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|parent| parent.to_path_buf());
 
     if let Some((file_part, comp_name)) = entry.split_once('#') {
         let content = files.get(file_part).ok_or_else(|| {
             CrepusError::render(format!("file not found in virtual fs: {file_part}"))
         })?;
-        return render_component_file_to_html_with_ssr(content, comp_name, &ctx, markers);
+        return render_component_file_to_html_with_ssr(content, comp_name, &ctx, markers, true);
     }
 
     let content = files
         .get(entry)
         .ok_or_else(|| CrepusError::render(format!("file not found in virtual fs: {entry}")))?;
-    render_template_to_html_with_ssr(content, &ctx, markers)
+    render_template_with_path(
+        content,
+        &ctx,
+        markers,
+        Some(std::path::Path::new(entry)),
+        true,
+    )
 }
 
 fn render_component_file_to_html_with_ssr(
@@ -133,9 +170,19 @@ fn render_component_file_to_html_with_ssr(
     component_name: &str,
     ctx: &TemplateContext,
     markers: bool,
+    virtual_only: bool,
 ) -> Result<String, CrepusError> {
     if !markers {
-        return crate::render_component_file_to_html(content, component_name, ctx);
+        return crepuscularity_core::render_entry::render_component_file(
+            content,
+            component_name,
+            ctx,
+            |nodes, ctx| {
+                crate::render::Walker::plain(0)
+                    .with_virtual_only(virtual_only)
+                    .nodes(nodes, ctx)
+            },
+        );
     }
 
     let file = parse_component_file(content)?;
@@ -155,7 +202,9 @@ fn render_component_file_to_html_with_ssr(
 
     let counter = Cell::new(0u32);
     let mut bind = BindMap::new();
-    let mut html = render_nodes_ssr(&component.nodes, &child_ctx, &counter, &mut bind, true)?;
+    let mut html = crate::render::Walker::ssr(&counter, &mut bind, true)
+        .with_virtual_only(virtual_only)
+        .nodes(&component.nodes, &child_ctx)?;
     append_hydration_payload(&mut html, &child_ctx, &bind)?;
     Ok(html)
 }
