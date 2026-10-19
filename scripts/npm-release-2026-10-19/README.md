@@ -33,7 +33,7 @@ The check polls version metadata and tarball availability for about three minute
 ## What is included
 
 - `@tschk/crepuscularity-wasm@0.1.4`: a frozen SHA-512-checked tarball from reviewed release source `053bde61`. Its actual packed entry passed all six frontend calls under Bun and Node 22 with TypeScript stripping; packaging dry run passed. The nested CommonJS marker is included. This publishes that artifact without rebuilding or running prepublish scripts.
-- The 26 Moonshine packages: local `0.4.43`, npm `0.4.4` at inspection. Before packing, the script requires a clean source tree and passes `test`, `typecheck`, `typecheck:native`, `check:packages`, `check:catalog` and `check:adapters`. **The current Moonshine checkout is dirty and these packages are blocked.** It must be reviewed and committed before publication. The script never reverts files, commits, bumps versions, or deletes credentials.
+- The 26 Moonshine packages are now frozen at **0.4.49**, from pushed commit `e7fe5764e6ddd96d6caa8d8a3694bf37f763591e` in an isolated clean worktree. Acceptance: 2,546 tests passed, five skipped, zero failed; both typechecks and package/catalog/adapter checks passed. Every actual tarball was inspected for package identity and shipped export targets, and all 26 publish dry runs passed. SHA-512 checks protect the frozen tarballs. The publisher uses these reviewed artifacts rather than the changing primary checkout; its uncommitted work remains untouched. No fresh build is needed when publishing them. Required packages publish before their consumers.
 - `@tschk/flowtoken-svelte`: npm/local `0.0.2`, but the actual npm artifact lacks current tokenization and animation changes. It needs a reviewed version bump, such as a patch, before those changes can be published. The script reports this and will recognize a newer local version automatically; check-types, tests and build run before packing.
 - `@tschk/svelte-streamdown`: npm/local `0.0.1`. The inspected runtime behavior is present in the published artifact; local differences include an explicit type annotation, README and build-script cleanup. An optional patch needs a new version. Its checks/build recipe is included for a future bump.
 - `@trychert/facetime` and `@trychert/facetime-opensource`: public maintainership verified, but no matching local package source was found. Listed for visibility; no guessed release is attempted.
@@ -45,6 +45,8 @@ The human completed npm login and received a successful upload response for pars
 ## Files and verification
 
 `release.json` records source locations and the parser tarball checksum. `inventory.txt` is a dated observation; rerun the script for current data. `parser-prepare.txt`, `packed-acceptance.txt` and `svelte-artifact-comparison.json` record scoped checks. `bun test publish.test.ts` exercises version decisions, dependency ordering/cycles, unresolved local dependencies, filtered consumers and required peers.
+
+Frozen Moonshine package proofs are recorded in `moonshine-frozen-artifacts.json`; all six check results are recorded in `moonshine-049-checks.json`.
 
 The parser tarball can be reproduced from the reviewed release worktree using `bun pm pack --ignore-scripts --filename /absolute/path/tschk-crepuscularity-wasm-0.1.4.tgz` in its `crates/crepuscularity-wasm/npm` directory. Do not replace the frozen artifact or its checksum with an untested rebuild. Registry uploads cannot be overwritten; successful earlier uploads remain published if a later upload fails, and rerunning skips existing versions.
 
