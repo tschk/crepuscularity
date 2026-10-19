@@ -650,6 +650,65 @@ fn generated_scroll_utilities_compile_without_explicit_ids_and_set_axes() {
         view! { "div hover:overflow-auto focus:overflow-x-scroll class:overflow-y-auto={enabled}" };
 }
 
+#[test]
+fn dynamic_class_resets_clear_preceding_static_styles_and_preserve_others() {
+    let classes = "self-auto aspect-auto";
+    let mut actual = view! { "div self-center aspect-square w-full class={classes}" };
+    let mut expected = gpui::div().w_full();
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let classes = "overflow-y-auto";
+    let mut actual = view! { "div class={classes}" };
+    assert_eq!(actual.style().overflow.y, Some(gpui::Overflow::Scroll));
+    assert!(gpui::Element::id(&actual).is_some());
+}
+
+#[test]
+fn dynamic_state_lists_compile_with_resets_after_static_utilities() {
+    let classes = "hover:self-auto focus:aspect-auto active:self-auto";
+    let _ = view! { "div hover:self-center focus:aspect-square active:self-end class={classes}" };
+}
+
+#[test]
+fn generated_shadow_presets_match_runtime_and_clear_previous_shadows() {
+    let cases = [
+        (
+            view! { "div shadow-xl shadow-2xs" },
+            gpui::div().shadow_2xs(),
+        ),
+        (view! { "div shadow-xl shadow-xs" }, gpui::div().shadow_xs()),
+        (view! { "div shadow-xl shadow-sm" }, gpui::div().shadow_sm()),
+        (view! { "div shadow-xl shadow-md" }, gpui::div().shadow_md()),
+        (view! { "div shadow-xl shadow-lg" }, gpui::div().shadow_lg()),
+        (view! { "div shadow-xl shadow-xl" }, gpui::div().shadow_xl()),
+        (
+            view! { "div shadow-xl shadow-2xl" },
+            gpui::div().shadow_2xl(),
+        ),
+        (
+            view! { "div shadow-xl shadow-none" },
+            gpui::div().shadow_none(),
+        ),
+        (view! { "div shadow" }, gpui::div().shadow_md()),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let mut actual = view! { "div shadow-lg class:shadow-none={enabled}" };
+    let mut expected = gpui::div().shadow_none();
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let _ = view! { "div hover:shadow-md focus:shadow-lg active:shadow-none" };
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "requires a Metal device"]
