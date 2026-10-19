@@ -44,6 +44,16 @@ impl From<Anchor> for Corner {
 
 pub const GPUI_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+/// Convert a view into its type-erased representation.
+///
+/// GPUI CE exposes no public paint-cache wrapper here; this conversion does not cache paints.
+#[deprecated(
+    note = "gpui-ce no longer exposes a public `.cached()` API on AnyView; this is now an identity conversion and should be removed from callers"
+)]
+pub fn cached_view(view: impl Into<AnyView>) -> AnyView {
+    view.into()
+}
+
 pub fn gpui_window_options(
     app_id: impl Into<String>,
     title: impl Into<SharedString>,
