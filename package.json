@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "@happy-dom/global-registrator": "^20.11.2"
+  },
+  "devDependencies": {
+    "culori": "4.0.2"
   }
 }
