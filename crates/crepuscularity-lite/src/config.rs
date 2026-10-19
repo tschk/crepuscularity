@@ -290,7 +290,8 @@ mod tests {
         [capabilities]
         fs = true
         "#;
-        let c: CrepusLiteConfig = toml::from_str(raw).unwrap();
+        let c: CrepusLiteConfig =
+            toml::from_str(raw).expect("Failed to parse valid TOML capabilities opt-in config");
         assert!(c.capabilities.fs);
         assert!(!c.capabilities.clipboard);
         let a = c.allowed_capabilities();
