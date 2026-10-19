@@ -1956,6 +1956,97 @@ fn paint_children_buf(
     }
 }
 
+fn natural_child_height(child: &WidgetChild, direction: Direction) -> bool {
+    direction != Direction::Vertical
+        || auto_text_height(child)
+        || !matches!(
+            child.constraint,
+            Constraint::Length(_) | Constraint::Min(_) | Constraint::Max(_)
+        )
+}
+
+fn auto_text_height(child: &WidgetChild) -> bool {
+    matches!(&child.node, WidgetNode::Content { block: Some(spec), .. } if spec.auto_height)
+}
+
+fn scroll_child_height(child: &WidgetChild, direction: Direction, width: u16) -> u16 {
+    if natural_child_height(child, direction) {
+        scroll_node_height(&child.node, width).max(1)
+    } else {
+        child_extent(child, direction, Direction::Vertical)
+    }
+}
+
+fn scroll_children_height(
+    children: &[WidgetChild],
+    direction: Direction,
+    gap: u16,
+    width: u16,
+) -> u16 {
+    if direction == Direction::Vertical {
+        let gaps = children.len().saturating_sub(1).min(u16::MAX as usize) as u16;
+        children
+            .iter()
+            .map(|child| scroll_child_height(child, direction, width))
+            .fold(0u16, u16::saturating_add)
+            .saturating_add(gap.saturating_mul(gaps))
+    } else {
+        let constraints: Vec<_> = children.iter().map(|child| child.constraint).collect();
+        let chunks = split_area(&constraints, Rect::new(0, 0, width, 0), direction, gap);
+        children
+            .iter()
+            .zip(chunks)
+            .map(|(child, area)| scroll_node_height(&child.node, area.width))
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+fn scroll_node_height(node: &WidgetNode, width: u16) -> u16 {
+    let (content, block) = match node {
+        WidgetNode::Content {
+            lines,
+            block,
+            alignment,
+            ..
+        } => {
+            let inner_width = width.saturating_sub(
+                block
+                    .as_ref()
+                    .map_or(0, |spec| spec.overhead(Direction::Horizontal)),
+            );
+            let height = Paragraph::new(Text::from(lines.clone()))
+                .alignment(*alignment)
+                .wrap(Wrap { trim: false })
+                .line_count(inner_width);
+            (height.min(u16::MAX as usize) as u16, block)
+        }
+        WidgetNode::Container {
+            children,
+            direction,
+            gap,
+            block,
+            ..
+        } => {
+            let inner_width = width.saturating_sub(
+                block
+                    .as_ref()
+                    .map_or(0, |spec| spec.overhead(Direction::Horizontal)),
+            );
+            (
+                scroll_children_height(children, *direction, *gap, inner_width),
+                block,
+            )
+        }
+        WidgetNode::Empty => return 0,
+    };
+    content.saturating_add(
+        block
+            .as_ref()
+            .map_or(0, |spec| spec.overhead(Direction::Vertical)),
+    )
+}
+
 struct Scrollable<'a> {
     children: &'a [WidgetChild],
     direction: Direction,
@@ -1984,62 +2075,100 @@ impl<'a> Scrollable<'a> {
         }
     }
 
-    fn total_content_height(&self) -> u16 {
-        let n = self.children.len() as u16;
-        let total_gap = self.gap.saturating_mul(n.saturating_sub(1));
-        let sum: u16 = self
-            .children
+    fn total_content_height(&self) -> usize {
+        self.children
             .iter()
-            .map(|c| constraint_min_height(&c.constraint))
-            .sum();
-        sum.saturating_add(total_gap)
+            .map(|child| {
+                usize::from(scroll_child_height(
+                    child,
+                    self.direction,
+                    self.viewport.width,
+                ))
+            })
+            .fold(0usize, usize::saturating_add)
+            .saturating_add(
+                usize::from(self.gap).saturating_mul(self.children.len().saturating_sub(1)),
+            )
     }
 
-    fn clamped_offset(&self) -> usize {
-        let total = self.total_content_height() as usize;
-        let max = total.saturating_sub(self.viewport.height as usize);
+    fn clamped_offset(&self, total_height: usize) -> usize {
+        let max = total_height.saturating_sub(usize::from(self.viewport.height));
         if self.scroll_to_bottom {
             return max;
         }
         self.scroll_offset.min(max)
     }
 
-    fn paint(&self, buf: &mut Buffer) {
-        if self.children.is_empty() || self.viewport.height == 0 {
+    fn paint(&self, buf: &mut Buffer, natural_height: bool) {
+        let visible = self.viewport.intersection(buf.area);
+        if self.children.is_empty() || visible.is_empty() {
             return;
         }
         if self.direction != Direction::Vertical {
-            paint_children_buf(self.children, buf, self.viewport, self.direction, self.gap);
+            paint_children_buf(
+                self.children,
+                buf,
+                self.viewport,
+                self.direction,
+                self.gap,
+                natural_height,
+                true,
+            );
             return;
         }
         let total_height = self.total_content_height();
-        if total_height <= self.viewport.height {
-            paint_children_buf(self.children, buf, self.viewport, self.direction, self.gap);
+        if total_height <= usize::from(self.viewport.height) {
+            paint_children_buf(
+                self.children,
+                buf,
+                self.viewport,
+                self.direction,
+                self.gap,
+                natural_height,
+                true,
+            );
             return;
         }
-        let offset = self.clamped_offset();
-        let virtual_area = Rect::new(0, 0, self.viewport.width, total_height);
-        let mut virtual_buf = Buffer::empty(virtual_area);
-        let constraints: Vec<Constraint> = self.children.iter().map(|c| c.constraint).collect();
-        let chunks = split_area(&constraints, virtual_area, self.direction, self.gap);
-        let vis_start = offset as u16;
-        let vis_end = vis_start + self.viewport.height;
-        for (i, child) in self.children.iter().enumerate() {
-            if let Some(&chunk) = chunks.get(i) {
-                if chunk.bottom() <= vis_start || chunk.y >= vis_end {
-                    continue;
+        let vis_start =
+            self.clamped_offset(total_height) + usize::from(visible.y - self.viewport.y);
+        let vis_end = vis_start.saturating_add(usize::from(visible.height));
+        let mut viewport_buf = Buffer::empty(Rect::new(0, 0, self.viewport.width, visible.height));
+        let mut child_start = 0usize;
+        for child in self.children {
+            let height = scroll_child_height(child, self.direction, self.viewport.width);
+            let child_end = child_start.saturating_add(usize::from(height));
+            let start = child_start.max(vis_start);
+            let end = child_end.min(vis_end);
+            if start < end {
+                // Keep Ratatui coordinates local while logical list offsets remain usize.
+                let local_start = (start - child_start) as u16;
+                let rows = (end - start) as u16;
+                let mut child_buf =
+                    Buffer::empty(Rect::new(0, local_start, self.viewport.width, rows));
+                paint_node_buf(
+                    &child.node,
+                    &mut child_buf,
+                    Rect::new(0, 0, self.viewport.width, height),
+                    natural_child_height(child, self.direction),
+                    natural_child_height(child, self.direction),
+                );
+                for y in 0..rows {
+                    for x in 0..self.viewport.width {
+                        viewport_buf[(x, (start - vis_start) as u16 + y)] =
+                            std::mem::take(&mut child_buf[(x, local_start + y)]);
+                    }
                 }
-                paint_node_buf(&child.node, &mut virtual_buf, chunk);
             }
-        }
-        for y in 0..self.viewport.height {
-            let src_y = offset as u16 + y;
-            if src_y >= total_height {
+            child_start = child_end.saturating_add(usize::from(self.gap));
+            if child_start >= vis_end {
                 break;
             }
-            for x in 0..self.viewport.width {
-                let cell = std::mem::take(&mut virtual_buf[(x, src_y)]);
-                buf[(self.viewport.x + x, self.viewport.y + y)] = cell;
+        }
+        for y in 0..visible.height {
+            for x in 0..visible.width {
+                let src_x = visible.x - self.viewport.x + x;
+                let cell = std::mem::take(&mut viewport_buf[(src_x, y)]);
+                buf[(visible.x + x, visible.y + y)] = cell;
             }
         }
     }
@@ -2129,7 +2258,11 @@ fn active_class(ctx: &TemplateContext, class: &str) -> Option<String> {
     Some(class.to_string())
 }
 
-fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> ScrollConfig {
+fn scroll_config(
+    el: &Element,
+    ctx: &TemplateContext,
+    classes: &[String],
+) -> Result<ScrollConfig, CrepusError> {
     let scrollable = classes.iter().any(|class| {
         matches!(
             class.as_str(),
@@ -2137,44 +2270,47 @@ fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> Scr
         )
     });
     if !scrollable {
-        return ScrollConfig::default();
+        return Ok(ScrollConfig::default());
     }
     let scroll_to_bottom = el
         .bindings
         .iter()
-        .find(|b| b.prop == "scroll-bottom")
-        .map(|b| {
-            let v = eval_value(&b.value, ctx);
-            match v {
+        .find(|b| b.prop == "scroll-bottom" && b.origin != BindingOrigin::Attribute)
+        .map(|b| -> Result<bool, CrepusError> {
+            let v = eval_expr(&b.value, ctx)?;
+            Ok(match v {
                 TemplateValue::Bool(b) => b,
                 _ => {
                     let s = value_to_str(&v);
                     s == "true" || s == "1"
                 }
-            }
+            })
         })
+        .transpose()?
         .unwrap_or(false);
     let offset = el
         .bindings
         .iter()
         .find(|binding| {
-            matches!(
-                binding.prop.as_str(),
-                "scroll-offset" | "scroll-y" | "scroll"
-            )
+            binding.origin != BindingOrigin::Attribute
+                && matches!(
+                    binding.prop.as_str(),
+                    "scroll-offset" | "scroll-y" | "scroll"
+                )
         })
-        .map(|binding| value_to_str(&eval_value(&binding.value, ctx)))
+        .map(|binding| eval_expr(&binding.value, ctx).map(|value| value_to_str(&value)))
+        .transpose()?
         .or_else(|| {
             let value = ctx.get_str("scroll_offset");
             (!value.is_empty()).then_some(value)
         })
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
-    ScrollConfig {
+    Ok(ScrollConfig {
         offset,
         scroll_to_bottom,
         scrollable: true,
-    }
+    })
 }
 
 #[derive(Default)]
