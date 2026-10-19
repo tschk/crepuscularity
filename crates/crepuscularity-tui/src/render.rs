@@ -2114,16 +2114,19 @@ fn known_target_prefix(prefix: &str) -> bool {
     )
 }
 
-/// Build a ratatui `Line` from a `TextPart` slice.
-fn build_line(parts: &[TextPart], ctx: &TemplateContext) -> Line<'static> {
-    let spans: Vec<Span<'static>> = parts
-        .iter()
-        .map(|part| match part {
-            TextPart::Literal(s) => Span::raw(s.clone()),
-            TextPart::Expr(expr) => Span::raw(value_to_str(&eval_value(expr, ctx))),
-        })
-        .collect();
-    Line::from(spans)
+/// Resolve text parts before splitting lines, including newlines across parts.
+fn build_lines(
+    parts: &[TextPart],
+    ctx: &TemplateContext,
+) -> Result<Vec<Line<'static>>, CrepusError> {
+    let mut content = String::new();
+    for part in parts {
+        match part {
+            TextPart::Literal(text) => content.push_str(text),
+            TextPart::Expr(expr) => content.push_str(&value_to_str(&eval_expr(expr, ctx)?)),
+        }
+    }
+    Ok(Text::raw(content).lines)
 }
 
 /// Convert `StyleHints` into a `BlockSpec` if borders / title / padding are needed.
@@ -2142,6 +2145,8 @@ fn hints_to_block(hints: &StyleHints) -> Option<BlockSpec> {
         title: hints.title.clone(),
         title_alignment: hints.title_alignment,
         padding: hints.padding,
+        auto_height: false,
+        invisible: false,
     })
 }
 
