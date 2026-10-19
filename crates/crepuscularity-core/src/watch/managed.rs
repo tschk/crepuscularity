@@ -425,10 +425,10 @@ impl Watcher for SingleFileWatcher {
 
     fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
         let path = std::path::absolute(path).map_err(notify::Error::io)?;
-        if !self
+        if self
             .active
             .as_ref()
-            .is_some_and(|(current, _, _)| current == &path)
+            .is_none_or(|(current, _, _)| current != &path)
         {
             return Err(notify::Error::watch_not_found().add_path(path));
         }
