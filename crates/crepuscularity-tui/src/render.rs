@@ -201,16 +201,29 @@ fn collect_focusable_ids_in_context(nodes: &[Node], ctx: &TemplateContext, out: 
                 }
             }
             Node::For(block) => {
+                let pattern = block.pattern.trim();
+                let has_pattern = !pattern.is_empty();
+                let mut child_ctx = ctx.clone();
+                let mut written: Vec<String> = Vec::new();
                 for item_ctx in ctx.get_list_ref(&block.iterator) {
-                    let mut child_ctx = ctx.clone();
-                    child_ctx.vars.extend(item_ctx.vars.clone());
-                    if !block.pattern.trim().is_empty() {
+                    for key in written.drain(..) {
+                        if let Some(v) = ctx.vars.get(&key) {
+                            child_ctx.vars.insert(key, v.clone());
+                        } else {
+                            child_ctx.vars.remove(&key);
+                        }
+                    }
+                    for (k, v) in &item_ctx.vars {
+                        child_ctx.vars.insert(k.clone(), v.clone());
+                        written.push(k.clone());
+                    }
+                    if has_pattern {
                         let item_str = item_ctx.get_str("value");
                         if !item_str.is_empty() {
-                            child_ctx.vars.insert(
-                                block.pattern.trim().to_string(),
-                                TemplateValue::Str(item_str),
-                            );
+                            child_ctx
+                                .vars
+                                .insert(pattern.to_string(), TemplateValue::Str(item_str));
+                            written.push(pattern.to_string());
                         }
                     }
                     collect_focusable_ids_in_context(&block.body, &child_ctx, out);
