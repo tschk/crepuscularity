@@ -1160,23 +1160,7 @@ fn core_node_to_macro(node: &crepuscularity_core::ast::Node) -> Result<Node, Str
 }
 
 fn extract_braced_expr_str(s: &str) -> Option<String> {
-    if !s.starts_with('{') {
-        return None;
-    }
-    let mut depth = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(s[1..i].trim().to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    Some(s.strip_prefix('{')?.strip_suffix('}')?.trim().to_string())
 }
 
 // ============================================================
@@ -1184,7 +1168,43 @@ fn extract_braced_expr_str(s: &str) -> Option<String> {
 // ============================================================
 
 fn generate_root(nodes: &[Node]) -> Result<TokenStream2, String> {
-    // Separate top-level let decls from other nodes
+    let path = syn::Ident::new("__crepus_loop_path", Span::mixed_site());
+    let root = generate_root_with_path(nodes)?;
+    Ok(quote! {{ let #path = ::std::string::String::new(); #root }})
+}
+
+fn generate_root_with_path(nodes: &[Node]) -> Result<TokenStream2, String> {
+    let first_element = nodes
+        .iter()
+        .position(|node| !matches!(node, Node::LetDecl(_)));
+    if first_element.is_some_and(|index| {
+        nodes[index + 1..]
+            .iter()
+            .any(|node| matches!(node, Node::LetDecl(_)))
+    }) {
+        if nodes
+            .iter()
+            .filter(|node| !matches!(node, Node::LetDecl(_)))
+            .count()
+            == 1
+        {
+            let root = syn::Ident::new("__crepus_root", Span::mixed_site());
+            let statements = nodes
+                .iter()
+                .map(|node| {
+                    if let Node::LetDecl(decl) = node {
+                        generate_let_decl(decl)
+                    } else {
+                        generate_node(node).map(|element| quote! { let #root = #element; })
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(quote! {{ #(#statements)* #root }});
+        }
+        let calls = generate_child_calls(nodes)?;
+        return Ok(quote! { ::gpui::div() #(#calls)* });
+    }
+    // Leading declarations share the root expression's scope.
     let mut let_stmts: Vec<TokenStream2> = Vec::new();
     let mut element_nodes: Vec<&Node> = Vec::new();
 
@@ -1243,11 +1263,27 @@ fn generate_node(node: &Node) -> Result<TokenStream2, String> {
 }
 
 fn generate_child_calls(nodes: &[Node]) -> Result<Vec<TokenStream2>, String> {
-    nodes.iter().map(generate_child_call).collect()
+    generate_child_calls_refs(&nodes.iter().collect::<Vec<_>>())
 }
 
 fn generate_child_calls_refs(nodes: &[&Node]) -> Result<Vec<TokenStream2>, String> {
-    nodes.iter().map(|n| generate_child_call(n)).collect()
+    if !nodes.iter().any(|node| matches!(node, Node::LetDecl(_))) {
+        return nodes.iter().map(|node| generate_child_call(node)).collect();
+    }
+    let parent = syn::Ident::new("__crepus_parent", Span::mixed_site());
+    let mut statements = Vec::new();
+    for node in nodes {
+        if let Node::LetDecl(decl) = node {
+            statements.push(generate_let_decl(decl)?);
+        } else {
+            let call = generate_child_call(node)?;
+            statements.push(quote! { let #parent = #parent #call; });
+        }
+    }
+    Ok(vec![quote! { .map(|#parent| {
+        #(#statements)*
+        #parent
+    }) }])
 }
 
 fn generate_child_call(node: &Node) -> Result<TokenStream2, String> {
@@ -1255,12 +1291,7 @@ fn generate_child_call(node: &Node) -> Result<TokenStream2, String> {
         Node::If(if_block) => generate_if_child_call(if_block),
         Node::For(for_block) => generate_for_child_call(for_block),
         Node::Match(match_block) => generate_match_child_call(match_block),
-        Node::LetDecl(decl) => {
-            // Let decls inside elements: hoist into a .child block? Not supported elegantly.
-            // Emit as a statement that won't actually add a child.
-            let stmt = generate_let_decl(decl)?;
-            Ok(quote! { /* $: let inside element is not supported */ ; #stmt })
-        }
+        Node::LetDecl(_) => Err("Child declarations require a sibling scope".into()),
         other => {
             let expr = generate_node(other)?;
             Ok(quote! { .child(#expr) })
@@ -1369,13 +1400,19 @@ fn generate_text(parts: &[TextPart]) -> Result<TokenStream2, String> {
 }
 
 fn generate_if_child_call(if_block: &IfBlock) -> Result<TokenStream2, String> {
+    let builder = syn::Ident::new("__el", Span::mixed_site());
     let condition: syn::Expr = syn::parse_str(&if_block.condition)
         .map_err(|error| format!("Invalid if condition `{}`: {error}", if_block.condition))?;
 
     let then_calls = generate_child_calls(&if_block.then_children)?;
 
     match &if_block.else_children {
-        Some(else_children) if if_block.then_children.len() == 1 && else_children.len() == 1 => {
+        Some(else_children)
+            if if_block.then_children.len() == 1
+                && else_children.len() == 1
+                && !matches!(if_block.then_children[0], Node::LetDecl(_))
+                && !matches!(else_children[0], Node::LetDecl(_)) =>
+        {
             let then_expr = generate_node(&if_block.then_children[0])?;
             let else_expr = generate_node(&else_children[0])?;
             Ok(quote! {
@@ -1389,24 +1426,33 @@ fn generate_if_child_call(if_block: &IfBlock) -> Result<TokenStream2, String> {
         Some(else_children) => {
             let else_calls = generate_child_calls(else_children)?;
             Ok(quote! {
-                .when(#condition, |__el| __el #(#then_calls)*)
-                .when(!(#condition), |__el| __el #(#else_calls)*)
+                .map(|#builder| if #condition {
+                    #builder #(#then_calls)*
+                } else {
+                    #builder #(#else_calls)*
+                })
             })
         }
         None => Ok(quote! {
-            .when(#condition, |__el| __el #(#then_calls)*)
+            .when(#condition, |#builder| #builder #(#then_calls)*)
         }),
     }
 }
 
 fn generate_if_expr(if_block: &IfBlock) -> Result<TokenStream2, String> {
+    let builder = syn::Ident::new("__el", Span::mixed_site());
     let condition: syn::Expr = syn::parse_str(&if_block.condition)
         .map_err(|error| format!("Invalid if condition: {error}"))?;
 
     let then_calls = generate_child_calls(&if_block.then_children)?;
 
     match &if_block.else_children {
-        Some(else_children) if if_block.then_children.len() == 1 && else_children.len() == 1 => {
+        Some(else_children)
+            if if_block.then_children.len() == 1
+                && else_children.len() == 1
+                && !matches!(if_block.then_children[0], Node::LetDecl(_))
+                && !matches!(else_children[0], Node::LetDecl(_)) =>
+        {
             let then_expr = generate_node(&if_block.then_children[0])?;
             let else_expr = generate_node(&else_children[0])?;
             Ok(quote! {
@@ -1420,13 +1466,15 @@ fn generate_if_expr(if_block: &IfBlock) -> Result<TokenStream2, String> {
         Some(else_children) => {
             let else_calls = generate_child_calls(else_children)?;
             Ok(quote! {
-                ::gpui::div()
-                    .when(#condition, |__el| __el #(#then_calls)*)
-                    .when(!(#condition), |__el| __el #(#else_calls)*)
+                if #condition {
+                    ::gpui::div() #(#then_calls)*
+                } else {
+                    ::gpui::div() #(#else_calls)*
+                }
             })
         }
         None => Ok(quote! {
-            ::gpui::div().when(#condition, |__el| __el #(#then_calls)*)
+            ::gpui::div().when(#condition, |#builder| #builder #(#then_calls)*)
         }),
     }
 }
@@ -1441,15 +1489,21 @@ fn generate_for_child_call(for_block: &ForBlock) -> Result<TokenStream2, String>
 
     let body_expr = match for_block.body.len() {
         0 => quote! { ::gpui::div() },
-        1 => generate_node(&for_block.body[0])?,
+        1 if !matches!(for_block.body[0], Node::LetDecl(_)) => generate_node(&for_block.body[0])?,
         _ => {
             let child_calls = generate_child_calls(&for_block.body)?;
             quote! { ::gpui::div() #(#child_calls)* }
         }
     };
 
+    let path = syn::Ident::new("__crepus_loop_path", Span::mixed_site());
+    let index = syn::Ident::new("__crepus_loop_index", Span::mixed_site());
+    // shortcut: positional IDs follow iteration order; use explicit IDs when items reorder.
     Ok(quote! {
-        .children((#iterator).map(|#pattern| #body_expr))
+        .children((#iterator).enumerate().map(|(#index, #pattern)| {
+            let #path = format!("{}:{}", #path, #index);
+            #body_expr
+        }))
     })
 }
 
@@ -1502,7 +1556,7 @@ fn generate_match_arm(arm: &MatchArm) -> Result<TokenStream2, String> {
 
     let body = match arm.body.len() {
         0 => quote! { ::gpui::IntoElement::into_any_element(::gpui::div()) },
-        1 => {
+        1 if !matches!(arm.body[0], Node::LetDecl(_)) => {
             let expr = generate_node(&arm.body[0])?;
             quote! { ::gpui::IntoElement::into_any_element(#expr) }
         }
@@ -2154,6 +2208,21 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
     }}
     .into()
 }
+#[cfg(test)]
+mod default_declaration_tests {
+    use super::*;
+    #[test]
+    fn runtime_defaults_are_rejected_instead_of_overwriting_rust_bindings() {
+        for source in ["$: default count = 1", "div\n  $: default count = 1"] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let error = core_node_to_macro(&nodes[0]).err().unwrap();
+            assert!(error.contains("runtime template context"));
+        }
+        let nodes = crepuscularity_core::parse_template("$: let count = 1").unwrap();
+        assert!(core_node_to_macro(&nodes[0]).is_ok());
+    }
+}
+
 #[cfg(all(test, unix))]
 mod symlink_frontend_tests {
     use super::*;
