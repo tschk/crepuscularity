@@ -104,7 +104,9 @@ pub fn extract_head_block(raw: &str) -> (Option<String>, String) {
                 }
                 let line_indent = line.len() - line.trim_start().len();
                 if line_indent > head_indent {
-                    let dedented = &line[head_indent + 2..]; // strip one level
+                    let dedented = line
+                        .get((head_indent + 2).min(line_indent)..)
+                        .unwrap_or_else(|| line.trim_start());
                     head_lines.push(dedented);
                     j += 1;
                 } else {
@@ -182,6 +184,14 @@ mod tests {
 
         // Empty token not in the aliases map
         assert_eq!(expand_class_token("", &aliases), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn extract_head_block_preserves_content_with_short_indentation() {
+        for indent in [" ", "\t", "\u{2003}", "  "] {
+            let source = format!("head\n{indent}éclair\ndiv");
+            assert_eq!(extract_head_block(&source).0.as_deref(), Some("éclair"));
+        }
     }
 
     #[test]
@@ -415,6 +425,20 @@ div
         let d = strip_indent_decorators(s);
         assert!(d.body.contains("bind:href={url}"), "body={:?}", d.body);
         assert!(d.inline_css.is_empty());
+    }
+
+    #[test]
+    fn preserves_attribute_blocks_with_rust_paths_and_semicolons() {
+        for line in [
+            "div @keydown|ctrl+s={move |_, _, _| { hits.fetch_add(1, Ordering::SeqCst); }}",
+            "div bind:href={String::from(\"url\"); url}",
+        ] {
+            for tail in ["", "\nbutton[data-kind=primary] { color: red; }"] {
+                let d = strip_indent_decorators(&format!("{line}{tail}"));
+                assert_eq!(d.body, line);
+                assert_eq!(d.inline_css, tail.trim());
+            }
+        }
     }
 
     #[test]
