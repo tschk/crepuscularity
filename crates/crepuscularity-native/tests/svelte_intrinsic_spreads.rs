@@ -149,3 +149,29 @@ fn open_binding_spreads_preserve_owned_dom_and_boolean_ssr_paths() {
         assert!(output.source.contains(expected),"{}",output.source);
     }
 }
+
+#[test]
+fn group_binding_spreads_preserve_owned_dom_and_ordered_ssr_contracts() {
+    let source = r#"<script lang="ts">
+let attrs=$props();
+let selected=$state<string[]>(['a']);
+let choice=$state('a');
+let dynamicVal=$state('b');
+</script>
+<input type="checkbox" {...attrs} onchange={(event)=>selected.push(event.currentTarget.value)} bind:group={selected}/>
+<input type="checkbox" value={dynamicVal} {...attrs} bind:group={selected}/>
+<input type="radio" value="a" bind:group={choice} {...attrs}/>"#;
+    for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
+        let output = compile_moonshine_svelte(source, Path::new("GroupSpread.svelte"), target).unwrap();
+        if matches!(target, MoonshineModuleTarget::Dom) {
+            assert!(output.source.contains("installBoundElementSpread"), "{}", output.source);
+            assert!(output.source.contains("createInputGroup"), "{}", output.source);
+            assert!(!output.source.contains("__installGroupMember"), "{}", output.source);
+            assert!(output.source.contains(".bind(__groupInput, () => dynamicVal.value)"), "{}", output.source);
+        } else {
+            assert!(output.source.contains("spreadServerElement"), "{}", output.source);
+            assert!(!output.source.contains("hSourceEntries"), "{}", output.source);
+            assert!(output.source.contains(".includes("), "{}", output.source);
+        }
+    }
+}

@@ -191,9 +191,19 @@ mod tests {
 }
 
 /// Emit controller declarations in the owning lexical function, before member setup.
+#[cfg(test)]
 pub(crate) fn allocate(
     source: &str,
     marker: &str,
+    globals: &crate::source_globals::SourceGlobals,
+) -> Result<String, String> {
+    allocate_with_spreads(source, marker, &[], globals)
+}
+
+pub(crate) fn allocate_with_spreads(
+    source: &str,
+    marker: &str,
+    element_spread_markers: &[String],
     globals: &crate::source_globals::SourceGlobals,
 ) -> Result<String, String> {
     let types = &globals.types;
@@ -237,10 +247,47 @@ pub(crate) fn allocate(
             .or_default()
             .push_str(&format!("const {name}={factory}({kind:?},()=>({target}),({value}:any)=>({target}={value}));",kind=group.kind,target=group.target));
         for member in &group.members {
+            let watch = built.semantic.nodes().iter().find_map(|node| {
+                let AstKind::JSXElement(element) = node.kind() else {
+                    return None;
+                };
+                if !element.opening_element.attributes.iter().any(|item| {
+                    matches!(item, JSXAttributeItem::Attribute(attr) if attr.span == *member)
+                }) {
+                    return None;
+                }
+                let has_spread = element.opening_element.attributes.iter().any(|item| {
+                    matches!(item, JSXAttributeItem::Attribute(attr)
+                        if matches!(&attr.name, JSXAttributeName::Identifier(id)
+                            if element_spread_markers.iter().any(|m| m == id.name.as_str())))
+                });
+                if !has_spread {
+                    return None;
+                }
+                element.opening_element.attributes.iter().find_map(|item| {
+                    let JSXAttributeItem::Attribute(attr) = item else {
+                        return None;
+                    };
+                    if !matches!(&attr.name, JSXAttributeName::Identifier(id) if id.name == "value") {
+                        return None;
+                    }
+                    match &attr.value {
+                        Some(JSXAttributeValue::ExpressionContainer(value)) => {
+                            let span = value.expression.span();
+                            Some(&source[span.start as usize..span.end as usize])
+                        }
+                        _ => None,
+                    }
+                })
+            });
+            let bind_call = match watch {
+                Some(watch) => format!("{name}.bind({input},()=>({watch}\n))"),
+                None => format!("{name}.bind({input})"),
+            };
             replacements.push((
                 member.start as usize,
                 member.end as usize,
-                format!("{marker}={{({input}:{types}.HTMLInputElement)=>{name}.bind({input})}}"),
+                format!("{marker}={{({input}:{types}.HTMLInputElement)=>{bind_call}}}"),
             ));
         }
     }
@@ -374,6 +421,26 @@ mod allocation_tests {
             "{output}"
         );
     }
+    #[test]
+    fn spread_group_members_keep_change_handlers_in_spread_layers_and_watch_authored_dynamic_values() {
+        let source = "function App(){let selected;let dynamicVal;let attrs;return <><input type={'checkbox'} value={dynamicVal} __crepusSvelteElementSpread0={attrs} onChange={event=>selected} Group={selected}/><input type={'checkbox'} __crepusSvelteElementSpread1={attrs} Group={selected}/></> }";
+        let spread_markers = vec![
+            "__crepusSvelteElementSpread0".to_string(),
+            "__crepusSvelteElementSpread1".to_string(),
+        ];
+        let allocated =
+            allocate_with_spreads(source, "Group", &spread_markers, &Default::default()).unwrap();
+        assert!(
+            allocated.contains(".bind(__groupInput,()=>(dynamicVal\n))"),
+            "{allocated}"
+        );
+        assert!(allocated.contains(".bind(__groupInput)}"), "{allocated}");
+        let output =
+            install_events_with_spreads(&allocated, "Group", &spread_markers, &Default::default())
+                .unwrap();
+        assert!(output.contains("onChange={event=>selected}"), "{output}");
+        assert!(!output.contains("__installGroupMember"), "{output}");
+    }
 }
 
 /// Server group bindings emit ordered lazy attributes, without allocating controllers.
@@ -411,21 +478,79 @@ pub(crate) fn ssr(
     let helper = fresh("__GroupServerInput");
     let entries_factory = fresh("__groupSourceEntries");
     let assigned = fresh("__groupSsrValue");
+    let mut helper_used = false;
     let mut edits = Vec::new();
     for node in built.semantic.nodes().iter() {
         let AstKind::JSXElement(element) = node.kind() else {
             continue;
         };
-        let target=element.opening_element.attributes.iter().find_map(|item|match item {
+        let binding = element.opening_element.attributes.iter().find_map(|item| match item {
             JSXAttributeItem::Attribute(attribute) if matches!(&attribute.name,JSXAttributeName::Identifier(name) if name.name==marker)=>match &attribute.value {
-                Some(JSXAttributeValue::ExpressionContainer(value))=>Some(value.expression.span()),_=>None,
+                Some(JSXAttributeValue::ExpressionContainer(value))=>Some((attribute.span, value.expression.span())),_=>None,
             },_=>None,
         });
-        let Some(target) = target else { continue };
+        let Some((marker_span, target)) = binding else { continue };
         let kind = input_kind(element)?;
         let target = &source[target.start as usize..target.end as usize];
         let model =
             format!("(false?(({assigned}:any)=>({target}\n={assigned}))(undefined):({target}\n))");
+        let decode_attr_value = |attribute: &JSXAttribute<'_>| -> Result<String, String> {
+            match &attribute.value {
+                None => Ok("true".to_owned()),
+                Some(JSXAttributeValue::StringLiteral(value)) => serde_json::to_string(
+                    &crate::svelte_entities::decode_entities(value.value.as_str(), true),
+                )
+                .map_err(|error| error.to_string()),
+                Some(JSXAttributeValue::ExpressionContainer(value)) => {
+                    if value.expression.as_expression().is_none() {
+                        return Err("invalid group SSR attribute expression".into());
+                    }
+                    let span = value.expression.span();
+                    Ok(format!(
+                        "({}\n)",
+                        &source[span.start as usize..span.end as usize]
+                    ))
+                }
+                _ => Err("unsupported group SSR attribute".into()),
+            }
+        };
+        let authored_value = element
+            .opening_element
+            .attributes
+            .iter()
+            .find_map(|item| match item {
+                JSXAttributeItem::Attribute(attribute)
+                    if matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "value") =>
+                {
+                    Some(decode_attr_value(attribute))
+                }
+                _ => None,
+            })
+            .transpose()?;
+        let has_spread = element
+            .opening_element
+            .attributes
+            .iter()
+            .any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)));
+        if has_spread {
+            let replacement = if let Some(value) = authored_value {
+                let checked = if kind == "checkbox" {
+                    format!("{model}.includes({value})")
+                } else {
+                    format!("{model}===({value})")
+                };
+                format!("{{...{{checked:({checked})}}}}")
+            } else {
+                format!("{{...(false?{{checked:(({assigned}:any)=>({target}\n={assigned}))(undefined)}}:{{}})}}")
+            };
+            edits.push((
+                marker_span.start as usize,
+                marker_span.end as usize,
+                replacement,
+            ));
+            continue;
+        }
+        helper_used = true;
         let mut entries = Vec::new();
         for item in &element.opening_element.attributes {
             let JSXAttributeItem::Attribute(attribute) = item else {
@@ -435,8 +560,18 @@ pub(crate) fn ssr(
                 return Err("invalid group SSR attribute name".into());
             };
             let name = name.name.as_str();
-            if name == marker
-                || Some(name) == namespace
+            if name == marker {
+                if let Some(value) = &authored_value {
+                    let checked = if kind == "checkbox" {
+                        format!("{model}.includes({value})")
+                    } else {
+                        format!("{model}===({value})")
+                    };
+                    entries.push(format!("[\"checked\",()=>({checked})]"));
+                }
+                continue;
+            }
+            if Some(name) == namespace
                 || name.starts_with("on")
                 || matches!(name, "ref" | "children")
             {
@@ -455,21 +590,7 @@ pub(crate) fn ssr(
                 "defaultValue" => "value",
                 _ => name,
             };
-            let value = match &attribute.value {
-                None => "true".to_owned(),
-                Some(JSXAttributeValue::StringLiteral(value)) => serde_json::to_string(
-                    &crate::svelte_entities::decode_entities(value.value.as_str(), true),
-                )
-                .map_err(|error| error.to_string())?,
-                Some(JSXAttributeValue::ExpressionContainer(value)) => {
-                    if value.expression.as_expression().is_none() {
-                        return Err("invalid group SSR attribute expression".into());
-                    }
-                    let span = value.expression.span();
-                    format!("({}\n)", &source[span.start as usize..span.end as usize])
-                }
-                _ => return Err("unsupported group SSR attribute".into()),
-            };
+            let value = decode_attr_value(attribute)?;
             let key = serde_json::to_string(key).map_err(|error| error.to_string())?;
             let lazy = matches!(
                 &attribute.value,
@@ -483,14 +604,6 @@ pub(crate) fn ssr(
                     value.clone()
                 }
             ));
-            if name == "value" {
-                let checked = if kind == "checkbox" {
-                    format!("{model}.includes({value})")
-                } else {
-                    format!("{model}===({value})")
-                };
-                entries.push(format!("[\"checked\",()=>({checked})]"));
-            }
         }
         edits.push((
             element.span.start as usize,
@@ -507,6 +620,9 @@ pub(crate) fn ssr(
     let mut output = source.to_owned();
     for (start, end, text) in edits.into_iter().rev() {
         output.replace_range(start..end, &text);
+    }
+    if !helper_used {
+        return Ok((output, None));
     }
     output=format!("import{{hSourceEntries as {entries_factory}}}from\"@tschk/moonshine-dom/ssr\";\n{output}\nfunction {helper}(props:{{entries:readonly(readonly[string,unknown])[]}}){{return {entries_factory}(\"input\",props.entries);}}\n");
     Ok((output, Some(helper)))
@@ -548,6 +664,25 @@ mod ssr_tests {
         assert_eq!(output.matches("[\"value\",").count(), 1, "{output}");
         assert_eq!(output.matches("[\"checked\",").count(), 2, "{output}");
     }
+    #[test]
+    fn spread_group_ssr_emits_positioned_checked_layer_only_when_value_is_authored() {
+        let source = r#"function App(){let selected;let attrs;return <><input type="checkbox" {...attrs} Group={selected}/><input type="checkbox" value="a" {...attrs} Group={selected}/><input type="radio" value={choice()} Group={selected} {...attrs}/></>;}"#;
+        let (output, helper) = ssr(source, "Group", None).unwrap();
+        assert!(helper.is_none());
+        assert!(!output.contains("hSourceEntries"), "{output}");
+        assert!(
+            output.contains("{...(false?{checked:"),
+            "{output}"
+        );
+        assert!(
+            output.contains("{...attrs} {...{checked:((false?"),
+            "{output}"
+        );
+        assert!(
+            output.contains("===((choice()\n)))}} {...attrs}/>"),
+            "{output}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -580,9 +715,19 @@ mod combined_binding_tests {
 }
 
 /// Install authored handlers after the group binder, following source event lowering.
+#[cfg(test)]
 pub(crate) fn install_events(
     source: &str,
     marker: &str,
+    globals: &crate::source_globals::SourceGlobals,
+) -> Result<String, String> {
+    install_events_with_spreads(source, marker, &[], globals)
+}
+
+pub(crate) fn install_events_with_spreads(
+    source: &str,
+    marker: &str,
+    element_spread_markers: &[String],
     globals: &crate::source_globals::SourceGlobals,
 ) -> Result<String, String> {
     let types = &globals.types;
@@ -620,6 +765,13 @@ pub(crate) fn install_events(
         let AstKind::JSXElement(element) = node.kind() else {
             continue;
         };
+        if element.opening_element.attributes.iter().any(|item| {
+            matches!(item, JSXAttributeItem::Attribute(attribute)
+                if matches!(&attribute.name, JSXAttributeName::Identifier(name)
+                    if element_spread_markers.iter().any(|marker| marker == name.name.as_str())))
+        }) {
+            continue;
+        }
         let find = |key: &str| {
             element.opening_element.attributes.iter().find_map(|item|match item{JSXAttributeItem::Attribute(attribute)if matches!(&attribute.name,JSXAttributeName::Identifier(name)if name.name==key)=>Some(attribute),_=>None})
         };

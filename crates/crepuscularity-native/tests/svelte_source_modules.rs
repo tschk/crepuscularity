@@ -2141,3 +2141,27 @@ fn static_date_time_and_color_value_bindings_remain_supported() {
         }
     }
 }
+
+#[test]
+fn group_spread_bindings_parse_and_lower_across_targets() {
+    let source = r#"<script lang="ts">
+let attrs = $state({ name: 'g', value: 'a' });
+let selected = $state(['a']);
+let choice = $state('a');
+</script>
+<input type="checkbox" {...attrs} bind:group={selected}/>
+<input type="radio" value="a" {...attrs} bind:group={choice}/>"#;
+    for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
+        let output =
+            compile_moonshine_svelte(source, Path::new("GroupSpread.svelte"), target).unwrap();
+        assert_named_snippet_output_parses(&output.source);
+        assert_eq!(
+            output.source.contains("createInputGroup"),
+            matches!(target, MoonshineModuleTarget::Dom)
+        );
+        assert_eq!(
+            output.source.contains("spreadServerElement"),
+            matches!(target, MoonshineModuleTarget::Ssr)
+        );
+    }
+}

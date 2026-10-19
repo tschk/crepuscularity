@@ -928,7 +928,12 @@ pub fn compile_moonshine_svelte(
         .as_deref()
         .filter(|_| matches!(target, MoonshineModuleTarget::Dom))
     {
-        crate::svelte_groups::allocate(&synthetic, marker, &source_globals)?
+        crate::svelte_groups::allocate_with_spreads(
+            &synthetic,
+            marker,
+            &spread_metadata.element_markers,
+            &source_globals,
+        )?
     } else {
         synthetic
     };
@@ -964,7 +969,12 @@ pub fn compile_moonshine_svelte(
         .as_deref()
         .filter(|_| matches!(target, MoonshineModuleTarget::Dom))
     {
-        crate::svelte_groups::install_events(&transformed, marker, &source_globals)?
+        crate::svelte_groups::install_events_with_spreads(
+            &transformed,
+            marker,
+            &spread_metadata.element_markers,
+            &source_globals,
+        )?
     } else {
         transformed
     };
