@@ -1301,13 +1301,35 @@ fn build_slot_rotate(
     ctx: &TemplateContext,
     parent_dir: Direction,
     inherited: Style,
+    renderer: &mut BufferRenderer,
+    classes: &[String],
 ) -> WidgetChild {
-    let phrases = slot_rotate_child_phrases(&el.children).unwrap_or_default();
-    let interval_ms = slot_rotate_interval_ms(el, ctx);
-    let line = current_slot_rotate_line(&phrases, interval_ms, current_unix_ms());
+    let phrases = match slot_rotate_child_phrases(&el.children) {
+        Ok(phrases) => phrases,
+        Err(message) => {
+            renderer
+                .build_error
+                .get_or_insert_with(|| CrepusError::render(message));
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
+    let interval_ms = slot_rotate_interval_ms(el, ctx).max(1);
+    let line = current_slot_rotate_line(&phrases, interval_ms, renderer.now_ms);
+    if phrases.len() > 1 {
+        let next = renderer
+            .now_ms
+            .saturating_add(interval_ms - renderer.now_ms % interval_ms);
+        renderer.next_redraw_ms = Some(
+            renderer
+                .next_redraw_ms
+                .map_or(next, |previous| previous.min(next)),
+        );
+    }
 
-    let classes = active_classes(el, ctx);
-    let hints = parse_classes(&classes);
+    let hints = parse_classes(classes);
     let constraint = hints.constraint_for(parent_dir);
     let style = inherited.patch(hints.to_style());
 
@@ -1328,7 +1350,7 @@ fn build_slot_rotate(
 fn slot_rotate_interval_ms(el: &Element, ctx: &TemplateContext) -> u64 {
     const DEFAULT_INTERVAL_MS: u64 = 3200;
     for b in &el.bindings {
-        if b.prop == "interval" {
+        if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
             let v = value_to_str(&eval_value(&b.value, ctx));
             let trimmed = v.trim_matches('"').trim();
             return trimmed.parse().unwrap_or(DEFAULT_INTERVAL_MS);
@@ -1346,11 +1368,11 @@ fn current_slot_rotate_line(phrases: &[String], interval_ms: u64, now_ms: u64) -
         return Line::raw("");
     }
     let interval = interval_ms.max(1);
-    let idx = ((now_ms / interval) as usize) % phrases.len();
+    let idx = ((now_ms / interval) % phrases.len() as u64) as usize;
     Line::raw(phrases[idx].clone())
 }
 
-fn current_unix_ms() -> u64 {
+pub(crate) fn current_unix_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2062,6 +2084,29 @@ mod slot_rotate_tests {
             assert_eq!(
                 rendered(current_slot_rotate_line(&phrases, 1000, t)),
                 "solo"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod attribute_interval_tests {
+    use super::*;
+    #[test]
+    fn html_interval_attributes_do_not_configure_rotation() {
+        for (binding, expected) in [("[attr.interval]", 3200), ("[interval]", 99)] {
+            let source = format!("<slot-rotate {binding}='99'>one<!--split-->two</slot-rotate>");
+            let nodes = crepuscularity_core::parse_template_with_path(
+                &source,
+                Some(std::path::Path::new("view.ng")),
+            )
+            .unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!()
+            };
+            assert_eq!(
+                slot_rotate_interval_ms(element, &TemplateContext::new()),
+                expected
             );
         }
     }
