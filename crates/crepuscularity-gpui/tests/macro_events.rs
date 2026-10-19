@@ -1964,3 +1964,138 @@ fn jsx_callback_factories_and_parenthesized_callbacks_construct_once() {
     let _ = view! {r#"<button bind:disabled={true} @click={factory(&mut builds)} />"#};
     assert_eq!(builds, 3);
 }
+
+#[gpui::test]
+fn filtered_key_factories_construct_once_per_render_and_dispatch(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Factories {
+        hits: Arc<AtomicUsize>,
+        builds: Arc<AtomicUsize>,
+        renders: Arc<AtomicUsize>,
+    }
+    fn key_factory<E>(
+        hits: Arc<AtomicUsize>,
+        builds: Arc<AtomicUsize>,
+        increment: usize,
+    ) -> impl Fn(&E, &mut Window, &mut Context<Factories>) {
+        builds.fetch_add(1, Ordering::SeqCst);
+        move |_, _, _| {
+            hits.fetch_add(increment, Ordering::SeqCst);
+        }
+    }
+    impl gpui::Render for Factories {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.fetch_add(1, Ordering::SeqCst);
+            let down_hits = self.hits.clone();
+            let up_hits = self.hits.clone();
+            let down_builds = self.builds.clone();
+            let up_builds = self.builds.clone();
+            view! {r#"<div class="w-[100px] h-[40px]" @keydown|ctrl+s={key_factory::<gpui::KeyDownEvent>(down_hits, down_builds, 1)} @keyup|ctrl+s={key_factory::<gpui::KeyUpEvent>(up_hits, up_builds, 10)} />"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let builds = Arc::new(AtomicUsize::new(0));
+    let renders = Arc::new(AtomicUsize::new(0));
+    let state = Factories {
+        hits: hits.clone(),
+        builds: builds.clone(),
+        renders: renders.clone(),
+    };
+    let (_, cx) = cx.add_window_view(move |_, _| state);
+    cx.update(|window, app| window.focus_next(app));
+    cx.simulate_keystrokes("ctrl-s ctrl-x s ctrl-s");
+    for key in ["ctrl-s", "ctrl-x", "s", "ctrl-s"] {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 22);
+    assert_eq!(
+        builds.load(Ordering::SeqCst),
+        renders.load(Ordering::SeqCst) * 2
+    );
+}
+
+#[gpui::test]
+fn callback_blocks_dispatch_filtered_keys_in_both_frontends(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Keys {
+        jsx: bool,
+        hits: Arc<AtomicUsize>,
+    }
+    impl gpui::Render for Keys {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let down = self.hits.clone();
+            let up = self.hits.clone();
+            if self.jsx {
+                view! {r#"<div class="w-[100px] h-[40px]" @keydown|ctrl+s={{ let hits = down; move |_, _, _| { hits.fetch_add(1, Ordering::SeqCst); } }} @keyup|ctrl+s={{ let hits = up; move |_, _, _| { hits.fetch_add(10, Ordering::SeqCst); } }} />"#}.into_any_element()
+            } else {
+                view! {r#"div w-[100px] h-[40px] @keydown|ctrl+s={{ let hits = down; move |_, _, _| { hits.fetch_add(1, Ordering::SeqCst); } }} @keyup|ctrl+s={{ let hits = up; move |_, _, _| { hits.fetch_add(10, Ordering::SeqCst); } }}"#}.into_any_element()
+            }
+        }
+    }
+    for jsx in [false, true] {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let key_hits = hits.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Keys {
+            jsx,
+            hits: key_hits,
+        });
+        cx.update(|window, app| window.focus_next(app));
+        cx.simulate_keystrokes("ctrl-s ctrl-x s ctrl-s");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        for key in ["ctrl-s", "ctrl-x", "s", "ctrl-s"] {
+            cx.simulate_event(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse(key).unwrap(),
+            });
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 22);
+    }
+}
+
+#[gpui::test]
+fn filtered_callbacks_accept_app_contexts(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct AppKeys(Arc<AtomicUsize>);
+    fn factory(hits: Arc<AtomicUsize>) -> impl Fn(&gpui::KeyUpEvent, &mut Window, &mut gpui::App) {
+        move |_, _, _| {
+            hits.fetch_add(10, Ordering::SeqCst);
+        }
+    }
+    fn free_view(cx: &mut Context<AppKeys>) -> impl IntoElement {
+        view! {r#"<div @keydown|ctrl+s={|_, _, _| {}} />"#}
+    }
+    impl gpui::Render for AppKeys {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = free_view(cx);
+            type NativeContext = gpui::App;
+            let _ = view! {r#"<div @keydown|ctrl+s={|_, _, _: &mut NativeContext| {}} />"#};
+            let _ = view! {r#"<div @keydown|ctrl+s={if true { |_, _, _| {} } else { |_, _, _| {} }} />"#};
+            let _ = view! {r#"<div @keyup|ctrl+s={match true { true => |_, _, _| {}, false => |_, _, _| {} }} />"#};
+            let _ = view! {r#"<div @keyup|ctrl+s={{ Box::new(|_, _, _| {}) }} />"#};
+            let down = self.0.clone();
+            let up = self.0.clone();
+            view! {r#"<div class="w-[100px] h-[40px]" @keydown|ctrl+s={move |_: &KeyDownEvent, _: &mut Window, _: &mut gpui::App| { down.fetch_add(1, Ordering::SeqCst); }} @keyup|ctrl+s={{ factory(up) }} />"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let app_hits = hits.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| AppKeys(app_hits));
+    cx.update(|window, app| window.focus_next(app));
+    cx.simulate_keystrokes("ctrl-s ctrl-x s ctrl-s");
+    for key in ["ctrl-s", "ctrl-x", "s", "ctrl-s"] {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 22);
+}
