@@ -247,3 +247,89 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
 
     ast_shape_compatible(&old.children, &new.children)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crepuscularity_core::ast::*;
+
+    #[test]
+    fn test_ast_shape_compatible_different_length() {
+        let old = vec![
+            Node::RawText("a".to_string()),
+            Node::RawText("b".to_string()),
+        ];
+        let new = vec![Node::RawText("a".to_string())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_same_length() {
+        let old = vec![
+            Node::RawText("a".to_string()),
+            Node::RawText("b".to_string()),
+        ];
+        let new = vec![
+            Node::RawText("a".to_string()),
+            Node::RawText("b".to_string()),
+        ];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_raw_text() {
+        let old = vec![Node::RawText("a".to_string())];
+        let new = vec![Node::RawText("b".to_string())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_element_different_tag() {
+        let old = vec![Node::Element(Element {
+            tag: "div".to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        let new = vec![Node::Element(Element {
+            tag: "span".to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_element_same_tag() {
+        let old = vec![Node::Element(Element {
+            tag: "div".to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        let new = vec![Node::Element(Element {
+            tag: "div".to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+}
