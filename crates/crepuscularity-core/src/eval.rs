@@ -682,58 +682,80 @@ fn value_to_cmp_str(v: &TemplateValue) -> String {
     }
 }
 
-fn arith(lhs: &TemplateValue, rhs: &TemplateValue, op: &str) -> TemplateValue {
+fn arith(
+    lhs: &TemplateValue,
+    rhs: &TemplateValue,
+    op: &str,
+) -> Result<TemplateValue, &'static str> {
     // String concatenation with +
     if op == "+" {
         if let TemplateValue::Str(l) = lhs {
             let r = crate::context::value_to_str(rhs);
-            return TemplateValue::Str(format!("{}{}", l, r));
+            return Ok(TemplateValue::Str(format!("{}{}", l, r)));
         }
         if let TemplateValue::Str(r) = rhs {
             let l = crate::context::value_to_str(lhs);
-            return TemplateValue::Str(format!("{}{}", l, r));
+            return Ok(TemplateValue::Str(format!("{}{}", l, r)));
+        }
+    }
+
+    // Preserve exact integer arithmetic instead of rounding through f64.
+    if let (TemplateValue::Int(a), TemplateValue::Int(b)) = (lhs, rhs) {
+        let value = match op {
+            "+" => Some(a.checked_add(*b)),
+            "-" => Some(a.checked_sub(*b)),
+            "*" => Some(a.checked_mul(*b)),
+            "%" if *b == 0 => return Ok(TemplateValue::Null),
+            "%" if *b == -1 => Some(Some(0)),
+            "%" => Some(a.checked_rem(*b)),
+            _ => None,
+        };
+        if let Some(value) = value {
+            return value
+                .map(TemplateValue::Int)
+                .ok_or("integer arithmetic overflow");
         }
     }
 
     // Numeric arithmetic
-    let as_nums = |l: &TemplateValue, r: &TemplateValue| -> Option<(bool, f64, f64)> {
+    let as_nums = |l: &TemplateValue, r: &TemplateValue| -> Option<(f64, f64)> {
         match (l, r) {
-            (TemplateValue::Int(a), TemplateValue::Int(b)) => Some((true, *a as f64, *b as f64)),
-            (TemplateValue::Float(a), TemplateValue::Float(b)) => Some((false, *a, *b)),
-            (TemplateValue::Int(a), TemplateValue::Float(b)) => Some((false, *a as f64, *b)),
-            (TemplateValue::Float(a), TemplateValue::Int(b)) => Some((false, *a, *b as f64)),
+            (TemplateValue::Int(a), TemplateValue::Int(b)) => Some((*a as f64, *b as f64)),
+            (TemplateValue::Float(a), TemplateValue::Float(b)) => Some((*a, *b)),
+            (TemplateValue::Int(a), TemplateValue::Float(b)) => Some((*a as f64, *b)),
+            (TemplateValue::Float(a), TemplateValue::Int(b)) => Some((*a, *b as f64)),
             _ => None,
         }
     };
 
-    if let Some((both_int, l, r)) = as_nums(lhs, rhs) {
+    if let Some((l, r)) = as_nums(lhs, rhs) {
         let result = match op {
             "+" => l + r,
             "-" => l - r,
             "*" => l * r,
             "/" => {
                 if r == 0.0 {
-                    return TemplateValue::Null;
+                    return Ok(TemplateValue::Null);
                 } else {
                     l / r
                 }
             }
             "%" => {
                 if r == 0.0 {
-                    return TemplateValue::Null;
+                    return Ok(TemplateValue::Null);
                 } else {
                     l % r
                 }
             }
-            _ => return TemplateValue::Null,
+            _ => return Ok(TemplateValue::Null),
         };
-        if both_int && op != "/" {
-            return TemplateValue::Int(result as i64);
+        if !result.is_finite() {
+            return Err("non-finite floating-point arithmetic result");
         }
-        return TemplateValue::Float(result);
+        return Ok(TemplateValue::Float(result));
     }
 
-    TemplateValue::Null
+    Ok(TemplateValue::Null)
 }
 
 fn apply_property(val: TemplateValue, prop: &str) -> TemplateValue {
@@ -1264,6 +1286,147 @@ mod tests {
             "nan < 1",
         ] {
             assert!(!eval_condition(source, &ctx).unwrap(), "{source}");
+        }
+    }
+
+    #[test]
+    fn floating_point_arithmetic_rejects_non_finite_results() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("large", f64::MAX);
+        ctx.set("small", f64::MIN_POSITIVE);
+        ctx.set("infinite", f64::INFINITY);
+        ctx.set("nan", f64::NAN);
+        for source in [
+            "large + large",
+            "large * 2",
+            "large / small",
+            "infinite - infinite",
+            "nan % 2",
+            "-infinite",
+            "-nan",
+        ] {
+            assert!(
+                eval_expr(source, &ctx)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("non-finite floating-point arithmetic"),
+                "{source}"
+            );
+        }
+        assert!(
+            matches!(eval_expr("7.5 / 2", &ctx).unwrap(), TemplateValue::Float(value) if value == 3.75)
+        );
+        // Preserve the established divide-by-zero result.
+        assert!(matches!(
+            eval_expr("7.5 / 0", &ctx).unwrap(),
+            TemplateValue::Null
+        ));
+        assert!(matches!(
+            eval_expr("7.5 % 0", &ctx).unwrap(),
+            TemplateValue::Null
+        ));
+    }
+
+    #[test]
+    fn integer_arithmetic_is_exact_and_overflow_is_an_error() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("minimum", i64::MIN);
+        for (source, expected) in [
+            ("9007199254740993 + 0", 9007199254740993),
+            ("9223372036854775807 - 1", i64::MAX - 1),
+            ("9007199254740993 * 1", 9007199254740993),
+            ("9223372036854775807 % 2", 1),
+            ("minimum % -1", 0),
+        ] {
+            assert!(
+                matches!(eval_expr(source, &ctx).unwrap(), TemplateValue::Int(value) if value == expected),
+                "{source}"
+            );
+        }
+        for source in [
+            "9223372036854775807 + 1",
+            "minimum - 1",
+            "9223372036854775807 * 2",
+            "-minimum",
+        ] {
+            assert!(
+                eval_expr(source, &ctx)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("integer arithmetic overflow"),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_literals_preserve_boundaries_and_reject_overflow() {
+        let ctx = TemplateContext::new();
+        for n in [i64::MIN, i64::MAX] {
+            assert!(
+                matches!(eval_expr(&n.to_string(), &ctx).unwrap(), TemplateValue::Int(value) if value == n)
+            );
+        }
+        for source in [
+            "9223372036854775808",
+            "-9223372036854775809",
+            "9223372036854775808 + 1",
+        ] {
+            assert!(eval_expr(source, &ctx)
+                .unwrap_err()
+                .to_string()
+                .contains("integer literal out of range"));
+        }
+        let huge_float = format!("{}.0", "9".repeat(400));
+        assert!(eval_expr(&huge_float, &ctx)
+            .unwrap_err()
+            .to_string()
+            .contains("floating-point literal out of range"));
+    }
+
+    #[test]
+    fn scientific_notation_keeps_signs_and_arithmetic_boundaries() {
+        let ctx = TemplateContext::new();
+        for (source, expected) in [
+            ("1e3", 1000.0),
+            ("2.5E-2", 0.025),
+            ("-3e+2", -300.0),
+            ("1e2-3", 97.0),
+            ("2 * 1e-2", 0.02),
+        ] {
+            assert!(
+                matches!(eval_expr(source,&ctx).unwrap(),TemplateValue::Float(value) if value == expected),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_and_overflowing_exponents_are_errors() {
+        let ctx = TemplateContext::new();
+        for source in ["1e", "1e+", "1e-", "2.5Efoo", "1e309"] {
+            assert!(eval_expr(source, &ctx).is_err(), "{source}");
+        }
+    }
+    #[test]
+    fn abbreviated_decimals_and_exponents_are_numeric_literals() {
+        let ctx = TemplateContext::new();
+        for (source, expected) in [
+            (".5", 0.5),
+            ("-.5", -0.5),
+            ("2.", 2.0),
+            (".5e2", 50.0),
+            ("2.e-1", 0.2),
+            ("1.+.5", 1.5),
+            ("1-.5", 0.5),
+        ] {
+            assert!(
+                matches!(eval_expr(source,&ctx).unwrap(),TemplateValue::Float(value) if value == expected),
+                "{source}"
+            );
+        }
+        for source in [".5e", "1.e+", "1.2.3"] {
+            assert!(eval_expr(source, &ctx).is_err(), "{source}");
         }
     }
 
