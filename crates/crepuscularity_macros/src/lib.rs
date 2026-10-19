@@ -501,6 +501,8 @@ mod component_section_tests {
             "+++\n[Card]\ndescription = 42\n+++\n--- Card\nspan #lost",
         )
         .unwrap();
+        // Diagnostics name the canonical source, which can expand Windows short temp paths.
+        let diagnostic_path = path.canonicalize().unwrap();
         let result = collect_ids_from_path(&path, "crepus_refs!");
         std::fs::write(&path, "--- Card\nspan #card\n--- Button\nbutton #button").unwrap();
         let valid = collect_ids_from_path(&path, "crepus_refs!");
@@ -508,7 +510,10 @@ mod component_section_tests {
         let error = result.unwrap_err();
         assert!(error.contains("crepus_refs!"));
         assert!(error.contains("description must be"));
-        assert!(error.contains(path.to_str().unwrap()));
+        assert!(
+            error.contains(&diagnostic_path.display().to_string()),
+            "{error}"
+        );
         assert_eq!(valid.unwrap().0, ["button", "card"]);
     }
 
