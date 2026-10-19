@@ -15,14 +15,22 @@ pub(crate) fn parse_nodes(
     lines: &[(usize, String)],
     start: usize,
     expected_indent: usize,
-) -> (Vec<Node>, usize) {
-    match parse_nodes_with_depth(lines, start, expected_indent, 0) {
-        Ok(result) => result,
-        Err(_) => (vec![], start),
-    }
+) -> Result<(Vec<Node>, usize), RawParseError> {
+    parse_nodes_with_depth(lines, start, expected_indent, 0)
 }
 
 fn parse_nodes_with_depth(
+    lines: &[(usize, String)],
+    start: usize,
+    expected_indent: usize,
+    depth: usize,
+) -> Result<(Vec<Node>, usize), RawParseError> {
+    stacker::maybe_grow(512 * 1024, 2 * 1024 * 1024, || {
+        parse_nodes_with_depth_inner(lines, start, expected_indent, depth)
+    })
+}
+
+fn parse_nodes_with_depth_inner(
     lines: &[(usize, String)],
     start: usize,
     expected_indent: usize,
@@ -45,9 +53,13 @@ fn parse_nodes_with_depth(
             break;
         }
         if *indent > expected_indent {
-            i += 1;
-            continue;
+            return Err(RawParseError {
+                message: format!("unexpected indentation before '{line}'"),
+                byte_offset: None,
+            });
         }
+
+        validate_control_expression(line)?;
 
         // `else` and `else if` belong to the caller's `if`
         if line == "else" || line.starts_with("else if ") {
@@ -59,14 +71,20 @@ fn parse_nodes_with_depth(
             break;
         }
 
-        if let Some(embed) = try_parse_embed(line) {
+        if let Some(embed) = try_parse_embed(line).map_err(|message| RawParseError {
+            message: message.to_string(),
+            byte_offset: None,
+        })? {
             nodes.push(Node::Embed(embed));
             i += 1;
             continue;
         }
 
         // include directive
-        if let Some(mut inc) = try_parse_include(line) {
+        if let Some(mut inc) = try_parse_include(line).map_err(|message| RawParseError {
+            message: message.to_string(),
+            byte_offset: None,
+        })? {
             i += 1;
             let (slot, next_i) = if i < lines.len() && lines[i].0 > expected_indent {
                 let child_indent = lines[i].0;
@@ -81,7 +99,7 @@ fn parse_nodes_with_depth(
         }
 
         // $: let declaration
-        if let Some(decl) = try_parse_let_decl(line) {
+        if let Some(decl) = try_parse_let_decl(line)? {
             nodes.push(Node::LetDecl(decl));
             i += 1;
             continue;
@@ -90,7 +108,15 @@ fn parse_nodes_with_depth(
         // match block
         if let Some(expr) = try_parse_match(line) {
             i += 1;
-            let (arms, next_i) = parse_match_arms_with_depth(lines, i, expected_indent, depth + 1)?;
+            let (arms, next_i) = if i < lines.len()
+                && (lines[i].0 > expected_indent
+                    || (lines[i].0 == expected_indent
+                        && try_parse_match_arm(&lines[i].1).is_some()))
+            {
+                parse_match_arms_with_depth(lines, i, lines[i].0, depth + 1)?
+            } else {
+                (vec![], i)
+            };
             i = next_i;
             nodes.push(Node::Match(MatchBlock { expr, arms }));
             continue;
@@ -122,16 +148,29 @@ fn parse_nodes_with_depth(
                 body: children,
             }));
         } else if line.starts_with('"') {
-            let parts = parse_text_template(line);
+            let parts = parse_text_template(line)?;
             nodes.push(Node::Text(parts));
         } else if is_raw_html_expr(line) {
-            let inner = &line[2..line.len() - 1];
-            nodes.push(Node::RawHtml(inner.trim().to_string()));
+            let inner = line[2..line.len() - 1].trim();
+            if inner.is_empty() {
+                return Err(RawParseError {
+                    message: "raw HTML requires a nonempty expression".into(),
+                    byte_offset: None,
+                });
+            }
+            nodes.push(Node::RawHtml(inner.to_string()));
         } else if is_raw_expr(line) {
             // Raw expressions — rendered as evaluated text
-            nodes.push(Node::RawText(line[1..line.len() - 1].trim().to_string()));
+            let inner = line[1..line.len() - 1].trim();
+            if inner.is_empty() {
+                return Err(RawParseError {
+                    message: "raw text requires a nonempty expression".into(),
+                    byte_offset: None,
+                });
+            }
+            nodes.push(Node::RawText(inner.to_string()));
         } else {
-            let element = merge_attr_only_children(parse_element_line(line, children));
+            let element = merge_attr_only_children(parse_element_line(line, children)?)?;
             nodes.push(Node::Element(element));
         }
     }
@@ -153,6 +192,7 @@ fn parse_if_node_with_depth(
     }
 
     let line = &lines[i].1;
+    validate_control_expression(line)?;
     let condition = try_parse_if(line).unwrap_or_default();
     let mut i = i + 1;
 
@@ -227,11 +267,19 @@ fn parse_match_arms_with_depth(
             break;
         }
         if *indent > expected_indent {
-            i += 1;
-            continue;
+            return Err(RawParseError {
+                message: format!("unexpected indentation before match arm '{line}'"),
+                byte_offset: None,
+            });
         }
 
         if let Some(pattern) = try_parse_match_arm(line) {
+            if pattern.is_empty() {
+                return Err(RawParseError {
+                    message: "match arm requires a nonempty pattern".into(),
+                    byte_offset: None,
+                });
+            }
             i += 1;
             let (body, next_i) = if i < lines.len() && lines[i].0 > expected_indent {
                 let body_indent = lines[i].0;
@@ -247,6 +295,71 @@ fn parse_match_arms_with_depth(
     }
 
     Ok((arms, i))
+}
+
+fn validate_control_expression(line: &str) -> Result<(), RawParseError> {
+    if matches!(
+        line,
+        "if" | "else if" | "for" | "match" | "$: let" | "$: default"
+    ) {
+        return Err(RawParseError {
+            message: format!("`{line}` requires arguments"),
+            byte_offset: None,
+        });
+    }
+    if let Some(header) = line.strip_prefix("for ") {
+        let (pattern, iterator) = header.split_once(" in ").ok_or_else(|| RawParseError {
+            message: "loop requires a variable and `in` iterator".into(),
+            byte_offset: None,
+        })?;
+        if pattern.trim().is_empty() || iterator.trim().is_empty() {
+            return Err(RawParseError {
+                message: "loop requires a nonempty variable and iterator".into(),
+                byte_offset: None,
+            });
+        }
+        if !crate::eval::is_variable_name(pattern.trim()) {
+            return Err(RawParseError {
+                message: "loop requires a supported item variable name".into(),
+                byte_offset: None,
+            });
+        }
+    }
+    let expression = line
+        .strip_prefix("if ")
+        .or_else(|| line.strip_prefix("match "))
+        .or_else(|| {
+            line.strip_prefix("for ")
+                .and_then(|rest| rest.split_once(" in ").map(|(_, expression)| expression))
+        })
+        .or_else(|| {
+            line.strip_prefix("$: let ")
+                .or_else(|| line.strip_prefix("$: default "))
+                .and_then(|rest| rest.split_once('=').map(|(_, expression)| expression))
+        });
+    if let Some(expression) = expression
+        .map(str::trim)
+        .filter(|expression| expression.starts_with('{'))
+    {
+        let end =
+            super::super::match_delimiter(expression, '{', '}').ok_or_else(|| RawParseError {
+                message: "control-flow expression requires a closing brace".into(),
+                byte_offset: None,
+            })?;
+        if expression[1..end].trim().is_empty() {
+            return Err(RawParseError {
+                message: "control flow requires a nonempty expression".into(),
+                byte_offset: None,
+            });
+        }
+        if !expression[end + 1..].trim().is_empty() {
+            return Err(RawParseError {
+                message: "unexpected text after control-flow expression".into(),
+                byte_offset: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn try_parse_if(line: &str) -> Option<String> {
@@ -278,52 +391,56 @@ fn try_parse_match_arm(line: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn try_parse_let_decl(line: &str) -> Option<LetDecl> {
-    let (rest, is_default) = line
+pub(crate) fn try_parse_let_decl(line: &str) -> Result<Option<LetDecl>, RawParseError> {
+    let Some((rest, is_default)) = line
         .strip_prefix("$: default ")
         .map(|r| (r, true))
-        .or_else(|| line.strip_prefix("$: let ").map(|r| (r, false)))?;
-    let eq_pos = rest.find('=')?;
+        .or_else(|| line.strip_prefix("$: let ").map(|r| (r, false)))
+    else {
+        return Ok(None);
+    };
+    validate_control_expression(line)?;
+    let eq_pos = rest.find('=').ok_or_else(|| RawParseError {
+        message: "declaration requires a variable assignment".into(),
+        byte_offset: None,
+    })?;
     let name = rest[..eq_pos].trim().to_string();
     let expr_str = rest[eq_pos + 1..].trim();
     let expr = extract_braced(expr_str).unwrap_or_else(|| expr_str.to_string());
-    Some(LetDecl {
+    if name.is_empty() || expr.is_empty() {
+        return Err(RawParseError {
+            message: "declaration requires a nonempty variable name and expression".into(),
+            byte_offset: None,
+        });
+    }
+    if !crate::eval::is_variable_name(&name) {
+        return Err(RawParseError {
+            message: "declaration requires a supported variable name".into(),
+            byte_offset: None,
+        });
+    }
+    Ok(Some(LetDecl {
         name,
         expr,
         is_default,
-    })
+    }))
 }
 
 fn is_raw_expr(line: &str) -> bool {
     line.starts_with('{') && line.ends_with('}') && {
         let inner = &line[1..line.len() - 1];
-        !inner.starts_with('=') && !inner.contains('"')
+        !inner.starts_with('=')
     }
 }
 
 fn is_raw_html_expr(line: &str) -> bool {
-    line.starts_with("{=") && line.ends_with('}') && {
-        let inner = &line[2..line.len() - 1];
-        !inner.contains('"')
-    }
+    line.starts_with("{=") && line.ends_with('}')
 }
 
 fn extract_braced(s: &str) -> Option<String> {
     if !s.starts_with('{') {
         return None;
     }
-    let mut depth = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(s[1..i].trim().to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    let end = super::super::match_delimiter(s, '{', '}')?;
+    Some(s[1..end].trim().to_string())
 }
