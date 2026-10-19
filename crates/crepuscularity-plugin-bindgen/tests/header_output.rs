@@ -323,6 +323,17 @@ fn ambiguous_parameters_and_unsupported_layouts_fail_before_any_output() {
         ),
         ("struct Foo { char const *name; };", "unsupported concrete"),
         (
+            "typedef struct __attribute__((packed)) Foo { char a; int b; } Foo;",
+            "unsupported concrete",
+        ),
+        (
+            "typedef struct Node { struct Node *next; } Node;",
+            "unsupported concrete",
+        ),
+        ("extern int counter;", "non-function ABI"),
+        ("int counter;", "non-function ABI"),
+        ("int values[4];", "non-function ABI"),
+        (
             "union Foo { int32_t number; float decimal; };",
             "unsupported concrete",
         ),

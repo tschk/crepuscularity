@@ -297,6 +297,9 @@ fn validate_non_function_admission(declaration: &str) -> Result<(), String> {
     {
         return Err("unsupported qualified non-function ABI declaration".into());
     }
+    if !typedef && !function {
+        return Err("unsupported non-function ABI declaration".into());
+    }
     Ok(())
 }
 
