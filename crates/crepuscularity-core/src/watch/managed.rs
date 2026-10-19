@@ -427,7 +427,8 @@ impl Watcher for SingleFileWatcher {
         let path = std::path::absolute(path).map_err(notify::Error::io)?;
         if self
             .active
-            .as_ref().is_none_or(|(current, _, _)| current != &path)
+            .as_ref()
+            .is_none_or(|(current, _, _)| current != &path)
         {
             return Err(notify::Error::watch_not_found().add_path(path));
         }
