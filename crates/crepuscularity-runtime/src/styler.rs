@@ -16,6 +16,74 @@ use crepuscularity_core::tailwind::{
     parse_arbitrary_length_token, parse_length_token, LengthToken,
 };
 
+/// Apply a complete class list to an identified GPUI element. State styles are
+/// accumulated before attachment: GPUI permits only one hover style per element.
+pub fn apply_element_classes<E>(
+    mut element: E,
+    classes: impl IntoIterator<Item = impl AsRef<str>>,
+    ctx: Option<&TemplateContext>,
+) -> E
+where
+    E: gpui::StatefulInteractiveElement + gpui::Styled,
+{
+    use gpui::Refineable;
+
+    let mut hover = gpui::div();
+    let mut focus = gpui::div();
+    let mut active = gpui::div();
+    let mut states = [false; 3];
+    for class in classes {
+        let class = class.as_ref();
+        let class = class
+            .strip_prefix("gpui:")
+            .or_else(|| class.strip_prefix("gui:"))
+            .unwrap_or(class);
+        if let Some(class) = class.strip_prefix("hover:") {
+            hover = apply_class_with_ctx(hover, class, ctx);
+            states[0] = true;
+        } else if let Some(class) = class.strip_prefix("focus:") {
+            focus = apply_class_with_ctx(focus, class, ctx);
+            states[1] = true;
+        } else if let Some(class) = class.strip_prefix("active:") {
+            active = apply_class_with_ctx(active, class, ctx);
+            states[2] = true;
+        } else {
+            let mut scratch = gpui::div();
+            *scratch.style() = element.style().clone();
+            scratch = apply_class_with_ctx(scratch, class, ctx);
+            *element.style() = scratch.style().clone();
+            element = match class {
+                "overflow-auto" | "overflow-scroll" => element.overflow_scroll(),
+                "overflow-x-auto" | "overflow-x-scroll" => element.overflow_x_scroll(),
+                "overflow-y-auto" | "overflow-y-scroll" => element.overflow_y_scroll(),
+                _ => element,
+            };
+        }
+    }
+    if states[0] {
+        let style = hover.style().clone();
+        element = element.hover(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    if states[1] {
+        let style = focus.style().clone();
+        element = element.focus(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    if states[2] {
+        let style = active.style().clone();
+        element = element.active(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    element
+}
+
 /// Apply a class to a div, optionally resolving `{expr}` placeholders against context.
 pub fn apply_class(d: Div, class: &str) -> Div {
     apply_class_with_ctx(d, class, None)
@@ -23,7 +91,8 @@ pub fn apply_class(d: Div, class: &str) -> Div {
 
 /// Apply a class with optional template context for dynamic value resolution.
 pub fn apply_class_with_ctx(d: Div, class: &str, ctx: Option<&TemplateContext>) -> Div {
-    // State prefixes — skip silently in runtime renderer (no hover/focus state at runtime)
+    // A single-class Div helper cannot accumulate state. Runtime elements use
+    // apply_element_classes, which installs each state refinement once.
     if class.starts_with("hover:") || class.starts_with("focus:") || class.starts_with("active:") {
         return d;
     }
@@ -240,6 +309,7 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "row-end-auto" => d.row_end_auto(),
 
         // ── Align self ──
+        "items-stretch" => d.items_stretch(),
         "self-start" => {
             let mut d = d;
             d.style().align_self = Some(AlignItems::Start);
@@ -632,8 +702,7 @@ fn apply_misc(d: Div, class: &str) -> Result<Div, Div> {
         | "pointer-events-none"
         | "whitespace-pre"
         | "sticky"
-        | "fixed"
-        | "items-stretch" => d,
+        | "fixed" => d,
 
         // ── Debug (only in debug builds) ──
         #[cfg(debug_assertions)]
@@ -1260,5 +1329,42 @@ mod parse_absolute_length_tests {
         assert_eq!(parse_absolute_length("abc"), None);
         assert_eq!(parse_absolute_length("10.5.5px"), None);
         assert_eq!(parse_absolute_length("10pxrem"), None);
+    }
+}
+
+#[cfg(test)]
+mod state_style_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_hover_classes_do_not_reinstall_the_hover_style() {
+        let _ = apply_element_classes(
+            gpui::div().id("hover"),
+            [
+                "hover:bg-red-500",
+                "hover:text-white",
+                "focus:p-4",
+                "active:bg-black",
+            ],
+            None,
+        );
+    }
+
+    #[test]
+    fn overflow_respects_class_order() {
+        let mut scroll = apply_element_classes(
+            gpui::div().id("scroll"),
+            ["overflow-hidden", "overflow-scroll"],
+            None,
+        );
+        assert_eq!(scroll.style().overflow.x, Some(gpui::Overflow::Scroll));
+        assert_eq!(scroll.style().overflow.y, Some(gpui::Overflow::Scroll));
+        let mut hidden = apply_element_classes(
+            gpui::div().id("hidden"),
+            ["overflow-scroll", "overflow-hidden"],
+            None,
+        );
+        assert_eq!(hidden.style().overflow.x, Some(gpui::Overflow::Hidden));
+        assert_eq!(hidden.style().overflow.y, Some(gpui::Overflow::Hidden));
     }
 }
