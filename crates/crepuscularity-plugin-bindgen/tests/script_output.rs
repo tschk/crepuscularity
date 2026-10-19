@@ -16,11 +16,12 @@ fn v_path_fixture(staged: bool, compile_external: bool) {
     let output =
         Output(std::env::temp_dir().join(format!("crepus-v-path-{}-{stamp}", std::process::id())));
     let root = output.0.join("project with spaces");
-    let include = root.join(if staged {
-        "crates/crepuscularity-abi/include"
-    } else {
-        "crates/abi/include"
-    });
+    // Build native path components so the expected include flag matches
+    // absolute-path normalization on Windows as well as Unix.
+    let include = root
+        .join("crates")
+        .join(if staged { "crepuscularity-abi" } else { "abi" })
+        .join("include");
     let destination = if staged {
         output.0.join("outside repository staging")
     } else {
