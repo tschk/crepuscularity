@@ -250,11 +250,11 @@ pub fn render_bundle_with_ssr(bundle_json: &str, markers: bool) -> Result<String
     render_from_files_with_ssr(&files, &entry, &ctx, markers)
 }
 
-/// Helper: wrap rendered inner HTML in an HTML5 document shell.
-pub fn wrap_ssr_document(inner: &str, doc: &SsrDocument<'_>) -> String {
+/// Shared document prefix for buffered and streaming SSR.
+pub(crate) fn render_document_head(doc: &SsrDocument<'_>) -> String {
     let body_class = doc
         .body_class
-        .map(|c| format!(r#" class="{}""#, crate::escape_html(c)))
+        .map(|c| format!(r#" class="{}""#, crate::escape_html_attribute(c)))
         .unwrap_or_default();
     let title_esc = crate::escape_html(doc.title);
     let head_safe = Builder::new()
@@ -270,12 +270,17 @@ pub fn wrap_ssr_document(inner: &str, doc: &SsrDocument<'_>) -> String {
   {}
 </head>
 <body{}>
-{}
-</body>
-</html>
 "#,
-        doc.lang, title_esc, head_safe, body_class, inner
+        crate::escape_html_attribute(doc.lang),
+        title_esc,
+        head_safe,
+        body_class
     )
+}
+
+/// Helper: wrap rendered inner HTML in an HTML5 document shell.
+pub fn wrap_ssr_document(inner: &str, doc: &SsrDocument<'_>) -> String {
+    format!("{}{inner}\n</body>\n</html>\n", render_document_head(doc))
 }
 
 /// Full HTML5 document: runs the template through [`render_template_to_html_with_ssr`], then wraps result.
@@ -310,7 +315,7 @@ pub fn render_ssr_document_with_nodes(
     Ok(wrap_ssr_document(&inner, doc))
 }
 
-fn append_hydration_payload(
+pub(crate) fn append_hydration_payload(
     html: &mut String,
     ctx: &TemplateContext,
     bind: &BindMap,
@@ -384,6 +389,43 @@ mod tests {
     use super::*;
     use crepuscularity_core::context::TemplateContext;
     use crepuscularity_core::context::TemplateValue;
+
+    #[test]
+    fn hydration_manifest_preserves_nested_context_and_binding_ids() {
+        let mut item = TemplateContext::new();
+        item.vars
+            .insert("name".into(), TemplateValue::Str("界 </sCrIpT>".into()));
+        let mut ctx = TemplateContext::new();
+        ctx.vars.insert("count".into(), TemplateValue::Int(3));
+        ctx.vars
+            .insert("enabled".into(), TemplateValue::Bool(false));
+        ctx.vars.insert("empty".into(), TemplateValue::Null);
+        ctx.vars
+            .insert("items".into(), TemplateValue::List(vec![item]));
+        let html = render_template_to_html_with_ssr("p {count}", &ctx, true).unwrap();
+        let marker = "data-crepus-encoding=\"base64\">";
+        let encoded = html
+            .split_once(marker)
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let payload: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload["v"], 1);
+        assert_eq!(payload["ctx"]["count"], 3);
+        assert_eq!(payload["ctx"]["enabled"], false);
+        assert!(payload["ctx"]["empty"].is_null());
+        assert_eq!(payload["ctx"]["items"][0]["name"], "界 </sCrIpT>");
+        let bindings = payload["bind"].as_object().unwrap();
+        assert!(!bindings.is_empty());
+        for id in bindings.keys() {
+            assert!(html.contains(&format!("data-crepus-id=\"c{id}\"")));
+        }
+    }
 
     #[test]
     fn test_serialize_ctx_for_ssr_empty() {
