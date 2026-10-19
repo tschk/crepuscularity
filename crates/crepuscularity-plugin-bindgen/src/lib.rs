@@ -698,8 +698,15 @@ assert lib.freed == before
             .unwrap(),
             body
         );
-        let custom = generate_v_imports(Path::new("/custom/include/custom_abi.h"), None).unwrap();
-        assert!(custom.contains("#flag -I /custom/include"));
+        // Use a native absolute path: Windows resolves `/custom` against the
+        // current drive, so a Unix-only expected flag is not portable.
+        let custom_header = root.join("custom include/custom_abi.h");
+        let custom = generate_v_imports(&custom_header, None).unwrap();
+        let expected_include = format!("#flag -I {}", custom_header.parent().unwrap().display());
+        assert!(
+            custom.lines().any(|line| line == expected_include),
+            "{custom}"
+        );
         assert!(custom.contains("#include \"custom_abi.h\""));
     }
 
