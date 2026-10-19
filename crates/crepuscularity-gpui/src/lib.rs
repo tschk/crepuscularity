@@ -167,15 +167,16 @@ mod tests {
     use crate::{WindowButton, WindowButtonLayout};
 
     #[test]
-    fn parses_linux_window_button_layout() {
-        let layout = WindowButtonLayout::parse(":minimize,maximize,close").unwrap();
+    fn parses_linux_window_button_layout() -> gpui::Result<()> {
+        let layout = WindowButtonLayout::parse(":minimize,maximize,close")?;
 
         assert_eq!(layout, WindowButtonLayout::linux_default());
+        Ok(())
     }
 
     #[test]
-    fn parses_left_and_right_window_button_layout() {
-        let layout = WindowButtonLayout::parse("close:minimize,maximize").unwrap();
+    fn parses_left_and_right_window_button_layout() -> gpui::Result<()> {
+        let layout = WindowButtonLayout::parse("close:minimize,maximize")?;
 
         assert_eq!(
             layout,
@@ -188,12 +189,14 @@ mod tests {
                 ],
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn rejects_unknown_window_button_layout_tokens() {
+    fn rejects_unknown_window_button_layout_tokens() -> gpui::Result<()> {
         let error = WindowButtonLayout::parse(":minimize,fullscreen").unwrap_err();
 
         assert!(error.to_string().contains("unknown window button"));
+        Ok(())
     }
 }
