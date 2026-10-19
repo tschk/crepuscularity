@@ -2555,11 +2555,136 @@ fn map_class_to_style(class: &str) -> Option<TokenStream2> {
 }
 
 fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
+    if class == "ring-0" {
+        return Some(quote! { .__crepus_shadow_class("ring-0") });
+    }
+    let ring_width = match class {
+        "ring" => Some(3.0f32),
+        "ring-1" => Some(1.0),
+        "ring-2" => Some(2.0),
+        "ring-4" => Some(4.0),
+        "ring-8" => Some(8.0),
+        _ => class
+            .strip_prefix("ring-[")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .and_then(parse_arbitrary_length_token)
+            .and_then(|length| match length {
+                LengthToken::Px(value) => Some(value),
+                LengthToken::Rems(value) => Some(value * 16.0),
+                _ => None,
+            })
+            .filter(|width| width.is_finite()),
+    };
+    if ring_width.is_some() || class == "ring-inset" {
+        return Some(quote! { .__crepus_shadow_class(#class) });
+    }
+
+    if let Some(rest) = class.strip_prefix("rounded-") {
+        let (side, size) = rest.split_once('-').unwrap_or((rest, "md"));
+        if matches!(side, "t" | "b" | "l" | "r" | "tl" | "tr" | "bl" | "br")
+            && matches!(
+                size,
+                "none" | "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "full"
+            )
+        {
+            let method = syn::Ident::new(&format!("rounded_{side}_{size}"), Span::call_site());
+            return Some(quote! { .#method() });
+        }
+    }
+
+    if let Some(lines) = class
+        .strip_prefix("line-clamp-")
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|lines| *lines > 0)
+    {
+        return Some(quote! { .line_clamp(#lines) });
+    }
+
+    for (prefix, method) in [
+        ("border-t-[", "border_t"),
+        ("border-b-[", "border_b"),
+        ("border-l-[", "border_l"),
+        ("border-r-[", "border_r"),
+        ("border-[", "border"),
+        ("rounded-[", "rounded"),
+        ("rounded-t-[", "rounded_t"),
+        ("rounded-b-[", "rounded_b"),
+        ("rounded-l-[", "rounded_l"),
+        ("rounded-r-[", "rounded_r"),
+        ("rounded-tl-[", "rounded_tl"),
+        ("rounded-tr-[", "rounded_tr"),
+        ("rounded-bl-[", "rounded_bl"),
+        ("rounded-br-[", "rounded_br"),
+        ("leading-[", "line_height"),
+    ] {
+        if let Some(inner) = class
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            if let Some(length) = parse_arbitrary_length_token(inner).filter(|token|
+                matches!(token, LengthToken::Px(value) | LengthToken::Rems(value) if *value >= 0.0)) {
+                let tokens = length_token_to_tokens(length);
+                let method = syn::Ident::new(method, Span::call_site());
+                return Some(quote! { .#method(#tokens) });
+            }
+        }
+    }
+
+    if let Some(inner) = class
+        .strip_prefix("aspect-[")
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        let ratio = if let Some((num, den)) = inner.split_once('/') {
+            num.parse::<f32>()
+                .ok()
+                .zip(den.parse::<f32>().ok())
+                .filter(|(w, h)| w.is_finite() && *w > 0.0 && h.is_finite() && *h > 0.0)
+                .map(|(w, h)| w / h)
+        } else {
+            inner.parse::<f32>().ok()
+        };
+        if let Some(ratio) = ratio.filter(|ratio| ratio.is_finite() && *ratio > 0.0) {
+            return Some(quote! { .aspect_ratio(#ratio) });
+        }
+        return None;
+    }
+
+    for (prefix, method) in [
+        ("grid-cols-", "grid_cols"),
+        ("grid-rows-", "grid_rows"),
+        ("col-span-", "col_span"),
+        ("row-span-", "row_span"),
+    ] {
+        if let Some(value) = class
+            .strip_prefix(prefix)
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|value| *value > 0)
+        {
+            let method = syn::Ident::new(method, Span::call_site());
+            return Some(quote! { .#method(#value) });
+        }
+    }
+    for (prefix, method) in [
+        ("col-start-", "col_start"),
+        ("col-end-", "col_end"),
+        ("row-start-", "row_start"),
+        ("row-end-", "row_end"),
+    ] {
+        if let Some(value) = class
+            .strip_prefix(prefix)
+            .and_then(|value| value.parse::<i16>().ok())
+            .filter(|value| *value != 0)
+        {
+            let method = syn::Ident::new(method, Span::call_site());
+            return Some(quote! { .#method(#value) });
+        }
+    }
     // Spacing / sizing: w-N, h-N, p-N, m-N, gap-N, top-N, etc.
     const SPACING_PREFIXES: &[(&str, &str)] = &[
         ("w-", "w"),
         ("h-", "h"),
         ("size-", "size"),
+        ("basis-", "flex_basis"),
         ("min-w-", "min_w"),
         ("min-h-", "min_h"),
         ("max-w-", "max_w"),
@@ -2590,7 +2715,31 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
 
     for (prefix, method) in SPACING_PREFIXES {
         if let Some(rest) = class.strip_prefix(prefix) {
-            if let Some(tokens) = length_value_to_tokens(rest) {
+            if let Some(length) = parse_length_token(rest) {
+                let signed = matches!(
+                    *method,
+                    "m" | "mx"
+                        | "my"
+                        | "mt"
+                        | "mb"
+                        | "ml"
+                        | "mr"
+                        | "top"
+                        | "right"
+                        | "bottom"
+                        | "left"
+                        | "inset"
+                );
+                let negative = matches!(length, LengthToken::Px(value) | LengthToken::Rems(value) | LengthToken::Fraction(value) if value < 0.0);
+                if negative && !signed {
+                    return None;
+                }
+                if matches!(length, LengthToken::Auto)
+                    && (method.starts_with('p') || method.starts_with("gap"))
+                {
+                    return None;
+                }
+                let tokens = length_token_to_tokens(length);
                 let method_ident = syn::Ident::new(method, Span::call_site());
                 return Some(quote! { .#method_ident(#tokens) });
             }
@@ -2600,7 +2749,8 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
     // text-[Npx] — arbitrary font size
     if let Some(rest) = class.strip_prefix("text-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(tokens) = arbitrary_length(inner) {
+            if let Some(length) = parse_arbitrary_length_token(inner).filter(|token| matches!(token, LengthToken::Px(value) | LengthToken::Rems(value) if *value >= 0.0)) {
+                let tokens = length_token_to_tokens(length);
                 return Some(quote! { .text_size(#tokens) });
             }
         }
@@ -2609,8 +2759,13 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
     // tracking-[Npx] / tracking-[Nrem]
     if let Some(rest) = class.strip_prefix("tracking-[") {
         if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(tokens) = arbitrary_length(inner) {
-                return Some(quote! { .letter_spacing(#tokens) });
+            let pixels = match parse_arbitrary_length_token(inner) {
+                Some(LengthToken::Px(value)) => Some(value),
+                Some(LengthToken::Rems(value)) => Some(value * 16.0),
+                _ => None,
+            };
+            if let Some(pixels) = pixels.filter(|value| value.is_finite()) {
+                return Some(quote! { .letter_spacing(::gpui::px(#pixels)) });
             }
         }
     }
@@ -2619,14 +2774,15 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
     if let Some(rest) = class.strip_prefix("font-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
-            return Some(quote! { .font_family(#family) });
+            if !family.trim().is_empty() {
+                return Some(quote! { .font_family(#family) });
+            }
         }
     }
 
     // opacity-N (0–100)
     if let Some(rest) = class.strip_prefix("opacity-") {
-        if let Ok(n) = rest.parse::<f32>() {
-            let value = n / 100.0;
+        if let Some(value) = parse_opacity_percentage(rest) {
             return Some(quote! { .opacity(#value) });
         }
     }
@@ -2645,6 +2801,34 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
         ("border-", "border_color"),
     ] {
         if let Some(rest) = class.strip_prefix(prefix) {
+            if let Some((color, opacity)) = rest.rsplit_once('/').filter(|_| !rest.ends_with('}')) {
+                let color = color
+                    .strip_prefix('[')
+                    .and_then(|color| color.strip_suffix(']'))
+                    .unwrap_or(color);
+                let opacity = parse_opacity_percentage(opacity)?;
+                if let Some(expression) = extract_braced_expr_str(color) {
+                    let expression: syn::Expr = syn::parse_str(&expression).ok()?;
+                    let alpha = (opacity * 255.0) as u32;
+                    let method = syn::Ident::new(method, Span::call_site());
+                    return Some(
+                        quote! { .#method(::gpui::rgba(((#expression & 0x00ffffffu32) << 8) | #alpha)) },
+                    );
+                }
+                let normalized = resolve_css_color(color)?;
+                let rgb = u32::from_str_radix(&normalized[1..7], 16).ok()?;
+                let alpha = if color.eq_ignore_ascii_case("transparent")
+                    || color.eq_ignore_ascii_case("clear")
+                {
+                    0
+                } else {
+                    (opacity * 255.0) as u32
+                };
+                let rgba = (rgb << 8) | alpha;
+                let method = syn::Ident::new(method, Span::call_site());
+                return Some(quote! { .#method(::gpui::rgba(#rgba)) });
+            }
+
             // Dynamic color: bg-{theme.bg}, text-{theme.text}, border-{theme.border}
             if let Some(expr_str) = extract_braced_expr_str(rest) {
                 let expr: syn::Expr = syn::parse_str(&expr_str)
@@ -2654,25 +2838,18 @@ fn parse_dynamic_class(class: &str) -> Option<TokenStream2> {
                 return Some(quote! { .#method_ident(::gpui::rgb(#expr)) });
             }
 
-            // Arbitrary color: bg-[#rrggbb]
-            if rest.starts_with('[') && rest.ends_with(']') {
-                let inner = &rest[1..rest.len() - 1];
-                if let Some(hex_str) = inner.strip_prefix('#') {
-                    if let Ok(hex) = u32::from_str_radix(hex_str, 16) {
-                        let method_ident = syn::Ident::new(method, Span::call_site());
-                        return Some(quote! { .#method_ident(::gpui::rgb(#hex)) });
-                    }
-                }
-            }
-
-            // Named color family: {family}-{shade}
-            if let Some(dash_pos) = rest.rfind('-') {
-                let family = &rest[..dash_pos];
-                let shade = &rest[dash_pos + 1..];
-                if let Some(hex) = tailwind_color(family, shade) {
-                    let method_ident = syn::Ident::new(method, Span::call_site());
-                    return Some(quote! { .#method_ident(::gpui::rgb(#hex)) });
-                }
+            let color = rest
+                .strip_prefix('[')
+                .and_then(|color| color.strip_suffix(']'))
+                .unwrap_or(rest);
+            if let Some(normalized) = resolve_css_color(color) {
+                let hex = u32::from_str_radix(&normalized[1..], 16).ok()?;
+                let method = syn::Ident::new(method, Span::call_site());
+                return Some(if normalized.len() == 9 {
+                    quote! { .#method(::gpui::rgba(#hex)) }
+                } else {
+                    quote! { .#method(::gpui::rgb(#hex)) }
+                });
             }
         }
     }
@@ -2689,25 +2866,10 @@ fn length_token_to_tokens(token: LengthToken) -> TokenStream2 {
     }
 }
 
-fn length_value_to_tokens(value: &str) -> Option<TokenStream2> {
-    parse_length_token(value).map(length_token_to_tokens)
-}
-
-fn arbitrary_length(inner: &str) -> Option<TokenStream2> {
-    parse_arbitrary_length_token(inner).map(length_token_to_tokens)
-}
-
-// ============================================================
-// Tailwind CSS v4 color palette (via crepuscularity-core)
-// ============================================================
-
-fn tailwind_color(family: &str, shade: &str) -> Option<u32> {
-    crepuscularity_core::tailwind::lookup_color_u32(&format!("{family}-{shade}"))
-}
-
 /// Parse-check a `.crepus` template at compile time and expand to its source `&str`.
 ///
 /// Equivalent to `include_str!(…)` plus a build-time parse error if the template is invalid.
+/// Relative paths resolve from the caller's manifest directory; absolute paths are retained.
 #[proc_macro]
 pub fn embedded_template(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as LitStr);
@@ -2882,6 +3044,125 @@ mod event_closure_tests {
 }
 
 #[cfg(test)]
+mod dynamic_class_list_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_lists_generate_runtime_calls_and_validate_expressions() {
+        for source in ["div class={theme}", "<div class={theme} />"] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                panic!("expected element");
+            };
+            assert!(generate_element(&element)
+                .unwrap()
+                .to_string()
+                .contains("apply_class_list"));
+        }
+        let nodes = crepuscularity_core::parse_template("div class={1 +}").unwrap();
+        let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+            panic!("expected element");
+        };
+        assert!(generate_element(&element)
+            .unwrap_err()
+            .contains("Invalid class expression"));
+    }
+}
+
+#[cfg(test)]
+mod dynamic_color_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_dynamic_colors_report_errors_in_every_class_path() {
+        let nodes = crepuscularity_core::parse_template("div").unwrap();
+        for property in ["bg", "text", "border"] {
+            for color in ["{1 +}", "{1 +}/50", "[{1 +}]/50"] {
+                for state in ["", "hover:", "focus:gpui:", "gpui:active:gui:"] {
+                    for conditional in [false, true] {
+                        let class = format!("{state}{property}-{color}");
+                        let Node::Element(mut element) = core_node_to_macro(&nodes[0]).unwrap()
+                        else {
+                            panic!("expected element")
+                        };
+                        if conditional {
+                            element.conditional_classes.push(ConditionalClass {
+                                class: class.clone(),
+                                condition: "enabled".into(),
+                            });
+                        } else {
+                            element.classes.push(class.clone());
+                        }
+                        let error = generate_element(&element)
+                            .expect_err(&format!("{class}, conditional={conditional}"));
+                        assert!(error.contains("Invalid color expression"), "{error}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn valid_dynamic_colors_and_unknown_literals_keep_existing_behavior() {
+        for class in ["bg-{color}", "text-{color}/50", "border-[{color}]/50"] {
+            let source = format!("div class=\"{class}\"");
+            let nodes = crepuscularity_core::parse_template(&source).unwrap();
+            let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                panic!("expected element")
+            };
+            assert!(generate_element(&element)
+                .unwrap()
+                .to_string()
+                .contains("color"));
+        }
+        for class in ["unknown-utility", "bg-not-a-color", "web:bg-{1 +}"] {
+            let nodes = crepuscularity_core::parse_template("div").unwrap();
+            let Node::Element(mut element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                panic!("expected element")
+            };
+            element.classes.push(class.into());
+            assert!(generate_element(&element).is_ok(), "{class}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod opacity_tests {
+    use super::*;
+
+    #[test]
+    fn opacity_generation_clamps_and_skips_nonfinite_values() {
+        assert!(map_class("opacity-150")
+            .unwrap()
+            .to_string()
+            .contains("1f32"));
+        for class in ["opacity-NaN", "opacity-inf", "opacity-1e100"] {
+            assert!(map_class(class).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod finite_length_tests {
+    use super::*;
+
+    #[test]
+    fn nonfinite_lengths_do_not_generate_invalid_literals() {
+        for class in [
+            "w-inf",
+            "p-NaN",
+            "h-[infpx]",
+            "gap-[NaNrem]",
+            "w-3e38/1e-38",
+        ] {
+            assert!(map_class(class).is_none(), "{class}");
+        }
+        assert!(map_class("w-1/2").is_some());
+        assert!(map_class("m-[-12px]").is_some());
+    }
+}
+
+#[cfg(test)]
 mod state_class_tests {
     use super::*;
 
@@ -3014,6 +3295,28 @@ mod font_family_tests {
                 .to_string(),
             quote! { .font_family("Times New Roman") }.to_string()
         );
+    }
+}
+
+#[cfg(test)]
+mod braced_color_expression_tests {
+    use super::*;
+    #[test]
+    fn extraction_requires_complete_outer_braces_and_preserves_rust_contents() {
+        for expression in [
+            r#"{"}".len() as u32}"#,
+            r#"{"{".len() as u32}"#,
+            "{{ 0x123456u32 }}",
+        ] {
+            let inner = extract_braced_expr_str(expression).unwrap();
+            assert!(syn::parse_str::<syn::Expr>(&inner).is_ok(), "{inner}");
+        }
+        for expression in ["{color}junk", "{color}/50", "color}", "{color"] {
+            assert!(
+                extract_braced_expr_str(expression).is_none(),
+                "{expression}"
+            );
+        }
     }
 }
 
