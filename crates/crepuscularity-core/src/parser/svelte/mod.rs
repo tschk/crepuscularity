@@ -511,3 +511,48 @@ mod whitespace_tests {
         assert_eq!(element.children.len(), 1);
     }
 }
+
+#[cfg(test)]
+mod parse_svelte_component_raw_tests {
+    use crate::ast::Node;
+    use crate::parser::svelte::parse_svelte_component_raw;
+
+    #[test]
+    fn test_happy_path() {
+        let src = r#"
+<script>
+    let x = 1;
+</script>
+<script context="module">
+    export const y = 2;
+</script>
+<div>hello</div>
+<style>
+    div { color: red; }
+</style>
+"#;
+        let component = parse_svelte_component_raw(src).unwrap();
+        assert_eq!(component.script.as_deref().unwrap().trim(), "let x = 1;");
+        assert_eq!(
+            component.module_script.as_deref().unwrap().trim(),
+            "export const y = 2;"
+        );
+        assert_eq!(
+            component.style.as_deref().unwrap().trim(),
+            "div { color: red; }"
+        );
+        assert_eq!(component.nodes.len(), 1);
+        if let Node::Element(el) = &component.nodes[0] {
+            assert_eq!(el.tag, "div");
+        } else {
+            panic!("Expected Element");
+        }
+    }
+
+    #[test]
+    fn test_trailing_markup_error() {
+        let src = "<div></div></foo>";
+        let err = parse_svelte_component_raw(src).unwrap_err();
+        assert_eq!(err.message, "unexpected trailing markup in Svelte template");
+    }
+}
