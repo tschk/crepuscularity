@@ -1,3 +1,5 @@
+#![allow(clippy::module_inception)]
+
 #[cfg(all(target_arch = "wasm32", feature = "dom"))]
 pub mod dom {
     use crate::Effect;
