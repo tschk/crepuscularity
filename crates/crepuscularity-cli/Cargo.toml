@@ -53,8 +53,8 @@ full = ["desktop", "tui"]
 benchmark = []
 
 [dependencies]
-gpui                   = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui", default-features = false, features = ["font-kit"], optional = true }
-gpui_platform          = { git = "https://github.com/gpui-ce/gpui-ce", package = "gpui_platform", optional = true }
+gpui                   = { workspace = true, optional = true }
+gpui_platform          = { workspace = true, optional = true }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.19", optional = true }
 crepuscularity-tui = { path = "../crepuscularity-tui", version = "0.4.24", optional = true }
@@ -62,7 +62,7 @@ crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0", featur
 crepuscularity-plugin-bindgen = { path = "../crepuscularity-plugin-bindgen", version = "0.1.5" }
 crepuscularity-webext  = { path = "../crepuscularity-webext", version = "0.3.5" }
 crepuscularity-tauri = { path = "../crepuscularity-tauri", version = "0.1.14", features = ["native"] }
-crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
+crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0", features = ["web-modules"] }
 crepuscularity-components = { path = "../crepuscularity-components", version = "0.1.0" }
 crepuscularity-embedded = { path = "../crepuscularity-embedded", version = "0.1.23" }
 crepuscularity-lvgl = { path = "../crepuscularity-lvgl", version = "0.1.11" }
@@ -83,6 +83,6 @@ pulldown-cmark = "0.11"
 clap = { version = "4.5", features = ["derive"] }
 shlex = "1.3.0"
 walkdir = "2.5.0"
+unicode-ident = "1.0"
 
-[dev-dependencies]
 tempfile = { workspace = true }
