@@ -644,10 +644,81 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
     })
 }
 
+// shortcut: rings use their generated shadow shape; add metadata if custom shadows share it.
+fn is_ring(shadow: &BoxShadow) -> bool {
+    shadow.color == hsla(0.603, 0.912, 0.602, 0.5)
+        && shadow.offset == point(px(0.0), px(0.0))
+        && shadow.blur_radius == px(0.0)
+}
+
+fn apply_ring(mut d: Div, width: gpui::Pixels, inset: bool) -> Div {
+    let shadows = d.style().box_shadow.get_or_insert_with(Vec::new);
+    let inset = inset || shadows.iter().any(|shadow| is_ring(shadow) && shadow.inset);
+    shadows.retain(|shadow| !is_ring(shadow));
+    shadows.push(BoxShadow {
+        color: hsla(0.603, 0.912, 0.602, 0.5),
+        offset: point(px(0.0), px(0.0)),
+        blur_radius: px(0.0),
+        spread_radius: width,
+        inset,
+    });
+    d
+}
+
+fn is_shadow_class(class: &str) -> bool {
+    class == "ring"
+        || class.starts_with("ring-")
+        || class == "shadow"
+        || class.starts_with("shadow-")
+}
+
 #[allow(clippy::result_large_err)]
-fn apply_shadows(d: Div, class: &str) -> Result<Div, Div> {
-    Ok(match class {
-        // ── Shadow ──
+fn apply_shadows(mut d: Div, class: &str) -> Result<Div, Div> {
+    if !is_shadow_class(class) {
+        return Err(d);
+    }
+
+    let width = match class {
+        "ring" => Some(3.0),
+        "ring-1" => Some(1.0),
+        "ring-2" => Some(2.0),
+        "ring-4" => Some(4.0),
+        "ring-8" => Some(8.0),
+        _ => None,
+    };
+    if let Some(width) = width {
+        return Ok(apply_ring(d, px(width), false));
+    }
+    if class == "ring-inset" {
+        let width = d
+            .style()
+            .box_shadow
+            .as_ref()
+            .and_then(|shadows| shadows.iter().find(|shadow| is_ring(shadow)))
+            .map_or(px(0.0), |shadow| shadow.spread_radius);
+        return Ok(apply_ring(d, width, true));
+    }
+    if class == "ring-0" {
+        if let Some(shadows) = d.style().box_shadow.as_mut() {
+            for shadow in shadows.iter_mut().filter(|shadow| is_ring(shadow)) {
+                shadow.spread_radius = px(0.0);
+            }
+        }
+        return Ok(d);
+    }
+    let rings = d
+        .style()
+        .box_shadow
+        .as_ref()
+        .map(|shadows| {
+            shadows
+                .iter()
+                .filter(|shadow| is_ring(shadow))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut d = match class {
         "shadow-2xs" => d.shadow_2xs(),
         "shadow-xs" => d.shadow_xs(),
         "shadow-sm" => d.shadow_sm(),
@@ -656,47 +727,15 @@ fn apply_shadows(d: Div, class: &str) -> Result<Div, Div> {
         "shadow-xl" => d.shadow_xl(),
         "shadow-2xl" => d.shadow_2xl(),
         "shadow-none" => d.shadow_none(),
-
-        // ── Ring (focus ring via box-shadow spread) ──
-        "ring" => d.shadow(vec![BoxShadow {
-            color: hsla(0.603, 0.912, 0.602, 0.5),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(3.),
-            inset: false,
-        }]),
-        "ring-0" => d.shadow_none(),
-        "ring-1" => d.shadow(vec![BoxShadow {
-            color: hsla(0.603, 0.912, 0.602, 0.5),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(1.),
-            inset: false,
-        }]),
-        "ring-2" => d.shadow(vec![BoxShadow {
-            color: hsla(0.603, 0.912, 0.602, 0.5),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(2.),
-            inset: false,
-        }]),
-        "ring-4" => d.shadow(vec![BoxShadow {
-            color: hsla(0.603, 0.912, 0.602, 0.5),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(4.),
-            inset: false,
-        }]),
-        "ring-8" => d.shadow(vec![BoxShadow {
-            color: hsla(0.603, 0.912, 0.602, 0.5),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(8.),
-            inset: false,
-        }]),
-        "ring-inset" => d, // GPUI has no inset shadow; accepted silently
         _ => return Err(d),
-    })
+    };
+    if !rings.is_empty() {
+        d.style()
+            .box_shadow
+            .get_or_insert_with(Vec::new)
+            .extend(rings);
+    }
+    Ok(d)
 }
 
 #[allow(clippy::result_large_err)]
@@ -1591,5 +1630,77 @@ mod overflow_tests {
             assert_eq!(actual.style().overflow.x, Some(x));
             assert_eq!(actual.style().overflow.y, Some(y));
         }
+    }
+}
+
+#[cfg(test)]
+mod state_reset_tests {
+    use super::*;
+    #[test]
+    fn state_lists_clear_prior_values_without_losing_unrelated_styles() {
+        for state in ["hover", "focus", "active"] {
+            let mut original = gpui::div().self_center().aspect_square().w_full();
+            let actual = apply_class_list_state_style(
+                original.style().clone(),
+                &format!("gpui:{state}:self-auto {state}:aspect-auto web:{state}:hidden"),
+                state,
+            );
+            let mut expected = gpui::div().w_full();
+            assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod ring_composition_tests {
+    use super::*;
+    #[test]
+    fn state_shadow_classifier_matches_target_prefix_resolution() {
+        for state in ["hover", "focus", "active"] {
+            for utility in ["ring-0", "shadow-none"] {
+                for prefix in ["", "gpui:", "gui:gpui:"] {
+                    let classes = format!("gpui:{state}:{prefix}{utility}");
+                    assert!(class_list_has_state_shadow(&classes, state), "{classes}");
+                    let mut base = apply_class_list(gpui::div(), "shadow-md ring-2");
+                    let seeded = gpui::StyleRefinement {
+                        box_shadow: base.style().box_shadow.clone(),
+                        ..Default::default()
+                    };
+                    let actual = apply_class_list_state_style(seeded, &classes, state);
+                    let mut expected = apply_class_list(base, utility);
+                    assert_eq!(actual.box_shadow, expected.style().box_shadow, "{classes}");
+                }
+            }
+            for classes in [
+                format!("web:{state}:ring-0"),
+                format!("{state}:web:ring-0"),
+                "other:gpui:ring-0".to_string(),
+                format!("{state}:gpui:p-2"),
+            ] {
+                assert!(!class_list_has_state_shadow(&classes, state), "{classes}");
+            }
+        }
+    }
+
+    #[test]
+    fn rings_preserve_shadows_and_inset_in_either_class_order() {
+        let mut first = apply_class_list(gpui::div(), "shadow-md ring-inset ring-2");
+        let mut second = apply_class_list(gpui::div(), "ring-2 shadow-md ring-inset");
+        assert_eq!(
+            format!("{:?}", first.style()),
+            format!("{:?}", second.style())
+        );
+        let shadows = first.style().box_shadow.as_ref().unwrap();
+        assert!(shadows
+            .iter()
+            .any(|shadow| !is_ring(shadow) && !shadow.inset));
+        assert!(shadows
+            .iter()
+            .any(|shadow| is_ring(shadow) && shadow.inset && shadow.spread_radius == px(2.0)));
+        let mut cleared = apply_class_list(first, "ring-0 ring-4 shadow-none");
+        let shadows = cleared.style().box_shadow.as_ref().unwrap();
+        assert_eq!(shadows.len(), 1);
+        assert!(shadows[0].inset);
+        assert_eq!(shadows[0].spread_radius, px(4.0));
     }
 }
