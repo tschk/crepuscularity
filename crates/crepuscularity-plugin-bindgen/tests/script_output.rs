@@ -127,9 +127,8 @@ fn staged_v_bindings_compile_outside_the_source_repository() {
     v_path_fixture(true, true);
 }
 
-#[test]
 #[cfg(unix)]
-fn header_path_line_breaks_cannot_escape_generated_source_comments() {
+fn header_path_line_breaks_cannot_escape_generated_source_comments_case(check_php: bool) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = Output(std::env::temp_dir().join(format!(
         "crepus-header-path-{}-{}",
@@ -165,17 +164,41 @@ fn header_path_line_breaks_cannot_escape_generated_source_comments() {
         source_comment.contains("header\\nnot source\\rnext\\x{2028}line\\x{2029}end"),
         "{source_comment}"
     );
-    let php = Command::new("php")
-        .args(["-r", "require $argv[1];"])
-        .arg(&files[1].path)
-        .output()
-        .unwrap();
-    assert!(
-        php.status.success(),
-        "{}",
-        String::from_utf8_lossy(&php.stderr)
-    );
-    assert!(php.stdout.is_empty(), "path text escaped PHP comments");
+    // These source/security assertions always run even when PHP is unavailable.
+    for file in &files {
+        let source = std::fs::read_to_string(&file.path).unwrap();
+        let banner = source
+            .lines()
+            .find(|line| line.contains(" Source: "))
+            .unwrap();
+        assert!(
+            banner.contains("header\\nnot source\\rnext\\x{2028}line\\x{2029}end"),
+            "{banner}"
+        );
+        assert!(
+            !banner.contains("?>"),
+            "PHP closing tag escaped source banner"
+        );
+        assert!(!banner.contains("coding:"));
+        assert!(!banner.contains("coding="));
+        assert!(!banner.contains('\u{2028}') && !banner.contains('\u{2029}'));
+    }
+    assert!(std::fs::read_to_string(&files[1].path)
+        .unwrap()
+        .starts_with("<?php\n// Auto-generated"));
+    if check_php {
+        let php = Command::new("php")
+            .args(["-r", "require $argv[1];"])
+            .arg(&files[1].path)
+            .output()
+            .unwrap();
+        assert!(
+            php.status.success(),
+            "{}",
+            String::from_utf8_lossy(&php.stderr)
+        );
+        assert!(php.stdout.is_empty(), "path text escaped PHP comments");
+    }
     let python = Command::new("python3")
         .args([
             "-c",
@@ -203,7 +226,19 @@ fn header_path_line_breaks_cannot_escape_generated_source_comments() {
 }
 
 #[test]
-fn generated_script_banners_preserve_syntax_and_silent_php_imports() {
+#[cfg(unix)]
+fn header_path_line_breaks_cannot_escape_generated_source_comments() {
+    header_path_line_breaks_cannot_escape_generated_source_comments_case(false);
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "requires installed PHP interpreter (also exercises normal Python 3 and Java checks)"]
+fn header_path_line_breaks_cannot_escape_generated_source_comments_php_check() {
+    header_path_line_breaks_cannot_escape_generated_source_comments_case(true);
+}
+
+fn generated_script_banners_case(check_php: bool) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -228,6 +263,13 @@ fn generated_script_banners_preserve_syntax_and_silent_php_imports() {
     assert!(nim.starts_with("# Auto-generated"));
     assert!(nim.lines().nth(1).unwrap().starts_with("# Source:"));
     let ruby = output.0.join("ruby/abi_generated.rb");
+    assert!(std::fs::read_to_string(&ruby)
+        .unwrap()
+        .starts_with("# frozen_string_literal: true\n# Auto-generated"));
+    let php = output.0.join("php/abi_generated.php");
+    assert!(std::fs::read_to_string(&php)
+        .unwrap()
+        .starts_with("<?php\n// Auto-generated"));
     let checked = Command::new("ruby")
         .arg("-c")
         .arg(&ruby)
@@ -241,30 +283,43 @@ fn generated_script_banners_preserve_syntax_and_silent_php_imports() {
     assert!(std::fs::read_to_string(ruby)
         .unwrap()
         .starts_with("# frozen_string_literal: true\n"));
-    let php = output.0.join("php/abi_generated.php");
-    let checked = Command::new("php")
-        .arg("-l")
-        .arg(&php)
-        .output()
-        .expect("installed PHP");
-    assert!(
-        checked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&checked.stderr)
-    );
-    let imported = Command::new("php")
-        .args(["-r", "require $argv[1];"])
-        .arg(php)
-        .output()
-        .unwrap();
-    assert!(
-        imported.status.success(),
-        "{}",
-        String::from_utf8_lossy(&imported.stderr)
-    );
-    assert!(
-        imported.stdout.is_empty(),
-        "import wrote {:?}",
-        String::from_utf8_lossy(&imported.stdout)
-    );
+    if check_php {
+        let php = output.0.join("php/abi_generated.php");
+        let checked = Command::new("php")
+            .arg("-l")
+            .arg(&php)
+            .output()
+            .expect("installed PHP");
+        assert!(
+            checked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        let imported = Command::new("php")
+            .args(["-r", "require $argv[1];"])
+            .arg(php)
+            .output()
+            .unwrap();
+        assert!(
+            imported.status.success(),
+            "{}",
+            String::from_utf8_lossy(&imported.stderr)
+        );
+        assert!(
+            imported.stdout.is_empty(),
+            "import wrote {:?}",
+            String::from_utf8_lossy(&imported.stdout)
+        );
+    }
+}
+
+#[test]
+fn generated_script_banners_preserve_ruby_syntax_and_php_opening_tag() {
+    generated_script_banners_case(false);
+}
+
+#[test]
+#[ignore = "requires installed PHP interpreter (also exercises normal Ruby check)"]
+fn generated_script_banners_preserve_silent_php_imports_php_check() {
+    generated_script_banners_case(true);
 }
