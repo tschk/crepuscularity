@@ -1,10 +1,11 @@
 use crepuscularity_core::tailwind::{
-    parse_arbitrary_length_token, parse_length_token, LengthToken,
+    parse_arbitrary_length_token, parse_length_token, parse_opacity_percentage, resolve_css_color,
+    LengthToken,
 };
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use syn::{parse_macro_input, LitStr};
@@ -19,7 +20,11 @@ static ELEM_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Declarative UI macro with Tailwind-like syntax for GPUI.
 ///
 /// Write indentation-based templates that compile to GPUI builder chains.
-/// Requires `cx: &mut Context<Self>` in scope for event handlers.
+/// Named method handlers and filtered key handlers require a GPUI view context named `cx`.
+/// Untyped filtered closures receive that view context; explicitly typed callbacks may use `App`.
+/// Bound closures receive their event, window, and context from GPUI.
+/// Callback expressions, including factory calls and blocks, are evaluated at most once per element build.
+/// Bare handler names refer to component methods; parenthesize a callback variable to pass its value.
 ///
 /// # Syntax
 ///
@@ -35,9 +40,12 @@ static ELEM_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 ///
 /// ## Reactive declarations
 /// `$: let name = {expr}` — computed binding available in the template
+/// Declarations follow sibling order and stay within their parent scope.
+/// `$: default` requires a runtime template context and is rejected by `view!`;
+/// resolve optional values in Rust before invoking the macro.
 ///
 /// ## Control flow
-/// ```ignore
+/// ```text
 /// if {condition}
 ///     ...
 /// else if {condition2}
@@ -65,12 +73,17 @@ static ELEM_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// ## Event modifiers
 /// `@keydown|Enter=handler` — only fires when Enter is pressed
 /// `@keydown|ctrl+s=handler` — ctrl+s combination
+/// Elements with key-down or key-up handlers automatically participate in the tab order.
 ///
 /// ## Events
-/// `@click`, `@input`, `@change`, `@keydown`, `@keyup`, `@hover`, `@mousedown`, `@mouseup`
+/// `@click`, `@keydown`, `@keyup`, `@hover`, `@mousedown`, `@mouseup`
+/// `@input` and `@change` require a custom component providing `on_input`.
 ///
 /// ## Bindings
-/// `bind:value={field}` — two-way value binding
+/// `bind:id={expression}` — element identity
+/// `bind:value` and `bind:checked` require custom component builder methods; they do not write back.
+/// Built-in input tags render containers rather than editable controls.
+/// `bind:disabled={condition}` — suppresses generated handlers and automatic Tab navigation, with disabled styling.
 ///
 /// ## State prefixes
 /// `hover:`, `focus:`, `active:`
@@ -84,6 +97,9 @@ pub fn view(input: TokenStream) -> TokenStream {
 }
 
 /// Compile a `.crepus` template file into a GPUI view at build time.
+///
+/// File includes are expanded as text. Explicit include props, selected named
+/// component defaults, and authored include slots produce compilation errors.
 ///
 /// Usage:
 ///
@@ -107,8 +123,16 @@ pub fn view_file(input: TokenStream) -> TokenStream {
         None => template,
     };
     let base_dir = full.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let expanded = expand_includes_text(&template, &base_dir, &full);
-    generate_view(&expanded, path.span()).into()
+    let (expanded, dependencies) = expand_includes_text(&template, &base_dir, &full);
+    let dependencies = template_dependencies(&dependencies);
+    let view = generate_view(&expanded, path.span());
+    quote! {{ #dependencies #view }}.into()
+}
+
+// shortcut: symlink retargets need a forced rebuild until Cargo preserves alias dependencies.
+fn template_dependencies(paths: &BTreeSet<PathBuf>) -> TokenStream2 {
+    let paths = paths.iter().map(|path| path.to_string_lossy());
+    quote! { #(const _: &str = ::core::include_str!(#paths);)* }
 }
 
 fn generate_view(template: &str, span: Span) -> TokenStream2 {
@@ -134,19 +158,104 @@ fn generate_view(template: &str, span: Span) -> TokenStream2 {
 fn expand_includes_text(
     template: &str,
     base_dir: &std::path::Path,
-    _source_path: &std::path::Path,
+    source_path: &std::path::Path,
+) -> (String, BTreeSet<PathBuf>) {
+    let mut dependencies = BTreeSet::from([source_path.to_path_buf()]);
+    let expanded =
+        expand_includes_text_with_depth(template, base_dir, source_path, 0, &mut dependencies);
+    (expanded, dependencies)
+}
+
+fn expand_includes_text_with_depth(
+    template: &str,
+    base_dir: &std::path::Path,
+    source_path: &std::path::Path,
+    depth: usize,
+    dependencies: &mut BTreeSet<PathBuf>,
 ) -> String {
+    if depth > 64 {
+        panic!(
+            "Include depth limit (64) exceeded in `{}`",
+            source_path.display()
+        );
+    }
+    {
+        let nodes = crepuscularity_core::parse_template(template).unwrap_or_else(|error| {
+            panic!(
+                "Invalid view_file! template `{}`: {error}",
+                source_path.display()
+            )
+        });
+        let mut pending: Vec<_> = nodes.iter().collect();
+        while let Some(node) = pending.pop() {
+            use crepuscularity_core::ast::Node;
+            match node {
+                Node::Include(include) if !include.slot.is_empty() => panic!(
+                    "view_file! does not support authored include slots for `{}` in `{}`",
+                    include.path,
+                    source_path.display()
+                ),
+                Node::Element(element) => pending.extend(&element.children),
+                Node::If(block) => {
+                    pending.extend(&block.then_children);
+                    if let Some(children) = &block.else_children {
+                        pending.extend(children);
+                    }
+                }
+                Node::For(block) => pending.extend(&block.body),
+                Node::Match(block) => {
+                    for arm in &block.arms {
+                        pending.extend(&arm.body);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let mut output = String::new();
+    let mut in_text = false;
     for line in template.lines() {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("include ") {
-            let (path_str, _props) = rest.split_once(' ').unwrap_or((rest, ""));
-            let path_str = path_str.trim().trim_matches('"');
-            if path_str.is_empty() {
-                output.push_str(line);
-                output.push('\n');
-                continue;
+        if in_text || trimmed.starts_with('"') {
+            let content = if in_text { trimmed } else { &trimmed[1..] };
+            in_text = true;
+            let mut escaped = false;
+            for character in content.chars() {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    in_text = false;
+                    break;
+                }
             }
+            output.push_str(line);
+            output.push('\n');
+            continue;
+        }
+        if trimmed == "include"
+            || trimmed
+                .strip_prefix("include")
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+        {
+            let nodes = crepuscularity_core::parse_template(trimmed).unwrap_or_else(|e| {
+                panic!(
+                    "Invalid include directive in `{}`: {e}",
+                    source_path.display()
+                )
+            });
+            let crepuscularity_core::ast::Node::Include(include) = &nodes[0] else {
+                panic!("Expected include directive in `{}`", source_path.display());
+            };
+            if !include.props.is_empty() {
+                panic!(
+                    "view_file! does not support include props for `{}` in `{}`",
+                    include.path,
+                    source_path.display()
+                );
+            }
+            let path_str = include.path.as_str();
             let (file_str, component_name) = match path_str.split_once('#') {
                 Some((file, comp)) => (file, Some(comp)),
                 None => (path_str, None),
@@ -160,11 +269,18 @@ fn expand_includes_text(
                     e
                 )
             });
+            dependencies.insert(include_path.clone());
             let section = match component_name {
                 Some(name) => extract_component_section(&included, name),
                 None => included,
             };
-            let expanded = expand_includes_text(&section, &include_dir, &include_path);
+            let expanded = expand_includes_text_with_depth(
+                &section,
+                &include_dir,
+                &include_path,
+                depth + 1,
+                dependencies,
+            );
             let indent = &line[..line.len() - line.trim_start().len()];
             for included_line in expanded.lines() {
                 if included_line.is_empty() {
@@ -184,6 +300,15 @@ fn expand_includes_text(
 }
 
 fn extract_component_section(content: &str, name: &str) -> String {
+    let file = crepuscularity_core::parser::parse_component_file(content)
+        .unwrap_or_else(|e| panic!("Invalid multi-component file: {e}"));
+    if file
+        .components
+        .get(name)
+        .is_some_and(|component| !component.meta.defaults.is_empty())
+    {
+        panic!("view_file! does not support defaults for component `{name}`");
+    }
     let (_, body, _) = crepuscularity_core::parser::split_frontmatter_parts(content);
     let sections = crepuscularity_core::parser::split_component_body_sections(body);
     sections
@@ -191,6 +316,238 @@ fn extract_component_section(content: &str, name: &str) -> String {
         .find(|(n, _, _)| n == name)
         .map(|(_, text, _)| text)
         .unwrap_or_else(|| panic!("Component `{name}` not found in multi-component file"))
+}
+
+#[cfg(test)]
+mod component_section_tests {
+    #[test]
+    fn multiline_text_does_not_expand_include_lines() {
+        for source in [
+            "div\n  \"Literal\n  include nonexistent.crepus\n  still literal\"",
+            "div\n  \"Literal \\\" quote\n  include nonexistent.crepus\n  still literal\"",
+            "\"Literal\n\\\"escaped quote\ninclude nonexistent.crepus\nclosed\"\nspan",
+        ] {
+            let (expanded, _) = super::expand_includes_text(
+                source,
+                std::path::Path::new("."),
+                std::path::Path::new("entry.crepus"),
+            );
+            assert_eq!(expanded, format!("{source}\n"));
+            crepuscularity_core::parse_template(&expanded).unwrap();
+        }
+    }
+    #[test]
+    #[should_panic(expected = "view_file! does not support defaults for component `Card`")]
+    fn named_default_props_are_not_silently_discarded() {
+        super::extract_component_section(
+            "+++\n[Card.defaults]\ntitle = \"default-title\"\n+++\n--- Card\n\"{title}\"",
+            "Card",
+        );
+    }
+
+    #[test]
+    fn authored_include_slots_are_rejected_inside_all_control_bodies() {
+        for source in [
+            "div\n  include missing.crepus\n    \"provided\"",
+            "if true\n  include missing.crepus\n    \"provided\"",
+            "if false\n  \"first\"\nelse\n  include missing.crepus\n    \"provided\"",
+            "for item in items\n  include missing.crepus\n    \"provided\"",
+            "match value\n  _ =>\n    include missing.crepus\n      \"provided\"",
+        ] {
+            let panic = std::panic::catch_unwind(|| {
+                super::expand_includes_text(
+                    source,
+                    std::path::Path::new("."),
+                    std::path::Path::new("slots.crepus"),
+                )
+            })
+            .unwrap_err();
+            let message = panic.downcast_ref::<String>().unwrap();
+            assert!(
+                message.contains("view_file! does not support authored include slots"),
+                "{message}"
+            );
+            assert!(message.contains("slots.crepus"), "{message}");
+        }
+    }
+
+    #[test]
+    fn terminal_storage_field_avoids_template_ids() {
+        let path =
+            std::env::temp_dir().join(format!("crepus-storage-{}.crepus", std::process::id()));
+        std::fs::write(&path, "div #template\nspan #__crepus_template").unwrap();
+        let result = super::build_tui_template_refs(&path);
+        std::fs::remove_file(&path).unwrap();
+        let tokens = result.unwrap();
+        let source = tokens.to_string();
+        assert!(source.contains("__crepus_template_ : :: crepuscularity_tui :: Template"));
+        assert!(source.contains("pub template : :: crepuscularity_tui :: ElementRef"));
+        syn::parse2::<syn::Expr>(tokens).unwrap();
+    }
+    use super::{
+        collect_ids_from_path, expand_includes_text, extract_component_section, make_rust_ident,
+    };
+
+    #[test]
+    fn accessor_names_are_valid_rust_identifiers() {
+        for id in ["_", "²", "雪", "type", "9items", "a-b", ""] {
+            if let Some(ident) = make_rust_ident(id) {
+                assert!(syn::parse_str::<syn::Ident>(&ident.to_string()).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn named_includes_collect_only_selected_components() {
+        let dir = std::env::temp_dir().join(format!("crepus-named-refs-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let entry = dir.join("entry.crepus");
+        std::fs::write(
+            dir.join("ui.crepus"),
+            "--- Card\nspan #card\n--- Button\nbutton #button\n--- Unused\ninclude missing.crepus",
+        )
+        .unwrap();
+        std::fs::write(&entry, "include ui.crepus#Card\ninclude ui.crepus#Button").unwrap();
+        let result = collect_ids_from_path(&entry, "crepus_refs!");
+        std::fs::write(&entry, "include ui.crepus#Missing").unwrap();
+        let missing = collect_ids_from_path(&entry, "crepus_refs!");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(result.unwrap().0, ["button", "card"]);
+        assert!(missing
+            .unwrap_err()
+            .contains("component \"Missing\" not found"));
+    }
+
+    #[test]
+    fn reference_collection_uses_filename_frontend() {
+        let path =
+            std::env::temp_dir().join(format!("crepus-macro-frontend-{}.vue", std::process::id()));
+        std::fs::write(
+            &path,
+            "<script>const ignored = 1 < 2;</script><template><div id=\"root\" /></template>",
+        )
+        .unwrap();
+        let result = collect_ids_from_path(&path, "crepus_refs!");
+        std::fs::write(
+            &path,
+            "<template><div id=\"a-b\" /><div id=\"a_b\" /></template>",
+        )
+        .unwrap();
+        let collision = collect_ids_from_path(&path, "crepus_refs!");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(result.unwrap().0, ["root"]);
+        assert!(collision.unwrap_err().contains("same Rust accessor"));
+    }
+
+    #[test]
+    fn reference_collection_keeps_markup_section_markers_as_text() {
+        for (extension, source) in [
+            (
+                "vue",
+                "<template><div id=\"root\">\n--- Card\n</div></template>",
+            ),
+            ("svelte", "<div id=\"root\">\n--- Card\n</div>"),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "crepus-macro-literal-sections-{}.{extension}",
+                std::process::id()
+            ));
+            // These are ordinary template text, accepted by the runtime frontend.
+            crepuscularity_core::parse_template_with_path(source, Some(&path)).unwrap();
+            std::fs::write(&path, source).unwrap();
+            let result = collect_ids_from_path(&path, "crepus_refs!");
+            std::fs::remove_file(&path).unwrap();
+            assert_eq!(result.unwrap().0, ["root"], "{extension}");
+        }
+    }
+
+    #[test]
+    fn reference_collection_retains_dsl_component_discovery() {
+        let path = std::env::temp_dir().join(format!(
+            "crepus-macro-dsl-sections-{}.crepus",
+            std::process::id()
+        ));
+        std::fs::write(&path, "--- First\ndiv id=first\n--- Second\ndiv id=second").unwrap();
+        let result = collect_ids_from_path(&path, "crepus_refs!");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(result.unwrap().0, ["first", "second"]);
+    }
+
+    #[test]
+    fn reference_collection_preserves_component_errors() {
+        let path = std::env::temp_dir().join(format!(
+            "crepus-macro-refs-{}-{}.crepus",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            "+++\n[Card]\ndescription = 42\n+++\n--- Card\nspan #lost",
+        )
+        .unwrap();
+        let result = collect_ids_from_path(&path, "crepus_refs!");
+        std::fs::write(&path, "--- Card\nspan #card\n--- Button\nbutton #button").unwrap();
+        let valid = collect_ids_from_path(&path, "crepus_refs!");
+        std::fs::remove_file(&path).unwrap();
+        let error = result.unwrap_err();
+        assert!(error.contains("crepus_refs!"));
+        assert!(error.contains("description must be"));
+        assert!(error.contains(path.to_str().unwrap()));
+        assert_eq!(valid.unwrap().0, ["button", "card"]);
+    }
+
+    #[test]
+    fn include_cycles_are_bounded_and_siblings_can_repeat() {
+        let dir = std::env::temp_dir().join(format!(
+            "crepus-macro-includes-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("child.crepus");
+        std::fs::write(&file, "include child.crepus").unwrap();
+        let result = std::panic::catch_unwind(|| {
+            expand_includes_text("include child.crepus", &dir, &dir.join("entry.crepus"))
+        });
+        std::fs::write(&file, "span").unwrap();
+        let expanded = expand_includes_text(
+            "include child.crepus\ninclude child.crepus",
+            &dir,
+            &dir.join("entry.crepus"),
+        );
+        std::fs::write(dir.join("child view.crepus"), "button").unwrap();
+        let quoted = expand_includes_text(
+            "include\t\"child view.crepus\"",
+            &dir,
+            &dir.join("entry.crepus"),
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(quoted.0, "button\n");
+        let panic = result.unwrap_err();
+        let message = panic.downcast_ref::<String>().unwrap();
+        assert!(message.contains("Include depth limit (64) exceeded"));
+        assert_eq!(expanded.0, "span\nspan\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate component name")]
+    fn rejects_duplicate_names() {
+        extract_component_section("--- Card\nspan\n--- Card\nbutton", "Card");
+    }
+
+    #[test]
+    fn selects_named_section() {
+        assert_eq!(
+            extract_component_section("--- Card\nspan\n--- Button\nbutton", "Button"),
+            "button"
+        );
+    }
 }
 
 /// Generate typed DOM accessors for all `#id` shorthand IDs reachable from a `.crepus` entry file.
@@ -208,7 +565,8 @@ pub fn crepus_refs(input: TokenStream) -> TokenStream {
     let entry_path = PathBuf::from(manifest_dir).join(&rel_path);
 
     match collect_ids_from_path(&entry_path, "crepus_refs!") {
-        Ok(ids) => {
+        Ok((ids, dependencies)) => {
+            let dependencies = template_dependencies(&dependencies);
             let fields: Vec<TokenStream2> = ids
                 .iter()
                 .filter_map(|id| {
@@ -227,6 +585,7 @@ pub fn crepus_refs(input: TokenStream) -> TokenStream {
                 .collect();
 
             quote! {{
+                #dependencies
                 #[allow(non_camel_case_types)]
                 struct __CrepusRefs {
                     #(#fields),*
@@ -265,11 +624,36 @@ pub fn template_refs(input: TokenStream) -> TokenStream {
 }
 
 fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
-    let ids = collect_ids_from_path(entry_path, "template_refs!")?;
+    let (ids, dependencies) = collect_ids_from_path(entry_path, "template_refs!")?;
+    let dependencies = template_dependencies(&dependencies);
+    let mut storage_name = "__crepus_template".to_string();
+    while ids
+        .iter()
+        .any(|id| make_rust_ident(id).is_some_and(|ident| ident == storage_name))
+    {
+        storage_name.push('_');
+    }
+    let template_field = syn::Ident::new(&storage_name, Span::call_site());
     let canonical = std::fs::canonicalize(entry_path).unwrap_or_else(|_| entry_path.to_path_buf());
     let source = std::fs::read_to_string(&canonical)
         .map_err(|e| format!("template_refs! could not read {}: {e}", canonical.display()))?;
-    let path = canonical.to_string_lossy().to_string();
+    // Reload the authored path, while includes retain the resolved file's directory.
+    let path = std::path::absolute(entry_path)
+        .map_err(|e| {
+            format!(
+                "template_refs! could not resolve {}: {e}",
+                entry_path.display()
+            )
+        })?
+        .to_string_lossy()
+        .to_string();
+    let base_dir = match canonical.parent() {
+        Some(parent) => {
+            let parent = parent.to_string_lossy();
+            quote! { Some(::std::path::PathBuf::from(#parent)) }
+        }
+        None => quote! { None },
+    };
 
     let fields: Vec<TokenStream2> = ids
         .iter()
@@ -293,7 +677,7 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
             make_rust_ident(id).map(|ident| {
                 let key = ident.to_string();
                 quote! {
-                    self.template.set(#key, self.#ident.content.clone());
+                    self.#template_field.set(#key, self.#ident.content.clone());
                 }
             })
         })
@@ -308,9 +692,10 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
         .collect();
 
     Ok(quote! {{
+        #dependencies
         #[allow(non_camel_case_types)]
         struct __CrepusTuiTemplateRefs {
-            template: ::crepuscularity_tui::Template,
+            #template_field: ::crepuscularity_tui::Template,
             #(#fields),*
         }
 
@@ -320,7 +705,7 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
                 key: impl Into<String>,
                 value: impl Into<::crepuscularity_tui::TemplateValue>,
             ) -> &mut Self {
-                self.template.set(key, value);
+                self.#template_field.set(key, value);
                 self
             }
 
@@ -336,11 +721,11 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
             }
 
             pub fn template(&self) -> &::crepuscularity_tui::Template {
-                &self.template
+                &self.#template_field
             }
 
             pub fn template_mut(&mut self) -> &mut ::crepuscularity_tui::Template {
-                &mut self.template
+                &mut self.#template_field
             }
 
             pub fn sync_refs(&mut self) -> &mut Self {
@@ -354,7 +739,7 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
                 area: ::crepuscularity_tui::ratatui::layout::Rect,
             ) -> Result<(), String> {
                 self.sync_refs();
-                self.template.draw(frame, area)
+                self.#template_field.draw(frame, area)
             }
 
             pub fn draw_full(
@@ -362,38 +747,96 @@ fn build_tui_template_refs(entry_path: &Path) -> Result<TokenStream2, String> {
                 frame: &mut ::crepuscularity_tui::ratatui::Frame,
             ) -> Result<(), String> {
                 self.sync_refs();
-                self.template.draw_full(frame)
+                self.#template_field.draw_full(frame)
             }
         }
 
         Ok::<__CrepusTuiTemplateRefs, String>(__CrepusTuiTemplateRefs {
-            template: ::crepuscularity_tui::Template::from_source_with_path(#source, #path),
+            #template_field: {
+                let mut template = ::crepuscularity_tui::Template::from_source_with_path(#source, #path);
+                template.context_mut().base_dir = #base_dir;
+                template
+            },
             #(#inits),*
         })
     }})
 }
 
-fn collect_ids_from_path(entry_path: &Path, macro_name: &str) -> Result<Vec<String>, String> {
+fn collect_ids_from_path(
+    entry_path: &Path,
+    macro_name: &str,
+) -> Result<(Vec<String>, BTreeSet<PathBuf>), String> {
     let mut seen = BTreeSet::new();
     let mut ids = BTreeSet::new();
-    collect_ids_recursive(entry_path, macro_name, &mut seen, &mut ids)?;
-    Ok(ids.into_iter().collect())
+    let mut dependencies = BTreeSet::new();
+    collect_ids_recursive(
+        entry_path,
+        None,
+        macro_name,
+        &mut seen,
+        &mut ids,
+        &mut dependencies,
+    )?;
+    let mut fields = std::collections::BTreeMap::new();
+    for id in &ids {
+        let ident = make_rust_ident(id)
+            .ok_or_else(|| format!("{macro_name} ID {id:?} cannot form a valid Rust accessor"))?;
+        if let Some(previous) = fields.insert(ident.to_string(), id) {
+            return Err(format!(
+                "{macro_name} IDs {previous:?} and {id:?} generate the same Rust accessor {ident}"
+            ));
+        }
+    }
+    Ok((ids.into_iter().collect(), dependencies))
 }
 
 fn collect_ids_recursive(
     path: &Path,
+    component_name: Option<&str>,
     macro_name: &str,
-    seen: &mut BTreeSet<PathBuf>,
+    seen: &mut BTreeSet<(PathBuf, Option<String>, Option<PathBuf>)>,
     ids: &mut BTreeSet<String>,
+    dependencies: &mut BTreeSet<PathBuf>,
 ) -> Result<(), String> {
+    dependencies.insert(path.to_path_buf());
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if !seen.insert(canonical.clone()) {
+    let frontend = component_name.is_none().then(|| {
+        crepuscularity_core::include_paths::include_frontend_path(
+            &canonical,
+            &path.to_string_lossy(),
+        )
+    });
+    if !seen.insert((
+        canonical.clone(),
+        component_name.map(str::to_owned),
+        frontend.clone(),
+    )) {
         return Ok(());
     }
 
     let content = std::fs::read_to_string(&canonical)
         .map_err(|e| format!("{macro_name} could not read {}: {e}", canonical.display()))?;
-    if let Ok(file) = crepuscularity_core::parse_component_file(&content) {
+    if component_name.is_some()
+        || !crepuscularity_core::parser::is_markup_mode(&content, frontend.as_deref())
+    {
+        let file = crepuscularity_core::parse_component_file(&content)
+            .map_err(|e| format!("{macro_name} parse error in {}: {e}", canonical.display()))?;
+        if let Some(name) = component_name {
+            let component = file.components.get(name).ok_or_else(|| {
+                format!(
+                    "{macro_name} component {name:?} not found in {}",
+                    canonical.display()
+                )
+            })?;
+            return collect_ids_from_nodes(
+                &component.nodes,
+                canonical.parent(),
+                macro_name,
+                seen,
+                ids,
+                dependencies,
+            );
+        }
         if !file.components.is_empty() {
             for component in file.components.values() {
                 collect_ids_from_nodes(
@@ -402,22 +845,31 @@ fn collect_ids_recursive(
                     macro_name,
                     seen,
                     ids,
+                    dependencies,
                 )?;
             }
             return Ok(());
         }
     }
-    let nodes = crepuscularity_core::parse_template(&content)
+    let nodes = crepuscularity_core::parse_template_with_path(&content, frontend.as_deref())
         .map_err(|e| format!("{macro_name} parse error in {}: {e}", canonical.display()))?;
-    collect_ids_from_nodes(&nodes, canonical.parent(), macro_name, seen, ids)
+    collect_ids_from_nodes(
+        &nodes,
+        canonical.parent(),
+        macro_name,
+        seen,
+        ids,
+        dependencies,
+    )
 }
 
 fn collect_ids_from_nodes(
     nodes: &[crepuscularity_core::ast::Node],
     base_dir: Option<&Path>,
     macro_name: &str,
-    seen: &mut BTreeSet<PathBuf>,
+    seen: &mut BTreeSet<(PathBuf, Option<String>, Option<PathBuf>)>,
     ids: &mut BTreeSet<String>,
+    dependencies: &mut BTreeSet<PathBuf>,
 ) -> Result<(), String> {
     use crepuscularity_core::ast::Node;
 
@@ -427,35 +879,69 @@ fn collect_ids_from_nodes(
                 if let Some(id) = &el.id {
                     ids.insert(id.clone());
                 }
-                collect_ids_from_nodes(&el.children, base_dir, macro_name, seen, ids)?;
+                collect_ids_from_nodes(
+                    &el.children,
+                    base_dir,
+                    macro_name,
+                    seen,
+                    ids,
+                    dependencies,
+                )?;
             }
             Node::If(block) => {
-                collect_ids_from_nodes(&block.then_children, base_dir, macro_name, seen, ids)?;
+                collect_ids_from_nodes(
+                    &block.then_children,
+                    base_dir,
+                    macro_name,
+                    seen,
+                    ids,
+                    dependencies,
+                )?;
                 if let Some(else_children) = &block.else_children {
-                    collect_ids_from_nodes(else_children, base_dir, macro_name, seen, ids)?;
+                    collect_ids_from_nodes(
+                        else_children,
+                        base_dir,
+                        macro_name,
+                        seen,
+                        ids,
+                        dependencies,
+                    )?;
                 }
             }
             Node::For(block) => {
-                collect_ids_from_nodes(&block.body, base_dir, macro_name, seen, ids)?
+                collect_ids_from_nodes(&block.body, base_dir, macro_name, seen, ids, dependencies)?
             }
             Node::Match(block) => {
                 for arm in &block.arms {
-                    collect_ids_from_nodes(&arm.body, base_dir, macro_name, seen, ids)?;
+                    collect_ids_from_nodes(
+                        &arm.body,
+                        base_dir,
+                        macro_name,
+                        seen,
+                        ids,
+                        dependencies,
+                    )?;
                 }
             }
             Node::Include(inc) => {
-                let include_path = inc
-                    .path
-                    .split_once('#')
-                    .map(|(p, _)| p)
-                    .unwrap_or(&inc.path);
+                let (include_path, component_name) = match inc.path.split_once('#') {
+                    Some((path, name)) => (path, Some(name)),
+                    None => (inc.path.as_str(), None),
+                };
                 let resolved = if let Some(base) = base_dir {
                     base.join(include_path)
                 } else {
                     PathBuf::from(include_path)
                 };
-                collect_ids_recursive(&resolved, macro_name, seen, ids)?;
-                collect_ids_from_nodes(&inc.slot, base_dir, macro_name, seen, ids)?;
+                collect_ids_recursive(
+                    &resolved,
+                    component_name,
+                    macro_name,
+                    seen,
+                    ids,
+                    dependencies,
+                )?;
+                collect_ids_from_nodes(&inc.slot, base_dir, macro_name, seen, ids, dependencies)?;
             }
             Node::Text(_)
             | Node::RawText(_)
@@ -477,10 +963,10 @@ fn make_rust_ident(id: &str) -> Option<syn::Ident> {
     };
     if id.is_empty() {
         None
-    } else if syn::parse_str::<syn::Ident>(&id).is_ok() {
-        Some(syn::Ident::new(&id, Span::call_site()))
     } else {
-        Some(syn::Ident::new(&format!("_{id}"), Span::call_site()))
+        syn::parse_str::<syn::Ident>(&id)
+            .or_else(|_| syn::parse_str::<syn::Ident>(&format!("_{id}")))
+            .ok()
     }
 }
 
@@ -525,6 +1011,7 @@ struct EventHandler {
 
 #[derive(Debug, Clone)]
 struct Binding {
+    origin: crepuscularity_core::ast::BindingOrigin,
     prop: String,
     value: String,
 }
@@ -1666,4 +2153,89 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #path_value))
     }}
     .into()
+}
+#[cfg(all(test, unix))]
+mod symlink_frontend_tests {
+    use super::*;
+
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn fixture(name: &str) -> Fixture {
+        let path = std::env::temp_dir().join(format!("crepus-refs-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(path.join("nested")).unwrap();
+        std::os::unix::fs::symlink("nested/source.txt", path.join("view.vue")).unwrap();
+        Fixture(path)
+    }
+
+    #[test]
+    fn tui_refs_keep_the_real_authored_frontend_path_for_reload() {
+        let directory = fixture("vue-path");
+        let source = directory.0.join("nested/source.txt");
+        let body = "<template><span id=\"root\" /></template>";
+        std::fs::write(&source, body).unwrap();
+        let authored = directory.0.join("view.vue");
+        let tokens = build_tui_template_refs(&authored).unwrap();
+        let authored = std::path::absolute(&authored).unwrap();
+        let authored = authored.to_string_lossy();
+        let constructor = quote! {
+            ::crepuscularity_tui::Template::from_source_with_path(#body, #authored)
+        };
+        assert!(
+            tokens.to_string().contains(&constructor.to_string()),
+            "{tokens}"
+        );
+        syn::parse2::<syn::Expr>(tokens).unwrap();
+    }
+
+    #[test]
+    fn reference_collection_parses_symlink_content_as_authored_vue() {
+        let directory = fixture("vue-collection");
+        let source =
+            "<script>const ignored = 1 < 2;</script><template><span id=\"root\" /></template>";
+        assert!(
+            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.vue")))
+                .is_ok()
+        );
+        assert!(crepuscularity_core::parse_template_with_path(
+            source,
+            Some(Path::new("source.txt"))
+        )
+        .is_err());
+        std::fs::write(directory.0.join("nested/source.txt"), source).unwrap();
+        let (ids, _) =
+            collect_ids_from_path(&directory.0.join("view.vue"), "crepus_refs!").unwrap();
+        assert_eq!(ids, ["root"]);
+    }
+
+    #[test]
+    fn shared_targets_are_checked_for_each_authored_frontend_in_both_orders() {
+        let directory = fixture("vue-jsx-aliases");
+        let source =
+            "<script>const ignored = 1 < 2;</script><template><span id=\"root\" /></template>";
+        assert!(
+            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.vue")))
+                .is_ok()
+        );
+        assert!(
+            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.jsx")))
+                .is_err()
+        );
+        std::fs::write(directory.0.join("nested/source.txt"), source).unwrap();
+        std::os::unix::fs::symlink("nested/source.txt", directory.0.join("view.jsx")).unwrap();
+        let entry = directory.0.join("entry.crepus");
+        for body in [
+            "include view.vue\ninclude view.jsx",
+            "include view.jsx\ninclude view.vue",
+        ] {
+            std::fs::write(&entry, body).unwrap();
+            assert!(
+                collect_ids_from_path(&entry, "crepus_refs!").is_err(),
+                "{body}"
+            );
+        }
+    }
 }
