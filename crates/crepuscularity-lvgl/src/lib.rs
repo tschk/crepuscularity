@@ -100,11 +100,11 @@ pub fn render_nodes_to_lvgl_xml(
     out.push('<');
     out.push_str(tag);
     out.push_str(" name=\"");
-    push_xml_attr(&mut out, &options.name);
+    push_xml_attr(&mut out, &options.name)?;
     out.push_str("\">\n  <view>\n");
     let ctx = lvgl_context(ctx);
     for node in render_nodes_list(nodes, &ctx, 0)? {
-        write_node(&mut out, &node, 4);
+        write_node(&mut out, &node, 4)?;
     }
     out.push_str("  </view>\n</");
     out.push_str(tag);
@@ -547,15 +547,17 @@ fn color_value(value: &str) -> Option<String> {
     }
 }
 
-fn write_node(out: &mut String, node: &XmlNode, indent: usize) {
+fn write_node(out: &mut String, node: &XmlNode, indent: usize) -> Result<(), CrepusError> {
+    validate_xml_chars(&node.tag)?;
     push_indent(out, indent);
     out.push('<');
     out.push_str(&node.tag);
     for (key, value) in &node.attrs {
+        validate_xml_name(key)?;
         out.push(' ');
         out.push_str(key);
         out.push_str("=\"");
-        push_xml_attr(out, value);
+        push_xml_attr(out, value)?;
         out.push('"');
     }
     if node.children.is_empty() {
@@ -563,13 +565,14 @@ fn write_node(out: &mut String, node: &XmlNode, indent: usize) {
     } else {
         out.push_str(">\n");
         for child in &node.children {
-            write_node(out, child, indent + 2);
+            write_node(out, child, indent + 2)?;
         }
         push_indent(out, indent);
         out.push_str("</");
         out.push_str(&node.tag);
         out.push_str(">\n");
     }
+    Ok(())
 }
 
 fn push_indent(out: &mut String, indent: usize) {
@@ -578,7 +581,44 @@ fn push_indent(out: &mut String, indent: usize) {
     }
 }
 
-fn push_xml_attr(out: &mut String, value: &str) {
+// XML 1.0 (Fifth Edition), productions NameStartChar and NameChar.
+fn xml_name_start(ch: char) -> bool {
+    matches!(ch, ':' | 'A'..='Z' | '_' | 'a'..='z'
+        | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}'
+        | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}'
+        | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+}
+
+fn validate_xml_name(name: &str) -> Result<(), CrepusError> {
+    validate_xml_chars(name)?;
+    let mut chars = name.chars();
+    let valid = chars.next().is_some_and(xml_name_start)
+        && chars.all(|ch| xml_name_start(ch)
+            || matches!(ch, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}'));
+    if !valid {
+        return Err(CrepusError::render(format!(
+            "LVGL XML attribute name {name:?} is not a valid XML Name"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_xml_chars(value: &str) -> Result<(), CrepusError> {
+    for ch in value.chars() {
+        if !matches!(ch, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+        {
+            return Err(CrepusError::render(format!(
+                "LVGL XML cannot contain character U+{:04X}",
+                ch as u32
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn push_xml_attr(out: &mut String, value: &str) -> Result<(), CrepusError> {
+    validate_xml_chars(value)?;
     for ch in value.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
@@ -586,9 +626,13 @@ fn push_xml_attr(out: &mut String, value: &str) {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            '\n' => out.push_str("&#10;"),
+            '\t' => out.push_str("&#9;"),
+            '\r' => out.push_str("&#13;"),
             _ => out.push(ch),
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
