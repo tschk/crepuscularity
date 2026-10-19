@@ -195,6 +195,132 @@ fn generated_grid_full_spans_and_auto_lines_replace_prior_placement() {
 }
 
 #[test]
+fn generated_aspect_ratios_validate_and_reset() {
+    let cases = [
+        (view! { "div aspect-square" }, Some(1.0)),
+        (view! { "div aspect-video" }, Some(16.0 / 9.0)),
+        (view! { "div aspect-[4/3]" }, Some(4.0 / 3.0)),
+        (view! { "div aspect-[1.5]" }, Some(1.5)),
+        (
+            view! { "div aspect-square aspect-[0] aspect-[-4/-3] aspect-[1/0] aspect-[NaN] aspect-[1e38/1e-38]" },
+            Some(1.0),
+        ),
+        (view! { "div aspect-square aspect-auto" }, None),
+    ];
+    for (mut actual, expected) in cases {
+        assert_eq!(actual.style().aspect_ratio, expected);
+    }
+    let reset = true;
+    let mut actual = view! { "div aspect-square class:aspect-auto={reset}" };
+    assert!(actual.style().aspect_ratio.is_none());
+    let _ =
+        view! { "div hover:aspect-video hover:aspect-auto focus:aspect-[4/3] active:aspect-auto" };
+}
+
+#[test]
+fn generated_arbitrary_border_widths_validate_without_shadowing_colors() {
+    let mut actual = view! {r#"div border-[2px] border-[-1px] border-[50%] border-[auto] border-t-[0.5rem] border-b-[3px] border-l-[0px] border-r-[4px] border-[#1234]"#};
+    let mut expected = gpui::div()
+        .border(gpui::px(2.0))
+        .border_t(gpui::rems(0.5))
+        .border_b(gpui::px(3.0))
+        .border_l(gpui::px(0.0))
+        .border_r(gpui::px(4.0))
+        .border_color(gpui::rgba(0x11223344));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+    let enabled = true;
+    let _ =
+        view! { "div hover:border-[2px] focus:border-t-[0.5rem] class:border-r-[4px]={enabled}" };
+}
+
+#[test]
+fn generated_arbitrary_radii_match_native_corner_styles() {
+    let cases = [
+        (
+            view! { "div rounded-[2px] rounded-[-1px] rounded-[50%] rounded-[auto] rounded-[NaNpx]" },
+            gpui::div().rounded(gpui::px(2.0)),
+        ),
+        (
+            view! { "div rounded-t-[0.5rem]" },
+            gpui::div().rounded_t(gpui::rems(0.5)),
+        ),
+        (
+            view! { "div rounded-b-[3px]" },
+            gpui::div().rounded_b(gpui::px(3.0)),
+        ),
+        (
+            view! { "div rounded-l-[4px]" },
+            gpui::div().rounded_l(gpui::px(4.0)),
+        ),
+        (
+            view! { "div rounded-r-[5px]" },
+            gpui::div().rounded_r(gpui::px(5.0)),
+        ),
+        (
+            view! { "div rounded-tl-[6px]" },
+            gpui::div().rounded_tl(gpui::px(6.0)),
+        ),
+        (
+            view! { "div rounded-tr-[7px]" },
+            gpui::div().rounded_tr(gpui::px(7.0)),
+        ),
+        (
+            view! { "div rounded-bl-[8px]" },
+            gpui::div().rounded_bl(gpui::px(8.0)),
+        ),
+        (
+            view! { "div rounded-br-[0px]" },
+            gpui::div().rounded_br(gpui::px(0.0)),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ = view! { "div hover:rounded-[2px] focus:rounded-tl-[0.5rem] class:rounded-br-[4px]={enabled}" };
+}
+
+#[test]
+fn generated_flex_basis_supports_lengths_fractions_and_auto() {
+    let cases = [
+        (
+            view! { "div basis-4" },
+            gpui::div().flex_basis(gpui::rems(1.0)),
+        ),
+        (
+            view! { "div basis-1/2" },
+            gpui::div().flex_basis(gpui::relative(0.5)),
+        ),
+        (
+            view! { "div basis-[20px] basis-[-2px] basis-[-50%] basis-[NaNpx]" },
+            gpui::div().flex_basis(gpui::px(20.0)),
+        ),
+        (
+            view! { "div basis-[0.5rem]" },
+            gpui::div().flex_basis(gpui::rems(0.5)),
+        ),
+        (
+            view! { "div basis-4 basis-auto" },
+            gpui::div().flex_basis(gpui::Length::Auto),
+        ),
+    ];
+    for (mut actual, mut expected) in cases {
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+    let enabled = true;
+    let _ = view! { "div hover:basis-1/2 focus:basis-auto class:basis-[20px]={enabled}" };
+}
+
+#[test]
 fn generated_flex_shorthands_and_reverse_layouts_replace_prior_values() {
     let cases = [
         (view! { "div flex-none flex-auto" }, gpui::div().flex_auto()),
