@@ -285,6 +285,7 @@ mod tests {
         // test bindings
         let mut el = dummy_element();
         el.bindings.push(Binding {
+            origin: crate::ast::BindingOrigin::Expression,
             prop: "src".to_string(),
             value: "url".to_string(),
         });
@@ -418,6 +419,7 @@ mod tests {
             Node::Element({
                 let mut el = dummy_element();
                 el.bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
                     prop: "src".to_string(),
                     value: "url".to_string(),
                 });
