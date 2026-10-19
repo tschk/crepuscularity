@@ -1,7 +1,0 @@
-[package]
-name = "moon-site"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-crepuscularity-native = "0.6.3"

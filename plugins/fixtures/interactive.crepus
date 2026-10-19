@@ -1,6 +1,0 @@
-div flex flex-col gap-2
-  input bind=count
-  span
-    "Count {count}"
-  button @click="bind:count:2"
-    "Set two"

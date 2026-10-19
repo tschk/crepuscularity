@@ -1,7 +1,0 @@
-
-    private static func actionSheetValue(method: String, payload: [String: Any]?) throws -> Any {
-        guard method == "show" else { throw HostActionError("unsupported actionSheet method: \(method)") }
-        let options = payload?["options"] as? [String] ?? ["OK"]
-        presentActionSheet(action: "actionSheet.show", title: payload?["title"] as? String ?? "", options: options)
-        return ["opening": true]
-    }

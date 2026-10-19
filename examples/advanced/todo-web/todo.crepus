@@ -1,9 +1,0 @@
-div max-w-md mx-auto p-6
-  h1 text-2xl font-bold mb-4
-    "Todo List"
-  for item in {items}
-    div flex items-center gap-2 py-2 border-b border-zinc-200
-      span
-        {item}
-  p text-sm text-zinc-500 mt-4
-    "{count} items"

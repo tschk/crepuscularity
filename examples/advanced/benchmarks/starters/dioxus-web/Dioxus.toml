@@ -1,5 +1,0 @@
-[application]
-name = "bench_dioxus_web"
-
-[web.app]
-title = "bench"

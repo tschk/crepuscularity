@@ -1,8 +1,0 @@
-div w-full min-h-screen bg-zinc-950 text-zinc-100 p-10 max-w-4xl mx-auto flex flex-col gap-6
- div text-sm uppercase tracking-wide text-zinc-500
-  "Example"
- div #hero text-4xl font-bold leading-tight "Hi"
- div text-lg text-zinc-400
-  "Author in .crepus, ship a wasm32 runtime + bundle — same render path as crepus web serve."
- button #status type="button" @click="on_refresh_status" bg-zinc-100 text-zinc-950 font-semibold px-4 py-2 rounded-lg w-fit
-  "Click me"

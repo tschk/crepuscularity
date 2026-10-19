@@ -1,7 +1,0 @@
-
-    private fun documentPickerValue(method: String): JSONObject {
-        if (method != "pick") error("unsupported documentPicker method: $method")
-        pendingPickerAction = "documentPicker.pick"
-        openDocuments?.invoke() ?: emit(errorJson("documentPicker.pick", "document picker unavailable"))
-        return JSONObject().put("opening", true)
-    }

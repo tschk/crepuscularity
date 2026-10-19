@@ -1,9 +1,0 @@
-{
-  "name": "Crepus CI",
-  "description": "Run formatting, clippy, and tests for a Rust Crepus project.",
-  "iconName": "octicon check-circle",
-  "categories": [
-    "Rust",
-    "continuous-integration"
-  ]
-}

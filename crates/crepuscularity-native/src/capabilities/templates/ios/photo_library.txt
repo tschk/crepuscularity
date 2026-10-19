@@ -1,8 +1,0 @@
-
-    private static func photoLibraryValue(method: String) throws -> Any {
-        guard method == "scan" || method == "getRecentMedia" else {
-            throw HostActionError("unsupported photoLibrary method: \(method)")
-        }
-        scanPhotoLibrary(action: "photoLibrary.\(method)")
-        return ["opening": true]
-    }

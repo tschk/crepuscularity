@@ -1,8 +1,0 @@
-div rounded-lg border p-4 mb-2
-  div font-bold text-lg
-    {title}
-  div text-sm text-gray-400
-    {subtitle}
-  slot
-    div text-gray-500
-      "No content"

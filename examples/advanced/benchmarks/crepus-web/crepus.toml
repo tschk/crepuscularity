@@ -1,8 +1,0 @@
-[[targets]]
-type = "web"
-id = "benchmark-web"
-site = "."
-out = "dist"
-entry = "index.crepus"
-name = "benchmark-crepus-web"
-description = "Minimal .crepus site for crepus benchmark"

@@ -1,4 +1,0 @@
-[ios]
-scheme = "CrepusMobileApp"
-xcodegen_spec = "project.yml"
-destination = "platform=iOS Simulator,name=iPhone 17,OS=latest"

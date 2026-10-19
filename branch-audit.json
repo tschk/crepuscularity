@@ -1,0 +1,1509 @@
+{
+  "archived_at_utc": "2026-10-19T06:37:24.832612+00:00",
+  "compared_main": "f476584a6add147c6d46d55fd44dc1ab9ddabbe3",
+  "purpose": "Recoverable heads of integrated branches before branch pruning",
+  "branches": [
+    {
+      "branch": "add-eval-expr-tests-15073607459780995468",
+      "sha": "9a6b0a891eaa6bf14619280737b1d0c8242af2d6",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 370,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Add eval_expr tests]"
+        }
+      ]
+    },
+    {
+      "branch": "add-host-class-normalization-tests-17138626442118003358",
+      "sha": "63c1c7621c9f195f2ef70c26c8f8e4262b36f44d",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 515,
+          "state": "MERGED",
+          "title": "\ud83e\uddea add tests for host class normalization"
+        }
+      ]
+    },
+    {
+      "branch": "add-layout-sanity-test-8014567953634752774",
+      "sha": "b5c00e733488ec6f18bd66d3443e140793dca1e1",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 507,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Add layout engine sanity test in embedded/layout.rs]"
+        }
+      ]
+    },
+    {
+      "branch": "add-parse-component-file-tests-386594866656159960",
+      "sha": "c101201e1602d535d90a7bd832e36fac7f8fd35f",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main parser/mod.rs593-650 already contains four component-file cases;764-798 contains all proposed frontmatter edge cases (only-open, CRLF, multiple blocks, inline delimiters). Incidental TUI fixture path changes superseded current tests.",
+      "prs": [
+        {
+          "number": 375,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for parse_component_file in crepuscularity-core]"
+        }
+      ]
+    },
+    {
+      "branch": "add-popup-test-6216035359410631825",
+      "sha": "b5f03b190dc2ae548ba7cd11490ee6a79ae9a42d",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main webext/tests/popup.test.js covers setter/clipboard failures; protected webext remainder adds current full-loader/race coverage. Old branch duplicates Bun package/lock setup and stale module-cache test harness. Do not transplant tooling wholesale.",
+      "prs": [
+        {
+          "number": 380,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [testing improvement] Cover error paths in popup.js"
+        }
+      ]
+    },
+    {
+      "branch": "add-solid-rs-tests-11847684042431580090",
+      "sha": "bbf3b227bab6677790d0aa80d635b247f9861444",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 509,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [testing improvement] Add tests for solid.rs node structures with children"
+        }
+      ]
+    },
+    {
+      "branch": "add-test-unhandled-lvgl-tags-14953972951374688676",
+      "sha": "d58edd8c9c99bc7cec7b611c74a4e85d36e0bc55",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 443,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [testing improvement] Add test for unhandled tags mapping in lvgl"
+        }
+      ]
+    },
+    {
+      "branch": "add-tests-create-watcher-2995029674916880574",
+      "sha": "7c22239c443cb86823e0237efcf9c2dcd0e98237",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main core/tests/watch_tests.rs covers event relevance matrix and handler; watch.rs168 has relevant-kind table; managed watcher and watch_symlinks integrations cover real entry/sibling/context edits and lifecycle more thoroughly than old sleep polling.",
+      "prs": [
+        {
+          "number": 381,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for create_watcher]"
+        }
+      ]
+    },
+    {
+      "branch": "add-tests-for-url-scheme-matching-13301176983805034732",
+      "sha": "c82d674147cabc455acef28c1793a4372fb5f8e5",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main web lib.rs656-683 includes mixed-case, C0, tab/CR/LF obfuscation, empty/no-colon and http controls; closed branch tables are covered or less comprehensive.",
+      "prs": [
+        {
+          "number": 469,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for url_scheme matching]"
+        }
+      ]
+    },
+    {
+      "branch": "add-vscode-extension-tests-9425114158545797911",
+      "sha": "22351b51e781e2d9dd584948eddf49f5022def3e",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 466,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [vscode extension test] Add basic tests for vscode extension activate"
+        }
+      ]
+    },
+    {
+      "branch": "add-watch-tests-15711620148211607119",
+      "sha": "cbc7c068a620785d699b4637754c807234e69ba0",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 396,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Testing] Add missing tests for filesystem event filter"
+        }
+      ]
+    },
+    {
+      "branch": "chore/shell-statistics-20261002",
+      "sha": "befc85251d813b327cdbb5126eb0d737cfef60c9",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 517,
+          "state": "MERGED",
+          "title": "chore: exclude Shell from language statistics"
+        }
+      ]
+    },
+    {
+      "branch": "code-health/webext-scaffolding-4721136683111800899",
+      "sha": "b3c438589e4140d3766868321b12e328012c1306",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 514,
+          "state": "MERGED",
+          "title": "\ud83e\uddf9 [code health improvement: Fail fast on webext scaffolding]"
+        }
+      ]
+    },
+    {
+      "branch": "codex/ammonia-advisory-20261019",
+      "sha": "6b7327c9e0af220e698972acc9e48f24b356754b",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 531,
+          "state": "MERGED",
+          "title": "fix(security): upgrade Ammonia to patched 4.1.8"
+        }
+      ]
+    },
+    {
+      "branch": "codex/bzip2-license-20261019",
+      "sha": "24debb08f9e6dd3382ebe66269086a849c61bf86",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 533,
+          "state": "MERGED",
+          "title": "build: allow the permissive bzip2 dependency license"
+        }
+      ]
+    },
+    {
+      "branch": "codex/cache-watch-20261019",
+      "sha": "d0a364fa499cd13e08c8a54e2d90ac7643a5e695",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 528,
+          "state": "MERGED",
+          "title": "fix(core): bound AST caching and reconcile template watch roots"
+        }
+      ]
+    },
+    {
+      "branch": "codex/gpui-kit-adapter-20261003",
+      "sha": "971585feda1045bcc9847e596efaeb1841d7a7be",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 518,
+          "state": "MERGED",
+          "title": "Add optional GPUI Kit adapter for compiled templates"
+        }
+      ]
+    },
+    {
+      "branch": "codex/gpui-platform-fonts-20261019",
+      "sha": "6fd68844bf2adc9bb237721129874170c074dd18",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 541,
+          "state": "MERGED",
+          "title": "fix(gpui): enable native platform fonts by default"
+        }
+      ]
+    },
+    {
+      "branch": "codex/java-test-fixtures-20261019",
+      "sha": "b12b555ef54e087d74edb55ba07dae0386b44c29",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 539,
+          "state": "MERGED",
+          "title": "test(native): use static Java probe fixtures"
+        }
+      ]
+    },
+    {
+      "branch": "codex/pages-pr-concurrency-20261019",
+      "sha": "6340fa92ba87404148b1a4b5041ee00ac98bf7af",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 538,
+          "state": "MERGED",
+          "title": "fix(ci): isolate Pages builds for each pull request"
+        }
+      ]
+    },
+    {
+      "branch": "codex/rendering-accessibility-regressions-20261002",
+      "sha": "f81b48a133b5b083cb5bc664c55968586f0fce1a",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 516,
+          "state": "MERGED",
+          "title": "Fix HTML boolean bindings and TUI render state"
+        }
+      ]
+    },
+    {
+      "branch": "codex/review-518-20261019",
+      "sha": "971585feda1045bcc9847e596efaeb1841d7a7be",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": []
+    },
+    {
+      "branch": "codex/runtime-preparation-20261019",
+      "sha": "f12ad48500e245594b8427aaea0d8fac6ac90d78",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 540,
+          "state": "MERGED",
+          "title": "Move desktop hot-reload preparation off the UI thread"
+        }
+      ]
+    },
+    {
+      "branch": "codex/tui-event-robustness-20261019",
+      "sha": "901190489c09166e519a73be4cbbdf9c19b262c6",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 536,
+          "state": "MERGED",
+          "title": "fix(tui): prevent focus traps and cyclic event bubbling"
+        }
+      ]
+    },
+    {
+      "branch": "codex/zpui-adapter-20261013",
+      "sha": "5b04d4a2ae89e3811cbc08ecec6828a9711b1cfe",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 523,
+          "state": "MERGED",
+          "title": "Add ZPUI adapter with retained Unicode input and macOS browser"
+        }
+      ]
+    },
+    {
+      "branch": "codex/zpui-callback-lifetime-20261019",
+      "sha": "bb813269cf2770e0749d8dabb90ac1e058d53934",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 532,
+          "state": "MERGED",
+          "title": "fix(zpui): retain event data after frame presentation"
+        }
+      ]
+    },
+    {
+      "branch": "codex/zpui-editor-tab-20261019",
+      "sha": "0bda5687816342df82c773dc6ed3fa7619f9b08a",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 537,
+          "state": "MERGED",
+          "title": "fix(zpui): include built-in editors in keyboard focus traversal"
+        }
+      ]
+    },
+    {
+      "branch": "codex/zpui-key-validation-20261019",
+      "sha": "2d0cbbb20595af1595a3e9679e494b710f9959b7",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 530,
+          "state": "MERGED",
+          "title": "\u26a1\ufe0f Bolt: validate ZPUI collection keys in linear time"
+        }
+      ]
+    },
+    {
+      "branch": "fix-axum-ssr-disclosure-11224522848049690368",
+      "sha": "d6eaed6f14793dd7675d1ea9f2b7964aa67fadf0",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 455,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 Prevent Information Disclosure in SSR Error Responses"
+        }
+      ]
+    },
+    {
+      "branch": "fix-command-injection-9766546185639439811",
+      "sha": "6cc003c0da90823d3ffbaf08283ce0d502503412",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 461,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Security] Fix Command Injection Vulnerability in PHP Plugin"
+        }
+      ]
+    },
+    {
+      "branch": "fix-command-injection-php-11721124846064374610",
+      "sha": "f482f18401cbeb8d6dafeffc7c223757488f6870",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Current plugins/php/CrepuscularityPlugin.php uses validated executable plus proc_open argv for context and bare routes, no shell exec command. Optional require_once smoke tweak is not a needed security behavior.",
+      "prs": [
+        {
+          "number": 445,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix Command Injection in PHP plugin]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-compose-double-conversion-7691263920397160776",
+      "sha": "0cfa274096a9930bf8998f97efaf9bda014db2fa",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 476,
+          "state": "MERGED",
+          "title": "\ud83e\uddf9 [Fix Compose codegen double conversion in Slider]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-content-js-random-4193534601534196796",
+      "sha": "20c46c150b4efca4ba91ab6ee9b818e23f2d1758",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js15 already uses crypto.getRandomValues Uint32 cache key; branch dependency/lock churn adds no missing functional fix.",
+      "prs": [
+        {
+          "number": 483,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [security fix] Replace Math.random with crypto.getRandomValues in content.js"
+        }
+      ]
+    },
+    {
+      "branch": "fix-double-conversion-9547941262257946180",
+      "sha": "c33584c8d16b133e92b43fa0c855de9c753bff2f",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main compose.rs189/225 already serializes JsonPrimitive(it), with current control-binding tests; no remaining toDouble conversion to remove.",
+      "prs": [
+        {
+          "number": 442,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [code health improvement: remove redundant toDouble conversion in compose codegen]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-php-command-injection-3379661425149021092",
+      "sha": "72df18d52406a41027ecac58f43332dfc720e549",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Current plugins/php/CrepuscularityPlugin.php uses validated executable plus proc_open argv for context and bare routes, no shell exec command. Optional require_once smoke tweak is not a needed security behavior.",
+      "prs": [
+        {
+          "number": 473,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix Command Injection in PHP Plugin"
+        }
+      ]
+    },
+    {
+      "branch": "fix-php-command-injection-9095698023854420396",
+      "sha": "ea30bd506a73ba6cf05a4bff712acc87dedd8453",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Current plugins/php/CrepuscularityPlugin.php uses validated executable plus proc_open argv for context and bare routes, no shell exec command. Optional require_once smoke tweak is not a needed security behavior.",
+      "prs": [
+        {
+          "number": 480,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix command injection in PHP plugin]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-php-crepus-bin-vuln-10013757060981704076",
+      "sha": "7a5217b0f750a4036760eff5047d9f62850657e6",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 484,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Fix Arbitrary Binary Execution via CREPUS_BIN in PHP plugin]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-render-tests-11432880225142922133",
+      "sha": "7898740971d13c425bda1fea40a7db31578a1312",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 491,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add tests for render_text_inline"
+        }
+      ]
+    },
+    {
+      "branch": "fix-url-bypass-2835119667990481574",
+      "sha": "f711fe1c560a07941c0f4a53ee3b2af53689c0a2",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 479,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Fix URL validation bypass]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-url-scheme-bypass-4177869443880578847",
+      "sha": "3298ffe1fc57749b4b1bed4164d7360766eb6ed3",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js326-330 already rejects both // and /\\ protocol-relative forms; equivalent one-line changes occur in several closed branches.",
+      "prs": [
+        {
+          "number": 482,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix protocol-relative URL bypass in isSafeUrl validation"
+        }
+      ]
+    },
+    {
+      "branch": "fix-url-scheme-bypass-6043860962730318551",
+      "sha": "da7564f37a694ff78b74118b2a54747e4530c688",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js326-330 already rejects both // and /\\ protocol-relative forms; equivalent one-line changes occur in several closed branches.",
+      "prs": [
+        {
+          "number": 463,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [security fix] Fix URL bypass via protocol-relative backslash"
+        }
+      ]
+    },
+    {
+      "branch": "fix-url-scheme-prefix-bypass-12336246415138706043",
+      "sha": "489d08d1abe784039aa15ee82a1da9a74bfd3e9b",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js326-330 already rejects both // and /\\ protocol-relative forms; equivalent one-line changes occur in several closed branches.",
+      "prs": [
+        {
+          "number": 470,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix URL Scheme Prefix Check Bypass in content.js]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-weak-random-cache-key-1013810304469371935",
+      "sha": "d4295eb1b4c704e614d06c4c4ae4e790c5fb1dc5",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 478,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix weak random number generator in extension content script"
+        }
+      ]
+    },
+    {
+      "branch": "fix-weak-random-cachekey-1963593755815918940",
+      "sha": "451798d81e4895582df7e6138a840553e90e1a66",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 456,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix weak random number generator in cacheKey]"
+        }
+      ]
+    },
+    {
+      "branch": "fix-weak-rng-webext-2183311546435756168",
+      "sha": "8a6b00b1446387c23074061d2ae9d31af313d9c1",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 464,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix weak random number generator in security context]"
+        }
+      ]
+    },
+    {
+      "branch": "fix/componentfile-debug-lsp-jsx-completion",
+      "sha": "9077c9b199854fda7c541c2e2f317cdcd73e5299",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 407,
+          "state": "MERGED",
+          "title": "fix(lsp): class completions in the JSX attribute slot"
+        }
+      ]
+    },
+    {
+      "branch": "fix/content-js-url-scheme-bypass-2501242254848360575",
+      "sha": "9faffda32bb04b6d4d0665f65cb41ca7fffca35a",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js326-330 already rejects both // and /\\ protocol-relative forms; equivalent one-line changes occur in several closed branches.",
+      "prs": [
+        {
+          "number": 460,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix URL scheme prefix check bypass in content.js]"
+        }
+      ]
+    },
+    {
+      "branch": "fix/java-version-test-noexec-20261015",
+      "sha": "455b9a4fd3c959ed5c0fefc955c422a1d8beb979",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 526,
+          "state": "MERGED",
+          "title": "Keep fake Java test executable off noexec /tmp"
+        }
+      ]
+    },
+    {
+      "branch": "fix/php-command-injection-14629065306073004125",
+      "sha": "f345c46b5f0dfc6ddbb857478ba13d495b4ac14e",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Current plugins/php/CrepuscularityPlugin.php uses validated executable plus proc_open argv for context and bare routes, no shell exec command. Optional require_once smoke tweak is not a needed security behavior.",
+      "prs": [
+        {
+          "number": 441,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix command injection in CrepuscularityPlugin]"
+        }
+      ]
+    },
+    {
+      "branch": "fix/php-command-injection-772459108829845980",
+      "sha": "c2e8590c01346a043c7ab8782adec2a21b35e232",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Current plugins/php/CrepuscularityPlugin.php uses validated executable plus proc_open argv for context and bare routes, no shell exec command. Optional require_once smoke tweak is not a needed security behavior.",
+      "prs": [
+        {
+          "number": 448,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Security Fix] Mitigate Command Injection in PHP Plugin"
+        }
+      ]
+    },
+    {
+      "branch": "fix/published-cli-bindgen-compatibility",
+      "sha": "4e2873252e98d6d86bc6f35e32cd4edef36376ee",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 520,
+          "state": "MERGED",
+          "title": "Restore complete plugin ABI generation in CLI 0.16.4"
+        }
+      ]
+    },
+    {
+      "branch": "fix/release-linux-build-dependencies",
+      "sha": "43d24ddf532651a724c801c5dc08ac6c1b96e5fb",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 521,
+          "state": "MERGED",
+          "title": "Fix Linux release dependencies and preserve tagged source during recovery"
+        }
+      ]
+    },
+    {
+      "branch": "fix/secure-random-cache-key-9651596974886392996",
+      "sha": "597877f4c7c0ce595892d6e1f09d596731745767",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main content.js15 already uses crypto.getRandomValues Uint32 cache key; branch dependency/lock churn adds no missing functional fix.",
+      "prs": [
+        {
+          "number": 440,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix weak random number generator in cache key generation"
+        }
+      ]
+    },
+    {
+      "branch": "fix/security-audit-rustsec-drift-20261015",
+      "sha": "cc5fdea8d759eb832bfb030137cce7350bd94c91",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 524,
+          "state": "MERGED",
+          "title": "Fix Security Audit failures from RustSec advisory drift"
+        }
+      ]
+    },
+    {
+      "branch": "fix/security-cloud-20261003",
+      "sha": "4744dac2c88d160d9b4da70e6ad12de629e4ce33",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 519,
+          "state": "MERGED",
+          "title": "Preserve template boundaries and Compose literals"
+        }
+      ]
+    },
+    {
+      "branch": "fix/ssr-error-info-disclosure-6570602984974859259",
+      "sha": "a4f0329d663da273a0e4874ec5bac821e1b29645",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main axum_ssr/handler.rs logs detailed error server-side and emits generic Internal Server Error body; both closed variants covered.",
+      "prs": [
+        {
+          "number": 454,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix Information Disclosure via SSR Error Responses"
+        }
+      ]
+    },
+    {
+      "branch": "fix/ssr-error-leak-12528549735116455658",
+      "sha": "9786975ffccb1a657bf71582349ce8810c02b757",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main axum_ssr/handler.rs logs detailed error server-side and emits generic Internal Server Error body; both closed variants covered.",
+      "prs": [
+        {
+          "number": 444,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [Fix SSR Information Disclosure in Axum Handler]"
+        }
+      ]
+    },
+    {
+      "branch": "fix/ssr-info-disclosure-10830390780046030365",
+      "sha": "f6e9f6100b9b9957bfc4dc9b7e56bd2021422cef",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 453,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Information Disclosure via SSR Error Responses]"
+        }
+      ]
+    },
+    {
+      "branch": "fix/streaming-ssr-contract",
+      "sha": "1548c616975887f0b855fe629b02efb245360ea8",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Merged PR counterpart inspected. Functional files match origin/main or protected76a8d665; remaining lockfile/package-version differences are superseded resolution/integration, not a missing behavior. Font runtime manifest differences retain newer worker dependency/test-support integration.",
+      "prs": [
+        {
+          "number": 522,
+          "state": "MERGED",
+          "title": "Fix streamed SSR body attributes and hydration payload"
+        }
+      ]
+    },
+    {
+      "branch": "fix/wasm-runtime-null-guards-and-perf-threshold",
+      "sha": "f6d21a82148a6dc4723d75165707a328e8792939",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 525,
+          "state": "MERGED",
+          "title": "Null-guard WASM adapter access and relax flaky TUI threshold"
+        }
+      ]
+    },
+    {
+      "branch": "fix/weak-prng-webext-16496042859896165258",
+      "sha": "ab43d9d412d474d88e0b9e3d0285b1c8016001d2",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 467,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 [security fix weak random number generator]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-12355854448879832266-3dd3fe75",
+      "sha": "963c8c6bfa45335228633cc9f37c92574f36b716",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 450,
+          "state": "CLOSED",
+          "title": "\ud83d\udd12 Fix weak random number generator for cacheKey"
+        }
+      ]
+    },
+    {
+      "branch": "jules-14310197007557731386-43a23738",
+      "sha": "6a1c07aa79dc2b48306a0e8e0ab71242dbb5e81d",
+      "disposition": "empty-net-delta-cleanup-candidate",
+      "evidence": "Unique commit IDs exist, but git diff merge-base..head has zero changed paths.",
+      "prs": [
+        {
+          "number": 493,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Verify existing text_containing_jsx_metacharacters_stays_in_an_expression test]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-15752164926681116952-db11fb40",
+      "sha": "22c88b2b90e70c92e86d76b1925a594c951fa3ab",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 393,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [testing improvement] Add tests for bad hex formats in RGB color parsing"
+        }
+      ]
+    },
+    {
+      "branch": "jules-18015882457606498402-6b81b7e9",
+      "sha": "1e066cec55bd84f4e2a0bdb77e84815170ca5947",
+      "disposition": "empty-net-delta-cleanup-candidate",
+      "evidence": "Unique commit IDs exist, but git diff merge-base..head has zero changed paths.",
+      "prs": [
+        {
+          "number": 513,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Remove hardcoded toDouble conversion in Compose codegen]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-4329153876010631574-59e16092",
+      "sha": "284b7690f35fb98e11f0787b8c14b28ffd353a8b",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 392,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea Add missing tests for Tailwind color name resolution"
+        }
+      ]
+    },
+    {
+      "branch": "jules-4465483565061565190-d362bec7",
+      "sha": "0bf6b9520d106be6d499859352e3d8f2385804cf",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 488,
+          "state": "MERGED",
+          "title": "\u26a1 [prevent cloning root DOM reference]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-5295414893973461271-fdcbdec2",
+      "sha": "e54874b79075bfeec4ff2080b8ab07b3b5b309bb",
+      "disposition": "empty-net-delta-cleanup-candidate",
+      "evidence": "Unique commit IDs exist, but git diff merge-base..head has zero changed paths.",
+      "prs": [
+        {
+          "number": 498,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [remove unused formats_exact_download_totals function]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-9946437191187207812-f513525b",
+      "sha": "e2d4b43d9c8bade45dcc9297bdd56f8482274175",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 422,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Testing Improvement] Edge case tests for parse_hex_color"
+        }
+      ]
+    },
+    {
+      "branch": "jules-angular-builder-tests-15809698900251862141",
+      "sha": "53969d2807015a8bf2be3fe1016a0366e2d18e55",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 502,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [test] add unit tests for directive_expr edge cases"
+        }
+      ]
+    },
+    {
+      "branch": "jules-escape-html-tests-8363064764024458984",
+      "sha": "bfb9a8a243f82da43c2395f2b4474e04771e6a5f",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 452,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for escape_html utility]"
+        }
+      ]
+    },
+    {
+      "branch": "jules-remove-unused-render-8625603300835829410",
+      "sha": "bbb70057b09fcb7e2679140ab61eadf4cc048e9a",
+      "disposition": "empty-net-delta-cleanup-candidate",
+      "evidence": "Unique commit IDs exist, but git diff merge-base..head has zero changed paths.",
+      "prs": [
+        {
+          "number": 501,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [code health improvement] Verify removal of unused render function in crepus-desktop benchmark"
+        }
+      ]
+    },
+    {
+      "branch": "jules/add-popup-tests-3081385402998414542",
+      "sha": "ef33bce5b32fdfcb9a604d0a6db16e946b56fd16",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main webext/tests/popup.test.js covers setter/clipboard failures; protected webext remainder adds current full-loader/race coverage. Old branch duplicates Bun package/lock setup and stale module-cache test harness. Do not transplant tooling wholesale.",
+      "prs": [
+        {
+          "number": 377,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for popup.js error paths]"
+        }
+      ]
+    },
+    {
+      "branch": "jules/fix-weak-random-generator-8379058626555570284",
+      "sha": "c0542bd6f89eb4cc6eed69d922b768d6df27a65b",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 449,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Fix Weak Random Number Generator]"
+        }
+      ]
+    },
+    {
+      "branch": "jules/test-animation-div-factory-2109142303580279746",
+      "sha": "e87b011925b41bba1d780c103fdbb2677eeea290",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 490,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add test for div() factory in animation.rs"
+        }
+      ]
+    },
+    {
+      "branch": "optimize-json-decoding-concurrency-10699277309045632052",
+      "sha": "7cecf18fb32b9d3b6102d3e89caae56bed7c7e67",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main docs-site/runtime/src/lib.rs now collects response.json promises then awaits Promise.all. Branch Cargo.lock/deny broadening and GPUI formatting are incidental and not needed.",
+      "prs": [
+        {
+          "number": 427,
+          "state": "CLOSED",
+          "title": "\u26a1 [optimize fetch_download_payloads to decode json promises concurrently]"
+        }
+      ]
+    },
+    {
+      "branch": "optimize-tui-buffer-cloning-12872129062159937830",
+      "sha": "6b6f8de4c9febdf95d7f811c84b0455239e18875",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 510,
+          "state": "MERGED",
+          "title": "\u26a1 [optimize buffer cell cloning in frame rendering loops]"
+        }
+      ]
+    },
+    {
+      "branch": "perf-component-props-merge-6846144034806650498",
+      "sha": "8fe7e49ed9f6c4761af949c58d421649ba4d256e",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 504,
+          "state": "MERGED",
+          "title": "\u26a1 Optimize string interpolation clone in component property merge"
+        }
+      ]
+    },
+    {
+      "branch": "perf/diff-tracker-with-capacity-70451892774392840",
+      "sha": "af451d68f1e9562e707c2c52a29c60128326f2c6",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 489,
+          "state": "MERGED",
+          "title": "\u26a1 perf: optimize RenderSnapshot hash map allocation using with_capacity"
+        }
+      ]
+    },
+    {
+      "branch": "perf/tui-diff-tracker-arc-str-5701451815018823689",
+      "sha": "0304c8749d8d6558fd8abaac71ea38cba9d73669",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 508,
+          "state": "MERGED",
+          "title": "\u26a1 [performance optimization] Use Arc<str> for DiffTracker fingerprints to avoid cloning"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-emit-node-16805689419730386191",
+      "sha": "a4e5ee5e90af09e8e4897296f3f4983fb1896468",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main already has native utils::html_text/js_str, js_expr shared scope_expr, split Moonshine emit_*_node helpers and split Svelte emit_*_node helpers. Old branches contain less complete historical implementations and incidental changes; do not replace newer code.",
+      "prs": [
+        {
+          "number": 426,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Code Health] Refactor long emit_node function in svelte.rs into smaller helper functions"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-html-text-utils-18289713350153481644",
+      "sha": "e6d403766ca631beb3bc174e9d5f9f378188c0ce",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main already has native utils::html_text/js_str, js_expr shared scope_expr, split Moonshine emit_*_node helpers and split Svelte emit_*_node helpers. Old branches contain less complete historical implementations and incidental changes; do not replace newer code.",
+      "prs": [
+        {
+          "number": 418,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Refactor: Extract common html_text function to utils]"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-moonshine-emit-jsx-node-10102964962608188438",
+      "sha": "ff458f894dbe710bf581633a9b64ff7757d43306",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 459,
+          "state": "MERGED",
+          "title": "\ud83e\uddf9 [Refactor `emit_jsx_node` in `moonshine.rs`]"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-moonshine-emit-jsx-node-13303268441144088546",
+      "sha": "208d369a1397305ec42667c87b5e3c8323db2c9d",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main already has native utils::html_text/js_str, js_expr shared scope_expr, split Moonshine emit_*_node helpers and split Svelte emit_*_node helpers. Old branches contain less complete historical implementations and incidental changes; do not replace newer code.",
+      "prs": [
+        {
+          "number": 472,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Moonshine] Refactor emit_jsx_node for better maintainability"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-scope-expr-18317966769909160312",
+      "sha": "da748e96b6b2169c9429bfc574409526bd45a727",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main already has native utils::html_text/js_str, js_expr shared scope_expr, split Moonshine emit_*_node helpers and split Svelte emit_*_node helpers. Old branches contain less complete historical implementations and incidental changes; do not replace newer code.",
+      "prs": [
+        {
+          "number": 428,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [code health] Extract duplicated scope_expr function"
+        }
+      ]
+    },
+    {
+      "branch": "refactor-svelte-emit-node-3910255295718225557",
+      "sha": "90e307010137e62731964174ec3c717ef57b1272",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 471,
+          "state": "MERGED",
+          "title": "\ud83e\uddf9 [Refactor Svelte emit_node into category-specific functions]"
+        }
+      ]
+    },
+    {
+      "branch": "refactor/vue-emit-node-12798542077364181152",
+      "sha": "4b669384a4557aaaf5f0d22c77aee046ab7acaed",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 481,
+          "state": "MERGED",
+          "title": "\ud83e\uddf9 [Refactor Vue emit_node function to use smaller helper functions]"
+        }
+      ]
+    },
+    {
+      "branch": "remove-deprecated-cached-view-16574337865739017063",
+      "sha": "55a30c3227f80a30f75e131f578f52e4d0299bc4",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main GPUI lib.rs no longer contains cached_view; intended removal already present.",
+      "prs": [
+        {
+          "number": 414,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Remove deprecated cached_view API]"
+        }
+      ]
+    },
+    {
+      "branch": "remove-todo-assertion-6026866148681299546",
+      "sha": "fbdbf875a88d5fc857b170815fba98bd99c42aa3",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main Moonshine test no longer has the deleted body.contains(TODO) assertion; no unique behavior.",
+      "prs": [
+        {
+          "number": 411,
+          "state": "CLOSED",
+          "title": "\ud83e\uddf9 [Code Health] Remove TODO assertion in moonshine tests"
+        }
+      ]
+    },
+    {
+      "branch": "security-fix-redos-regex-12000727598156591230",
+      "sha": "f2dbf791e009250c1b6f8edaeda5bd419ba06a64",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 468,
+          "state": "MERGED",
+          "title": "\ud83d\udd12 [Security] Fix potential ReDoS vulnerability in web extension code fence parsing"
+        }
+      ]
+    },
+    {
+      "branch": "tauri-open-tests-17862299929535401130",
+      "sha": "b4b2948784a504c0f1020b1649b391ec3db6de3c",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 475,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Add tests for Tauri App builder open]"
+        }
+      ]
+    },
+    {
+      "branch": "test-brace-extractor-12137166963655273648",
+      "sha": "956f5ac6efcddb77187e35b5b60d654821db47e1",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 495,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Add boundary testing for parity_report brace extractor]"
+        }
+      ]
+    },
+    {
+      "branch": "test-compute-only-bridge-18164085000882683768",
+      "sha": "8eb24bc4f30fc4ce102088273c483e3d9bc59095",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 505,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Testing Improvement] Add tests for compute_only_bridge"
+        }
+      ]
+    },
+    {
+      "branch": "test-escape-html-13303268441144086818",
+      "sha": "84fbafd8beccfd39465d0a9347bd5c75b6130d37",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 447,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [verify existing tests for escape_html]"
+        }
+      ]
+    },
+    {
+      "branch": "test-focus-manager-is-focused-11994419834182861600",
+      "sha": "03db7222908dd1151db09b975a9b7af33eed7dc4",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 391,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [testing improvement] Add unit tests for FocusManager::is_focused"
+        }
+      ]
+    },
+    {
+      "branch": "test-inspect-error-path-4346314803322892725",
+      "sha": "fb8ec6985678ceb2dbb54fd11f63a5af75e46b9e",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 512,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add test for error path in inspect dump_html"
+        }
+      ]
+    },
+    {
+      "branch": "test-is-relevant-kind-10758615387902706585",
+      "sha": "0aae2b22da47dd6c8d8898e0eb09b174f5da4fb7",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main core/tests/watch_tests.rs covers event relevance matrix and handler; watch.rs168 has relevant-kind table; managed watcher and watch_symlinks integrations cover real entry/sibling/context edits and lifecycle more thoroughly than old sleep polling.",
+      "prs": [
+        {
+          "number": 388,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [testing improvement] Add unit tests for watch::is_relevant_kind"
+        }
+      ]
+    },
+    {
+      "branch": "test-java-version-validation-14894147929005755133",
+      "sha": "cc59aaed57febd97e7345f5fe4590f33ec443a4d",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 503,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add tests for java_version_at_least"
+        }
+      ]
+    },
+    {
+      "branch": "test-parse-css-hex-color-17720416852423447862",
+      "sha": "486f7d7e438ebbaeb3090a01b50fa696517a1490",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 492,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Testing Improvement] Add tests for parse_css_hex_color"
+        }
+      ]
+    },
+    {
+      "branch": "test-parse-svelte-component-5734680890445288086",
+      "sha": "cba74ac756356143f522a4a917f0042c2993d7ce",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main parser/svelte/tests.rs346 unclosed_element_is_an_error asserts same missing </span> diagnostic. Incidental GPUI formatting unnecessary.",
+      "prs": [
+        {
+          "number": 432,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Testing Improvement] Add test for `parse_svelte_component`"
+        }
+      ]
+    },
+    {
+      "branch": "test-resolve-pick-12643140316252015924",
+      "sha": "6e69e230b1bc9cf467d661cf8406f3336ee24781",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 496,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add missing unit test for resolve_pick"
+        }
+      ]
+    },
+    {
+      "branch": "test-svelte-emitter-wrapper-9940774587265642227",
+      "sha": "12428f42250c2db986de40381dae4f5015c499af",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 506,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Testing Improvement] Add test for svelte.rs emitter component wrapper"
+        }
+      ]
+    },
+    {
+      "branch": "test-text-bind-9836438071624529389",
+      "sha": "70aa4009b8cd7238fdc7100154a88374e6bfe7e8",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 499,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add unit tests for text_bind function"
+        }
+      ]
+    },
+    {
+      "branch": "test-url-scheme-1037123693540203539",
+      "sha": "4c21ed493d0c9506d401b3a2e3d9ea09e1430ed9",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 477,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [add tests for url_scheme matching]"
+        }
+      ]
+    },
+    {
+      "branch": "test-url-scheme-matching-12021724220718962148",
+      "sha": "8f13fe592b90f7c95cb71709a34b41e2ecbdeb3c",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main web lib.rs656-683 includes mixed-case, C0, tab/CR/LF obfuscation, empty/no-colon and http controls; closed branch tables are covered or less comprehensive.",
+      "prs": [
+        {
+          "number": 458,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea Add unit tests for url_scheme function"
+        }
+      ]
+    },
+    {
+      "branch": "test-virtual-files-15677463822722579205",
+      "sha": "871b9a00150d9dcc1c12b7ecb688975a8b5a981e",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 390,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add missing tests for virtual file resolution]"
+        }
+      ]
+    },
+    {
+      "branch": "test-wasm-adapter-runtime-version-16011495154290451064",
+      "sha": "1d596f815d8c5828e8a6ad088046347121962796",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 486,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Add tests for WASM adapter runtime_version]"
+        }
+      ]
+    },
+    {
+      "branch": "test-webext-manifest-match-about-blank-1848992464170311848",
+      "sha": "56b599632a5334b50229890a60c719213050d44a",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 497,
+          "state": "MERGED",
+          "title": "\ud83e\uddea add test for WebExt manifest match_about_blank fallback"
+        }
+      ]
+    },
+    {
+      "branch": "test/swiftui-frame-alignment-8730721458123682696",
+      "sha": "0bace8adb9efe3c2e74ea07afcff7dfeb8c998f4",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 494,
+          "state": "MERGED",
+          "title": "\ud83e\uddea Add tests for swiftui_frame_alignment"
+        }
+      ]
+    },
+    {
+      "branch": "test/tauri-emit-all-9999140636553755054",
+      "sha": "55eb874505a11ca78a05f732948fbb7ea05c7491",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git merge-base --is-ancestor succeeds.",
+      "prs": [
+        {
+          "number": 511,
+          "state": "MERGED",
+          "title": "\ud83e\uddea [Test Tauri emit_all payload passing]"
+        }
+      ]
+    },
+    {
+      "branch": "testing-compile-crepus-16267198866097886385",
+      "sha": "9f444f73094ad81a2ad3c04acac27226299bb523",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Historical TUI example relocation/read assertions superseded current examples/showcase fixture paths and protected terminal remainder. No distinct production behavior.",
+      "prs": [
+        {
+          "number": 384,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for compile_crepus]"
+        }
+      ]
+    },
+    {
+      "branch": "testing-improvement-split-frontmatter-parts-4300802492332038304",
+      "sha": "a2689c5aa2d44faf003f0715a287c3fb97bd33ba",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main parser/mod.rs593-650 already contains four component-file cases;764-798 contains all proposed frontmatter edge cases (only-open, CRLF, multiple blocks, inline delimiters). Incidental TUI fixture path changes superseded current tests.",
+      "prs": [
+        {
+          "number": 378,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Testing Improvement: Add edge case tests for split_frontmatter_parts]"
+        }
+      ]
+    },
+    {
+      "branch": "testing-improvement-watch-event-touches-relevant-path-1532459922725321052",
+      "sha": "8fbe950cbcffd75167551f5af54e064b1ec23c99",
+      "disposition": "semantic-integration-cleanup-candidate",
+      "evidence": "Main core/tests/watch_tests.rs covers event relevance matrix and handler; watch.rs168 has relevant-kind table; managed watcher and watch_symlinks integrations cover real entry/sibling/context edits and lifecycle more thoroughly than old sleep polling.",
+      "prs": [
+        {
+          "number": 387,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Add tests for watch event relevance]"
+        }
+      ]
+    },
+    {
+      "branch": "tests-for-escape-html-11712910367505769988",
+      "sha": "655179ddd5cd53d5c61d57518669440c6965fb1b",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 446,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea Add tests for escape_html utility"
+        }
+      ]
+    },
+    {
+      "branch": "tests/resolve_under_sandbox-8692931662470093009",
+      "sha": "a45719a546c14b54502dd516c73f5616ff03bf91",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 423,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [Testing Improvement] Verify existing tests for resolve_under_sandbox"
+        }
+      ]
+    },
+    {
+      "branch": "verify-render-tests-14913757188169232389",
+      "sha": "3ae0399d04b9e85178c91748826e4ea71a0ffb80",
+      "disposition": "already-integrated-cleanup-candidate",
+      "evidence": "git cherry origin/main SHA merge-base has no + patch IDs.",
+      "prs": [
+        {
+          "number": 485,
+          "state": "CLOSED",
+          "title": "\ud83e\uddea [verify existing render_from_files tests]"
+        }
+      ]
+    }
+  ]
+}

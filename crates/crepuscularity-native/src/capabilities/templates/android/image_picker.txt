@@ -1,7 +1,0 @@
-
-    private fun imagePickerValue(method: String): JSONObject {
-        if (method != "pick") error("unsupported imagePicker method: $method")
-        pendingPickerAction = "imagePicker.pick"
-        openMedia?.invoke() ?: emit(errorJson("imagePicker.pick", "media picker unavailable"))
-        return JSONObject().put("opening", true)
-    }

@@ -1,1 +1,0 @@
-{"productName":"Tauri Multiwindow","build":{"frontendDist":"../dist"},"app":{"windows":[{"label":"main","title":"Main","width":800,"height":600},{"label":"settings","title":"Settings","width":480,"height":360}]}}

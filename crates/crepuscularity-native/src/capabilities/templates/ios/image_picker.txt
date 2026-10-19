@@ -1,8 +1,0 @@
-
-    private static func imagePickerValue(method: String) throws -> Any {
-        guard method == "pick" else {
-            throw HostActionError("unsupported imagePicker method: \(method)")
-        }
-        presentMediaPicker(action: "imagePicker.pick")
-        return ["opening": true]
-    }

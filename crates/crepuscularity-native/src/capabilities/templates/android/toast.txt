@@ -1,8 +1,0 @@
-
-    private fun toastValue(method: String, payload: JSONObject?): JSONObject {
-        if (method != "show") error("unsupported toast method: $method")
-        val text = payload?.optString("text", null) ?: error("toast.show requires payload.text")
-        val duration = if (payload?.optString("duration") == "long") Toast.LENGTH_LONG else Toast.LENGTH_SHORT
-        Toast.makeText(appContext, text, duration).show()
-        return JSONObject().put("shown", true)
-    }

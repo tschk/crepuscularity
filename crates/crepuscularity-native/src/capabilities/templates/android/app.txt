@@ -1,7 +1,0 @@
-
-    private fun appValue(method: String): JSONObject {
-        if (method != "getInfo") error("unsupported app method: $method")
-        val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-        val label = appContext.applicationInfo.loadLabel(appContext.packageManager).toString()
-        return JSONObject().put("name", label).put("version", info.versionName ?: "").put("build", info.longVersionCode).put("id", appContext.packageName)
-    }

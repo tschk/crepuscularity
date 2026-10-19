@@ -1,7 +1,0 @@
-
-    private fun inAppBrowserValue(method: String, payload: JSONObject?): JSONObject {
-        if (method != "open") error("unsupported inAppBrowser method: $method")
-        val url = payload?.optString("url", null) ?: error("inAppBrowser.open requires payload.url")
-        CustomTabsIntent.Builder().build().launchUrl(activity, Uri.parse(url))
-        return JSONObject().put("url", url).put("opened", true)
-    }

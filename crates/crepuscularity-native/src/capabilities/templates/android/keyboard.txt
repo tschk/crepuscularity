@@ -1,7 +1,0 @@
-
-    private fun keyboardValue(method: String): JSONObject {
-        if (method != "dismiss") error("unsupported keyboard method: $method")
-        val manager = appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        manager.hideSoftInputFromWindow(activity.currentFocus?.windowToken ?: activity.window.decorView.windowToken, 0)
-        return JSONObject().put("dismissed", true)
-    }

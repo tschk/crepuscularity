@@ -1,6 +1,0 @@
-
-    private fun settingsValue(method: String): JSONObject {
-        if (method != "open") error("unsupported settings method: $method")
-        activity.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", appContext.packageName, null)))
-        return JSONObject().put("opened", true)
-    }

@@ -1,9 +1,0 @@
-{
-  "name": "Crepus Pages",
-  "description": "Build a Crepus web target and deploy it to GitHub Pages.",
-  "iconName": "octicon browser",
-  "categories": [
-    "Rust",
-    "deployment"
-  ]
-}

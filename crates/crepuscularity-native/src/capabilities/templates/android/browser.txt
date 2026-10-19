@@ -1,8 +1,0 @@
-
-    private fun openUrlValue(capability: String, method: String, payload: JSONObject?): JSONObject {
-        if (method != "open") error("unsupported $capability method: $method")
-        val url = payload?.optString("url", null) ?: error("$capability.open requires payload.url")
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        activity.startActivity(intent)
-        return JSONObject().put("url", url).put("opened", true)
-    }

@@ -1,4 +1,0 @@
-# macOS: bindgen needs the Xcode SDK path to find system headers (dispatch/dispatch.h etc.)
-# This affects gpui's build script. On Linux/CI these headers are in the default path.
-[env]
-BINDGEN_EXTRA_CLANG_ARGS = { value = "--sysroot=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk", force = false }

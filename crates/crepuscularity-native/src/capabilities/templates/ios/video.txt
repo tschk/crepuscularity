@@ -1,6 +1,0 @@
-
-    private static func videoValue(method: String) throws -> Any {
-        guard method == "capture" else { throw HostActionError("unsupported video method: \(method)") }
-        presentVideoCamera(action: "video.capture")
-        return ["opening": true]
-    }

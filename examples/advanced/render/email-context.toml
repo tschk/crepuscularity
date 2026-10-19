@@ -1,5 +1,0 @@
-subject = "Welcome to Crepuscularity"
-recipient = "developer"
-sender = "The Crepuscularity Team"
-body = "Thanks for trying out Crepuscularity. We are excited to have you building with us. The framework lets you write GPUI interfaces in a concise, indentation-based template DSL instead of raw Rust."
-cta_label = "Get Started"

@@ -1,7 +1,0 @@
-div flex flex-col items-center gap-4 p-8
-  h1 text-2xl font-bold
-    "Counter Demo"
-  p #count-display text-lg
-    "Count: {count}"
-  button @click="increment" hx-post="/increment" hx-target="#count-display" hx-vals='{"count": "{count}"}' hx-swap="outerHTML" px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700
-    "Increment"

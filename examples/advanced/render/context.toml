@@ -1,8 +1,0 @@
-title = "System Health Report"
-generated = "2026-04-03"
-total_items = 12
-ok_count = 9
-warn_count = 2
-error_count = 1
-health = "warning"
-version = "1.0.0"

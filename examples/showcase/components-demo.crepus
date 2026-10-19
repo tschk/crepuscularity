@@ -1,9 +1,0 @@
-div p-8 flex flex-col gap-4
-  div text-2xl font-bold mb-4
-    "Component Demo"
-  include components/card.crepus title="Hello" subtitle="A simple card"
-    div p-2 bg-blue-900 rounded
-      "Slot content here"
-  $: let count = 2 + 3
-  div text-sm
-    "Count: {count}"

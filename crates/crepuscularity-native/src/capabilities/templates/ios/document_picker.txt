@@ -1,8 +1,0 @@
-
-    private static func documentPickerValue(method: String) throws -> Any {
-        guard method == "pick" else {
-            throw HostActionError("unsupported documentPicker method: \(method)")
-        }
-        presentFilePicker(action: "documentPicker.pick", contentTypes: [], allowsMultiple: true)
-        return ["opening": true]
-    }

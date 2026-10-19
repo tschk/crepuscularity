@@ -1,8 +1,0 @@
-
-    private static func cameraValue(method: String) throws -> Any {
-        guard method == "takePhoto" else {
-            throw HostActionError("unsupported camera method: \(method)")
-        }
-        presentCamera(action: "camera.takePhoto")
-        return ["opening": true]
-    }

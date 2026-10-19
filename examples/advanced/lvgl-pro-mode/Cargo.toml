@@ -1,9 +1,0 @@
-[package]
-name = "lvgl-pro-mode"
-version = "0.1.0"
-edition = "2021"
-license = "ISC"
-publish = false
-
-[dependencies]
-crepuscularity = { path = "../../../crates/crepuscularity", version = "0.4.6" }

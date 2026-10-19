@@ -1,3 +1,0 @@
-stack
-  text "Count {count}"
-  button label="Increment" onClick="bind:count:2"

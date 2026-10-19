@@ -1,3 +1,0 @@
-div flex flex-col gap-4
-  span
-    "Hello {name}"

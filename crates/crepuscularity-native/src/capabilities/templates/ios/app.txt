@@ -1,6 +1,0 @@
-
-    private static func appValue(method: String) throws -> Any {
-        guard method == "getInfo" else { throw HostActionError("unsupported app method: \(method)") }
-        let bundle = Bundle.main
-        return ["name": bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "", "version": bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "build": bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "", "id": bundle.bundleIdentifier ?? ""]
-    }

@@ -1,5 +1,0 @@
-div w-full h-full flex-col
-  div h-[1] #title
-    "{title}"
-  input h-[1] #input
-    "{input}"

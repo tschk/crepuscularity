@@ -1,9 +1,0 @@
-
-    private static func dimensionsValue(method: String) throws -> Any {
-        guard method == "get" || method == "getWindow" else {
-            throw HostActionError("unsupported dimensions method: \(method)")
-        }
-        let screen = UIScreen.main
-        let bounds = screen.bounds
-        return ["width": bounds.width, "height": bounds.height, "scale": screen.scale]
-    }

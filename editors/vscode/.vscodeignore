@@ -1,5 +1,0 @@
-src/**
-tsconfig.json
-bun.lock
-*.vsix
-.DS_Store

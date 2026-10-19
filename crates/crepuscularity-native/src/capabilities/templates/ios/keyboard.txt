@@ -1,8 +1,0 @@
-
-    private static func keyboardValue(method: String) throws -> Any {
-        guard method == "dismiss" else { throw HostActionError("unsupported keyboard method: \(method)") }
-        #if canImport(UIKit)
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        #endif
-        return ["dismissed": true]
-    }

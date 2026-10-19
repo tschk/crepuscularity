@@ -1,7 +1,0 @@
-div class="min-h-screen bg-zinc-950 text-white p-8"
-  h1 class="text-3xl font-bold mb-4"
-    "About"
-  p class="text-zinc-400"
-    "Crepuscularity — a .crepus template framework for GPUI, web, and extensions."
-  a href="/" class="text-blue-400 hover:underline mt-4 block"
-    "← Back"

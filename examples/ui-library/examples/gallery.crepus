@@ -1,7 +1,0 @@
-div w-full h-full bg-zinc-950 text-white p-8 flex flex-col gap-6
-  div text-2xl font-bold
-    "Gallery"
-  include ui-library.crepus#Grid columns=4 gap=4
-    for photo in {photos}
-      div aspect-square rounded-lg overflow-hidden bg-zinc-800
-        img src={photo.thumb} alt={photo.title} object-cover w-full h-full

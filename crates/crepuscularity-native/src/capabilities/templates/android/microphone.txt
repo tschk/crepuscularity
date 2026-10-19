@@ -1,9 +1,0 @@
-
-    private fun microphoneValue(method: String): JSONObject {
-        val permission = android.Manifest.permission.RECORD_AUDIO
-        val granted = activity.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (method == "status") return JSONObject().put("granted", granted)
-        if (method != "requestPermission") error("unsupported microphone method: $method")
-        if (!granted) activity.requestPermissions(arrayOf(permission), 4774)
-        return JSONObject().put("granted", granted).put("requested", !granted).put("pending", !granted)
-    }

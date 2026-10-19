@@ -1,9 +1,0 @@
-div #dashboard w-full h-full flex flex-col gap-3 bg-[#101820] p-4
-  h1 text-white text-lg
-    "LVGL Pro {status}"
-  div flex flex-row gap-2
-    span text-zinc-100
-      "CPU"
-    progress #cpu value={cpu}
-  button #refresh bg-blue-500 text-white rounded @click="refresh"
-    "Refresh"

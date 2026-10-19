@@ -1,6 +1,0 @@
-[ios]
-bundle_id = "dev.crepuscularity.mobile"
-
-[android]
-application_id = "dev.crepuscularity.nativeshell"
-namespace = "dev.crepuscularity.nativeshell"
