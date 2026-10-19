@@ -262,10 +262,28 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "overflow-hidden" => d.overflow_hidden(),
         "overflow-x-hidden" => d.overflow_x_hidden(),
         "overflow-y-hidden" => d.overflow_y_hidden(),
-        // visible/scroll/auto — accepted silently (scroll needs .id(), visible is default)
-        "overflow-visible" | "overflow-x-visible" | "overflow-y-visible" | "overflow-scroll"
-        | "overflow-auto" | "overflow-y-scroll" | "overflow-y-auto" | "overflow-x-scroll"
-        | "overflow-x-auto" => d,
+        "overflow-visible" | "overflow-x-visible" | "overflow-y-visible" => {
+            let mut d = d;
+            if class != "overflow-y-visible" {
+                d.style().overflow.x = Some(gpui::Overflow::Visible);
+            }
+            if class != "overflow-x-visible" {
+                d.style().overflow.y = Some(gpui::Overflow::Visible);
+            }
+            d
+        }
+        // The renderer gives scrolling elements stable IDs.
+        "overflow-scroll" | "overflow-auto" | "overflow-y-scroll" | "overflow-y-auto"
+        | "overflow-x-scroll" | "overflow-x-auto" => {
+            let mut d = d;
+            if !class.starts_with("overflow-y-") {
+                d.style().overflow.x = Some(gpui::Overflow::Scroll);
+            }
+            if !class.starts_with("overflow-x-") {
+                d.style().overflow.y = Some(gpui::Overflow::Scroll);
+            }
+            d
+        }
 
         // ── Flex direction ──
         "flex-row" => d.flex_row(),
@@ -294,12 +312,14 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "justify-center" => d.justify_center(),
         "justify-between" => d.justify_between(),
         "justify-around" => d.justify_around(),
+        "justify-evenly" => d.justify_evenly(),
 
         // ── Align items ──
         "items-start" => d.items_start(),
         "items-end" => d.items_end(),
         "items-center" => d.items_center(),
         "items-baseline" => d.items_baseline(),
+        "items-stretch" => d.items_stretch(),
 
         // ── Align content ──
         "content-normal" => d.content_normal(),
@@ -1541,5 +1561,34 @@ mod state_list_tests {
         let actual = class_list_state_style("hover:p-2 active:p-4", "active");
         let mut expected = apply_class_list(gpui::div(), "p-4");
         assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+    #[test]
+    fn visible_overflow_replaces_clipping_on_the_requested_axes() {
+        for (class, x, y) in [
+            (
+                "overflow-visible",
+                gpui::Overflow::Visible,
+                gpui::Overflow::Visible,
+            ),
+            (
+                "overflow-x-visible",
+                gpui::Overflow::Visible,
+                gpui::Overflow::Hidden,
+            ),
+            (
+                "overflow-y-visible",
+                gpui::Overflow::Hidden,
+                gpui::Overflow::Visible,
+            ),
+        ] {
+            let mut actual = apply_class(gpui::div().overflow_hidden(), class);
+            assert_eq!(actual.style().overflow.x, Some(x));
+            assert_eq!(actual.style().overflow.y, Some(y));
+        }
     }
 }
