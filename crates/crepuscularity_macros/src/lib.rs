@@ -1086,6 +1086,7 @@ fn core_node_to_macro(node: &crepuscularity_core::ast::Node) -> Result<Node, Str
                 .bindings
                 .iter()
                 .map(|b| Binding {
+                    origin: b.origin,
                     prop: b.prop.clone(),
                     value: b.value.clone(),
                 })
@@ -1149,10 +1150,15 @@ fn core_node_to_macro(node: &crepuscularity_core::ast::Node) -> Result<Node, Str
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         })),
-        ast::Node::LetDecl(decl) => Ok(Node::LetDecl(LetDecl {
-            name: decl.name.clone(),
-            expr: decl.expr.clone(),
-        })),
+        ast::Node::LetDecl(decl) => {
+            if decl.is_default {
+                return Err("$: default requires a runtime template context; view! cannot test whether a Rust binding exists. Set the default in Rust before invoking view!.".into());
+            }
+            Ok(Node::LetDecl(LetDecl {
+                name: decl.name.clone(),
+                expr: decl.expr.clone(),
+            }))
+        }
         ast::Node::RawHtml(_) | ast::Node::Include(_) | ast::Node::Embed(_) => {
             Err("node type not supported in view! macro".to_string())
         }
@@ -1300,17 +1306,207 @@ fn generate_child_call(node: &Node) -> Result<TokenStream2, String> {
 }
 
 fn generate_element(element: &Element) -> Result<TokenStream2, String> {
-    let tag_expr = element_tag_to_tokens(&element.tag);
-
-    let class_methods: Vec<TokenStream2> = element
-        .classes
+    for class in element.classes.iter().map(String::as_str).chain(
+        element
+            .conditional_classes
+            .iter()
+            .map(|class| class.class.as_str()),
+    ) {
+        validate_dynamic_color_class(class)?;
+    }
+    if let Some(binding) = element
+        .bindings
         .iter()
-        .filter_map(|class| map_class(class))
-        .collect();
+        .find(|binding| binding.origin == crepuscularity_core::ast::BindingOrigin::Attribute)
+    {
+        return Err(format!(
+            "GPUI macros do not support HTML attribute binding `attr.{}`",
+            binding.prop
+        ));
+    }
+    if !element.tag.chars().next().is_some_and(char::is_uppercase) {
+        for binding in &element.bindings {
+            if matches!(binding.prop.as_str(), "value" | "checked") {
+                return Err(format!(
+                    "GPUI bind:{} on <{}> requires a custom editable component",
+                    binding.prop, element.tag
+                ));
+            }
+        }
+        for handler in &element.event_handlers {
+            if matches!(handler.event.as_str(), "input" | "change") {
+                return Err(format!(
+                    "GPUI @{} on <{}> requires a custom editable component",
+                    handler.event, element.tag
+                ));
+            }
+        }
+    }
+    let disabled = syn::Ident::new("__crepus_disabled", Span::mixed_site());
+    let disabled_binding = element
+        .bindings
+        .iter()
+        .rev()
+        .find(|binding| binding.prop == "disabled");
+    let disabled_setup = disabled_binding.map(|binding| {
+        let value: syn::Expr = syn::parse_str(&binding.value)
+            .map_err(|error| format!("Invalid disabled binding: {error}"))?;
+        let value = if matches!(&value, syn::Expr::Lit(literal) if matches!(&literal.lit, syn::Lit::Str(string) if string.value().is_empty())) {
+            quote! { true }
+        } else {
+            quote! { #value }
+        };
+        Ok::<_, String>(quote! { let #disabled: bool = #value; })
+    }).transpose()?;
+    let enabled = if disabled_binding.is_some() {
+        quote! { !#disabled }
+    } else {
+        quote! { true }
+    };
+    let tag_expr = element_tag_to_tokens(&element.tag);
+    let state_style = syn::Ident::new("__s", Span::mixed_site());
+
+    let mut class_methods = Vec::new();
+    let mut class_values = Vec::new();
+    let mut state_styles: BTreeMap<&str, Vec<TokenStream2>> = BTreeMap::new();
+    let mut state_shadow_conditions: BTreeMap<&str, Vec<TokenStream2>> = BTreeMap::new();
+    for class in &element.classes {
+        if let Some(expression) = class.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            let expression: syn::Expr = syn::parse_str(expression)
+                .map_err(|error| format!("Invalid class expression: {error}"))?;
+            let name = syn::Ident::new(
+                &format!("__crepus_class_list_{}", class_values.len()),
+                Span::mixed_site(),
+            );
+            class_values.push(quote! { let #name = (#expression).to_string(); });
+            class_methods.push(quote! {
+                .map(|__el| ::crepuscularity_gpui::crepuscularity_runtime::styler::apply_class_list(__el, &#name))
+            });
+            for state in ["hover", "focus", "active"] {
+                state_shadow_conditions.entry(state).or_default().push(quote! {
+                    ::crepuscularity_gpui::crepuscularity_runtime::styler::class_list_has_state_shadow(&#name, #state)
+                });
+                state_styles.entry(state).or_default().push(quote! {
+                    let #state_style = ::crepuscularity_gpui::crepuscularity_runtime::styler::apply_class_list_state_style(#state_style, &#name, #state);
+                });
+            }
+            continue;
+        }
+        let Some(class) = gpui_class(class) else {
+            continue;
+        };
+        if let Some((state, rest)) = class.split_once(':') {
+            if matches!(state, "hover" | "focus" | "active") {
+                let Some(rest) = gpui_class(rest) else {
+                    continue;
+                };
+                if let Some(style) = map_class_to_style(rest) {
+                    if rest == "ring"
+                        || rest.starts_with("ring-")
+                        || rest == "shadow"
+                        || rest.starts_with("shadow-")
+                    {
+                        state_shadow_conditions
+                            .entry(state)
+                            .or_default()
+                            .push(quote! { true });
+                    }
+                    state_styles
+                        .entry(state)
+                        .or_default()
+                        .push(quote! { let #state_style = #state_style #style; });
+                }
+                continue;
+            }
+        }
+        if let Some(method) = map_class(class) {
+            class_methods.push(method);
+        }
+    }
+    for class in &element.conditional_classes {
+        let Some((state, utility)) =
+            gpui_class(&class.class).and_then(|class| class.split_once(':'))
+        else {
+            continue;
+        };
+        if !matches!(state, "hover" | "focus" | "active") {
+            continue;
+        }
+        let Some(utility) = gpui_class(utility) else {
+            continue;
+        };
+        let style = map_class_to_style(utility)
+            .ok_or_else(|| format!("Unknown class `{}` in conditional class", class.class))?;
+        let condition: syn::Expr = syn::parse_str(&class.condition)
+            .map_err(|error| format!("Invalid conditional class expression: {error}"))?;
+        let enabled = syn::Ident::new(
+            &format!("__crepus_state_enabled_{}", class_values.len()),
+            Span::mixed_site(),
+        );
+        class_values.push(quote! { let #enabled = #condition; });
+        if utility == "ring"
+            || utility.starts_with("ring-")
+            || utility == "shadow"
+            || utility.starts_with("shadow-")
+        {
+            state_shadow_conditions
+                .entry(state)
+                .or_default()
+                .push(quote! { #enabled });
+        }
+        state_styles.entry(state).or_default().push(quote! {
+            let #state_style = if #enabled { #state_style #style } else { #state_style };
+        });
+    }
+    let has_focus_style = state_styles.contains_key("focus");
+    let focus_enabled = syn::Ident::new("__crepus_focus_enabled", Span::mixed_site());
+    let has_active_style = state_styles.contains_key("active");
+    let base_shadow = syn::Ident::new("__crepus_base_shadow", Span::mixed_site());
+    let mut state_calls = Vec::new();
+    for (state, styles) in state_styles {
+        let method = syn::Ident::new(state, Span::call_site());
+        let conditions = state_shadow_conditions.remove(state).unwrap_or_default();
+        let composes = syn::Ident::new("__composes_shadows", Span::mixed_site());
+        let focus_update = (state == "focus").then(|| {
+            quote! {
+                #focus_enabled.set(#state_style != ::gpui::StyleRefinement::default());
+            }
+        });
+        state_calls.push(quote! { .#method(|mut #state_style| {
+            let #composes = false #(|| (#conditions))*;
+            if #composes { #state_style.box_shadow = #base_shadow.clone(); }
+            #(#styles)*
+            let mut #state_style = #state_style;
+            if #composes && #state_style.box_shadow == #base_shadow { #state_style.box_shadow = None; }
+            #focus_update
+            #state_style
+        }) });
+    }
+    let state_call = (!state_calls.is_empty()).then(|| {
+        let builder = syn::Ident::new("__el", Span::mixed_site());
+        let focus_setup =
+            has_focus_style.then(|| quote! { let #focus_enabled = ::std::cell::Cell::new(false); });
+        let focus_finish = has_focus_style.then(|| {
+            quote! {
+                .when(#enabled && #focus_enabled.get(), |#builder| #builder.focusable().tab_index(0))
+            }
+        });
+        quote! { .map(|mut #builder| {
+            let #base_shadow = ::gpui::Styled::style(&mut #builder).box_shadow.clone();
+            #focus_setup
+            let #builder = #builder #(#state_calls)*;
+            #builder #focus_finish
+        }) }
+    });
 
     let conditional_class_calls: Vec<TokenStream2> = element
         .conditional_classes
         .iter()
+        .filter(|class| {
+            !gpui_class(&class.class)
+                .and_then(|class| class.split_once(':'))
+                .is_some_and(|(state, _)| matches!(state, "hover" | "focus" | "active"))
+        })
         .map(generate_conditional_class)
         .collect::<Result<_, _>>()?;
 
@@ -1323,34 +1519,138 @@ fn generate_element(element: &Element) -> Result<TokenStream2, String> {
     let binding_calls: Vec<TokenStream2> = element
         .bindings
         .iter()
+        .filter(|binding| !matches!(binding.prop.as_str(), "id" | "disabled"))
         .map(generate_binding)
         .collect::<Result<_, _>>()?;
 
-    let child_calls: Vec<TokenStream2> = element
-        .children
-        .iter()
-        .map(generate_child_call)
-        .collect::<Result<_, _>>()?;
+    let child_calls = generate_child_calls(&element.children)?;
 
-    // on_click (and other StatefulInteractiveElement methods) require an ElementId.
+    let has_scroll_style = element
+        .classes
+        .iter()
+        .chain(element.conditional_classes.iter().map(|class| &class.class))
+        .filter_map(|class| gpui_class(class))
+        .any(|class| {
+            matches!(
+                class.rsplit(':').next(),
+                Some(
+                    "overflow-auto"
+                        | "overflow-scroll"
+                        | "overflow-x-auto"
+                        | "overflow-x-scroll"
+                        | "overflow-y-auto"
+                        | "overflow-y-scroll"
+                )
+            )
+        });
+
+    let has_key_handlers = element
+        .event_handlers
+        .iter()
+        .any(|handler| matches!(handler.event.as_str(), "keydown" | "keyup"));
+    let keyboard_focus_call =
+        has_key_handlers.then(|| quote! { .when(#enabled, |el| el.focusable().tab_index(0)) });
+    let handler_calls = if disabled_binding.is_some() && !handler_calls.is_empty() {
+        let builder = syn::Ident::new("__el", Span::mixed_site());
+        quote! { .when(#enabled, |#builder| #builder #(#handler_calls)*) }
+    } else {
+        quote! { #(#handler_calls)* }
+    };
+    let disabled_style = disabled_binding.map(|_| {
+        quote! {
+            .when(#disabled, |el| el.cursor_not_allowed().opacity(0.5))
+        }
+    });
+
+    // Interaction handlers, active styles, and scrolling require a stateful element.
     let id_call = if let Some(id) = &element.id {
         quote! { .id(#id) }
-    } else if element.event_handlers.iter().any(|h| h.event == "click") {
+    } else if let Some(binding) = element.bindings.iter().find(|binding| binding.prop == "id") {
+        generate_binding(binding)?
+    } else if element
+        .event_handlers
+        .iter()
+        .any(|h| matches!(h.event.as_str(), "click" | "hover"))
+        || has_active_style
+        || has_focus_style
+        || has_key_handlers
+        || has_scroll_style
+    {
         let generated_id = ELEM_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as usize;
-        quote! { .id(#generated_id as usize) }
+        let path = syn::Ident::new("__crepus_loop_path", Span::mixed_site());
+        quote! { .id(::gpui::SharedString::from(format!("crepus-node-{}{}", #generated_id, #path))) }
     } else {
         quote! {}
     };
 
-    Ok(quote! {
+    let style_reset_helper = element
+        .classes
+        .iter()
+        .chain(element.conditional_classes.iter().map(|class| &class.class))
+        .filter_map(|class| gpui_class(class))
+        .any(|class| {
+            let utility = class.rsplit(':').next().unwrap_or(class);
+            utility == "ring" || utility.starts_with("ring-") || utility == "shadow" || utility.starts_with("shadow-") || matches!(
+                class.rsplit(':').next(),
+                Some(
+                    "self-auto"
+                        | "aspect-auto"
+                        | "overflow-visible"
+                        | "overflow-x-visible"
+                        | "overflow-y-visible"
+                        | "overflow-auto"
+                        | "overflow-scroll"
+                        | "overflow-x-auto"
+                        | "overflow-x-scroll"
+                        | "overflow-y-auto"
+                        | "overflow-y-scroll"
+                )
+            )
+        })
+        .then(|| {
+            quote! {
+                trait __CrepusStyleReset: ::gpui::Styled {
+                    fn __crepus_shadow_class(self, class: &str) -> Self {
+                        ::crepuscularity_gpui::crepuscularity_runtime::styler::apply_class_list(self, class)
+                    }
+                    fn __crepus_self_auto(mut self) -> Self {
+                        self.style().align_self = None;
+                        self
+                    }
+                    fn __crepus_overflow_visible(mut self, x: bool, y: bool) -> Self {
+                        if x { self.style().overflow.x = Some(::gpui::Overflow::Visible); }
+                        if y { self.style().overflow.y = Some(::gpui::Overflow::Visible); }
+                        self
+                    }
+                    fn __crepus_overflow_scroll(mut self, x: bool, y: bool) -> Self {
+                        if x { self.style().overflow.x = Some(::gpui::Overflow::Scroll); }
+                        if y { self.style().overflow.y = Some(::gpui::Overflow::Scroll); }
+                        self
+                    }
+                    fn __crepus_aspect_auto(mut self) -> Self {
+                        self.style().aspect_ratio = None;
+                        self
+                    }
+                }
+                impl<T: ::gpui::Styled> __CrepusStyleReset for T {}
+            }
+        });
+
+    Ok(quote! {{
+        #style_reset_helper
+        #disabled_setup
+        #(#class_values)*
         #tag_expr
         #id_call
+        #keyboard_focus_call
         #(#class_methods)*
         #(#conditional_class_calls)*
-        #(#handler_calls)*
+        #state_call
+        #handler_calls
         #(#binding_calls)*
+        #disabled_style
         #(#child_calls)*
-    })
+    }})
 }
 
 fn generate_conditional_class(cc: &ConditionalClass) -> Result<TokenStream2, String> {
@@ -1757,7 +2057,6 @@ fn generate_binding(binding: &Binding) -> Result<TokenStream2, String> {
         "id" => Ok(quote! { .id(#value) }),
         "value" => Ok(quote! { .value(#value) }),
         "checked" => Ok(quote! { .checked(#value) }),
-        "disabled" => Ok(quote! { .when(#value, |el| el.cursor_not_allowed().opacity(0.5)) }),
         _ => Ok(quote! {}),
     }
 }
@@ -1787,16 +2086,6 @@ fn element_tag_to_tokens(tag: &str) -> TokenStream2 {
                 quote! { ::gpui::div() }
             }
         }
-    }
-}
-
-// Needed for make_listener closure
-trait IntoTokenStreamHelper {
-    fn into_token_stream(self) -> TokenStream2;
-}
-impl IntoTokenStreamHelper for syn::Expr {
-    fn into_token_stream(self) -> TokenStream2 {
-        quote! { #self }
     }
 }
 
@@ -2209,6 +2498,28 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
     .into()
 }
 #[cfg(test)]
+mod bound_id_tests {
+    use super::*;
+
+    #[test]
+    fn bound_id_is_emitted_once_before_click_handler() {
+        let nodes = crepuscularity_core::parse_template(
+            r#"<button id={button_id} @click={handle_click}>Press</button>"#,
+        )
+        .unwrap();
+        let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+            panic!("expected button");
+        };
+        let code = generate_element(&element).unwrap().to_string();
+        assert_eq!(code.matches(". id (").count(), 1, "{code}");
+        assert!(
+            code.find(". id (button_id)").unwrap() < code.find(". on_click").unwrap(),
+            "{code}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod default_declaration_tests {
     use super::*;
     #[test]
@@ -2220,6 +2531,75 @@ mod default_declaration_tests {
         }
         let nodes = crepuscularity_core::parse_template("$: let count = 1").unwrap();
         assert!(core_node_to_macro(&nodes[0]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod form_binding_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_form_operations_report_the_missing_editable_component() {
+        for attribute in [
+            "bind:value={value}",
+            "bind:checked={checked}",
+            "@input=change",
+            "@change=change",
+        ] {
+            for source in [
+                format!("input {attribute}"),
+                format!("<input {attribute} />"),
+            ] {
+                let nodes = crepuscularity_core::parse_template(&source).unwrap();
+                let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                    panic!("expected element")
+                };
+                let error = generate_element(&element).unwrap_err();
+                assert!(
+                    error.contains("requires a custom editable component"),
+                    "{error}"
+                );
+            }
+            let nodes =
+                crepuscularity_core::parse_template(&format!("InputField {attribute}")).unwrap();
+            let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                panic!("expected element")
+            };
+            assert!(generate_element(&element).is_ok(), "{attribute}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod attribute_binding_tests {
+    use super::*;
+
+    #[test]
+    fn html_attribute_origin_survives_conversion_and_is_rejected_before_gpui_controls() {
+        for prop in ["id", "disabled", "value", "checked", "interval", "onclick"] {
+            let mut nodes = crepuscularity_core::parse_template("input").unwrap();
+            let crepuscularity_core::ast::Node::Element(element) = &mut nodes[0] else {
+                panic!("expected element")
+            };
+            element.bindings.push(crepuscularity_core::ast::Binding {
+                origin: crepuscularity_core::ast::BindingOrigin::Attribute,
+                prop: prop.into(),
+                value: "optional?.field".into(),
+            });
+            let converted = core_node_to_macro(&nodes[0]).unwrap();
+            let Node::Element(element) = &converted else {
+                panic!("expected macro element")
+            };
+            assert_eq!(
+                element.bindings[0].origin,
+                crepuscularity_core::ast::BindingOrigin::Attribute
+            );
+            let error = generate_node(&converted).unwrap_err();
+            assert_eq!(
+                error,
+                format!("GPUI macros do not support HTML attribute binding `attr.{prop}`")
+            );
+        }
     }
 }
 
