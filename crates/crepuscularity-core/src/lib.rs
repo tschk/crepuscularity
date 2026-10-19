@@ -18,6 +18,7 @@ pub mod parser;
 pub mod preprocess;
 pub mod render_entry;
 pub mod tailwind;
+pub mod text_binding;
 pub mod virtual_files;
 pub mod watch;
 
