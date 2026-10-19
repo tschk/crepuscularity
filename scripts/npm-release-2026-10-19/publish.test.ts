@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ordered, status, validatePacked, assertDependencies, waitForAvailability } from './publish';
+import { ordered, status, validatePacked, assertDependencies, waitForAvailability, publishBatch } from './publish';
 const registry = {name:'@test/a',versions:{'1.0.0':{name:'@test/a',version:'1.0.0'}},'dist-tags':{latest:'1.0.0'}};
 const pkg=(name:string,dependencies:Record<string,string>={})=>({entry:{name,observedLatest:'1.0.0'},manifest:{name,version:'1.1.0',dependencies},registry});
 describe('release decisions',()=>{
@@ -52,4 +52,15 @@ test('permanent availability errors stop immediately',async()=>{
  let probes=0;
  await expect(waitForAvailability(async()=>{probes++;throw new Error('unexpected artifact origin');},4,0,async()=>{})).rejects.toThrow('origin');
  expect(probes).toBe(1);
+});
+
+test('submits dependency-ordered batch before waiting for registry processing',async()=>{
+ const events:string[]=[];
+ await publishBatch(['core','consumer'],async p=>{events.push('submit:'+p);},async p=>{events.push('verify:'+p);});
+ expect(events).toEqual(['submit:core','submit:consumer','verify:core','verify:consumer']);
+});
+test('a failed submission stops consumers and preserves verification for retry',async()=>{
+ const events:string[]=[];
+ await expect(publishBatch(['core','consumer'],async p=>{events.push('submit:'+p);throw new Error('upload failed');},async p=>{events.push('verify:'+p);})).rejects.toThrow('upload failed');
+ expect(events).toEqual(['submit:core']);
 });

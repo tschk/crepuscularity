@@ -74,6 +74,11 @@ function inspectArtifact(file:string, expected:Manifest): Manifest {
   validatePacked(packed);
   return packed;
 }
+export async function publishBatch<T>(items:T[],submit:(item:T)=>Promise<void>,verify:(item:T)=>Promise<void>) {
+  // Complete ordered submissions before waiting for npm's asynchronous processing.
+  for(const item of items)await submit(item);
+  for(const item of items)await verify(item);
+}
 export async function waitForAvailability(probe:()=>Promise<boolean>, attempts=37, delay=5000, sleep:(ms:number)=>Promise<unknown>=Bun.sleep):Promise<void> {
   for(let i=0;i<attempts;i++) {
     if(await probe())return;
@@ -214,7 +219,7 @@ async function main() {
     try {await assertDependencies(p.manifest,readyMap,lookup);safe.push(p);}
     catch(error){readyMap.delete(p.manifest.name);blocked.push(p.manifest.name);console.error(`BLOCKED ${p.manifest.name}: ${(error as Error).message}`);}
   }
-  if(publish)for(const p of safe) {
+  if(publish)await publishBatch(safe,async p=>{
     const key=`${p.manifest.name}@${p.manifest.version}`;
     const digest=createHash('sha512').update(readFileSync(p.artifact!)).digest('hex');
     const receipt=receipts()[key];
@@ -226,10 +231,14 @@ async function main() {
       // Persist acceptance before polling: retry must never resubmit a processing upload.
       saveReceipt(key,{state:'accepted',sha512:digest,observedAt:new Date().toISOString()});
     } else console.log(`Upload already accepted/registered: ${key}; verifying without resubmitting`);
+    console.log(`ACCEPTED ${key}`);
+  },async p=>{
+    const key=`${p.manifest.name}@${p.manifest.version}`;
+    const digest=createHash('sha512').update(readFileSync(p.artifact!)).digest('hex');
     await verifyPublished(p.manifest.name,p.manifest.version);
     saveReceipt(key,{state:'verified',sha512:digest,observedAt:new Date().toISOString()});
     console.log(`VERIFIED ${p.manifest.name}@${p.manifest.version}`);
-  }
+  });
   console.log(`\n${publish?'Published/verified':'Prepared'} ${safe.length}; blocked ${blocked.length}. No source files were rewritten and no versions were bumped.`);
   if(blocked.length)process.exitCode=1;
 }

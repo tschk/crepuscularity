@@ -6,7 +6,7 @@ Run from this folder:
 bun publish.ts --login --publish
 ```
 
-`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun handles package checks, packing and publishing. Existing registry versions are skipped and their tarball availability is checked. Accepted uploads are saved before verification; reruns do not submit them again. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
+`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun handles package checks, packing and publishing. The batch submits packages in dependency order and records every accepted upload before beginning availability verification, so npm processing does not stall submission of the remaining packages. Existing registry versions are skipped and their tarball availability is checked. Accepted uploads are saved before verification; reruns do not submit them again. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
 
 To inspect the live plan without logging in, building or publishing:
 
