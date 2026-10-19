@@ -247,3 +247,68 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
 
     ast_shape_compatible(&old.children, &new.children)
 }
+
+#[cfg(test)]
+mod ast_shape_tests {
+    use super::*;
+    use crepuscularity_core::ast::{Element, Node, TextPart};
+
+    fn el(tag: &str) -> Element {
+        Element {
+            tag: tag.to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_different_length() {
+        let old = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let new = vec![];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_different_tags() {
+        let oe = el("div");
+        let ne = el("span");
+        assert!(!ast_shape_compatible(
+            &[Node::Element(oe)],
+            &[Node::Element(ne)]
+        ));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_different_types() {
+        let oe = el("div");
+        let nt = Node::Text(vec![TextPart::Literal("hello".to_string())]);
+        assert!(!ast_shape_compatible(&[Node::Element(oe)], &[nt]));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_same_elements() {
+        let oe = el("div");
+        let ne = el("div");
+        assert!(ast_shape_compatible(
+            &[Node::Element(oe)],
+            &[Node::Element(ne)]
+        ));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_nested_different_length() {
+        let mut oe = el("div");
+        oe.children
+            .push(Node::Text(vec![TextPart::Literal("hi".to_string())]));
+        let ne = el("div");
+        assert!(!ast_shape_compatible(
+            &[Node::Element(oe)],
+            &[Node::Element(ne)]
+        ));
+    }
+}
