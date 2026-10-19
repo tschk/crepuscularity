@@ -117,3 +117,52 @@ test("browser program member expressions retain literal property names and disti
   expect(messages.find((value) => Object.hasOwn(value, "member"))).toEqual({ member: 7, dotted: 9 });
 });
 
+test("iframe resize uses one weakly owned listener across removal and remount", async () => {
+  const addListener = spyOn(window, "addEventListener");
+  // Happy DOM cannot navigate Blob URLs; use the existing srcdoc fallback here.
+  const createObjectURL = spyOn(URL, "createObjectURL").mockImplementation(() => {
+    throw new Error("Blob navigation unavailable in this DOM test");
+  });
+  const addWidget = () => {
+    const pre = document.createElement("pre");
+    pre.textContent = "<ai-anywhere complete></ai-anywhere>";
+    document.body.append(pre);
+  };
+  try {
+    for (let i = 0; i < 20; i++) addWidget();
+    await start({
+      extract_widgets: () => [{}],
+      render_anywhere_parts: () => ({ html: "<p>Frame</p>", needs_iframe: true }),
+      render_anywhere_frame_doc: () => ({ srcdoc: "<p>Frame</p>" }),
+    });
+    const mountedFrames = [...document.querySelectorAll("iframe.aa-widget-frame")];
+    expect(mountedFrames).toHaveLength(20);
+    const messageListeners = () => addListener.mock.calls.filter(([type]) => type === "message");
+    expect(messageListeners()).toHaveLength(1);
+    const resize = (frame, height, type = "anywhere-resize") => window.dispatchEvent(
+      new MessageEvent("message", { source: frame.contentWindow, data: { type, height } }),
+    );
+    const [first, second] = mountedFrames;
+    resize(first, 12.5);
+    expect(first.style.height).toBe("13px");
+    expect(second.style.height).toBe("");
+    for (const value of [0, -1, Infinity, NaN, "invalid"]) resize(first, value);
+    resize(first, 50, "unrelated");
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "anywhere-resize", height: 99 } }));
+    expect(first.style.height).toBe("13px");
+    const removedWindow = first.contentWindow;
+    for (const frame of mountedFrames) frame.remove();
+    window.dispatchEvent(new MessageEvent("message", { source: removedWindow, data: { type: "anywhere-resize", height: 88 } }));
+    expect(first.style.height).toBe("13px");
+    addWidget();
+    await flush();
+    const next = document.querySelector("iframe.aa-widget-frame");
+    expect(next).not.toBeNull();
+    resize(next, 42);
+    expect(next.style.height).toBe("42px");
+    expect(messageListeners()).toHaveLength(1);
+  } finally {
+    addListener.mockRestore();
+    createObjectURL.mockRestore();
+  }
+});

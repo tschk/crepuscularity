@@ -49,6 +49,8 @@
   }
 
   const mounted = new WeakSet();
+  const resizeFrames = new WeakMap();
+  let resizeListenerAttached = false;
   const pending = new Set();
   let flushScheduled = false;
 
@@ -188,6 +190,8 @@
     const replaceTarget = codeBlockReplaceTarget(pre);
     if (replaceTarget?.isConnected) {
       replaceTarget.replaceWith(wrapper);
+      // contentWindow exists once the iframe is connected; messages arrive later.
+      wrapper.querySelectorAll("iframe.aa-widget-frame").forEach(attachFrameResize);
       return;
     }
     console.warn("crepuscularity: code block not connected, skip mount");
@@ -228,8 +232,14 @@
 `;
 
   function attachFrameResize(frame) {
+    if (!frame.contentWindow) return;
+    resizeFrames.set(frame.contentWindow, frame);
+    if (resizeListenerAttached) return;
+    resizeListenerAttached = true;
+    // A weak registry avoids a window listener retaining each removed iframe.
     window.addEventListener("message", (event) => {
-      if (event.source !== frame.contentWindow) {
+      const frame = resizeFrames.get(event.source);
+      if (!frame?.isConnected || event.source !== frame.contentWindow) {
         return;
       }
       if (event.data?.type !== "anywhere-resize") {
@@ -281,7 +291,6 @@
     frame.setAttribute("scrolling", "no");
     frame.sandbox = "allow-scripts";
     setIframeDocument(frame, srcdoc);
-    attachFrameResize(frame);
     mount.append(frame);
     return mount;
   }
