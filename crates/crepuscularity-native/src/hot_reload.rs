@@ -308,3 +308,63 @@ mod model_order_tests {
         assert!(!ast_shape_compatible(&old, &new));
     }
 }
+
+#[cfg(test)]
+mod ast_shape_tests {
+    use super::*;
+    use crepuscularity_core::ast::{Element, Node, TextPart};
+
+    #[test]
+    fn test_ast_shape_compatible_length_mismatch() {
+        let old = vec![Node::RawText("A".into())];
+        let new = vec![Node::RawText("A".into()), Node::RawText("B".into())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_different_node_types() {
+        let old = vec![Node::RawText("A".into())];
+        let new = vec![Node::RawHtml("A".into())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_text_parts() {
+        let old = vec![Node::Text(vec![TextPart::Literal("hello".into())])];
+        let new = vec![Node::Text(vec![TextPart::Literal("world".into())])];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let old_expr = vec![Node::Text(vec![TextPart::Expr("foo".into())])];
+        let new_expr = vec![Node::Text(vec![TextPart::Expr("foo".into())])];
+        assert!(ast_shape_compatible(&old_expr, &new_expr));
+
+        let new_expr_diff = vec![Node::Text(vec![TextPart::Expr("bar".into())])];
+        assert!(!ast_shape_compatible(&old_expr, &new_expr_diff));
+    }
+
+    #[test]
+    fn test_ast_shape_compatible_element_tags() {
+        let old_elem = Element {
+            tag: "div".into(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        };
+        let mut new_elem = old_elem.clone();
+
+        assert!(ast_shape_compatible(
+            &[Node::Element(old_elem.clone())],
+            &[Node::Element(new_elem.clone())]
+        ));
+
+        new_elem.tag = "span".into();
+        assert!(!ast_shape_compatible(
+            &[Node::Element(old_elem.clone())],
+            &[Node::Element(new_elem.clone())]
+        ));
+    }
+}
