@@ -9,13 +9,15 @@ use std::time::Duration;
 
 use gpui::{
     bounce, div, ease_in_out, ease_out_quint, linear, quadratic, rgb, Animation, AnimationExt,
-    AnyElement, ElementId, IntoElement, ParentElement, SharedString, Styled,
+    AnyElement, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled,
 };
 
 use crepuscularity_core::include_paths::resolve_include_path;
 use crepuscularity_core::preprocess::slot_rotate_child_phrases;
 
-use crate::styler::{apply_class_with_ctx, parse_duration_ms};
+use crate::bindings::{ElementRequest, RuntimeBindings};
+use crate::styler::{apply_element_classes, parse_duration_ms};
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
 
@@ -29,128 +31,310 @@ fn eval_condition_bool(ctx: &TemplateContext, expr: &str) -> bool {
 
 /// Render a list of nodes into a single `AnyElement`, threading `LetDecl`s into
 /// a running context clone so later siblings see the declared variables.
+/// The legacy API derives identity from its caller location. Repeated instances
+/// at the same call site (including helper functions) must use explicit namespaces.
+#[track_caller]
 pub fn render_nodes(nodes: &[Node], ctx: &TemplateContext) -> AnyElement {
-    render_nodes_with_ctx(nodes, ctx.clone())
+    let caller = std::panic::Location::caller();
+    render_nodes_with_bindings(
+        &format!("{caller}"),
+        nodes,
+        ctx,
+        &RuntimeBindings::default(),
+    )
 }
 
-fn render_nodes_with_ctx(nodes: &[Node], mut ctx: TemplateContext) -> AnyElement {
-    let mut rendered: Vec<AnyElement> = Vec::new();
+/// Render with explicitly registered host callbacks and native elements.
+/// Use a unique, stable namespace for each template instance in the same view.
+/// Inside a reordered loop, put `bind:key={item.id}` on its single root element.
+pub fn render_nodes_with_bindings(
+    namespace: &str,
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
+    render_nodes_with_ctx(nodes, ctx.clone(), namespace, bindings)
+}
 
-    for node in nodes {
+pub(crate) fn render_error(message: impl Into<String>) -> AnyElement {
+    div()
+        .text_color(rgb(0xff4444))
+        .child(SharedString::from(message.into()))
+        .into_any_element()
+}
+
+fn scoped_id(scope: &str, segment: &str) -> String {
+    // Length-prefix segments: literal IDs containing `/` cannot alias a path.
+    format!("{scope}/{}:{segment}", segment.len())
+}
+
+fn node_id(scope: &str, index: usize, node: &Node, ctx: &TemplateContext) -> String {
+    if let Node::Element(element) = node {
+        if let Some(binding) = element.bindings.iter().find(|b| b.prop == "id") {
+            return scoped_id(
+                scope,
+                &format!("id:{}", value_to_str(&eval_expr_value(&binding.value, ctx))),
+            );
+        }
+        if let Some(id) = &element.id {
+            return scoped_id(scope, &format!("id:{id}"));
+        }
+    }
+    scoped_id(scope, &format!("node:{index}"))
+}
+
+fn render_children(
+    nodes: &[Node],
+    mut ctx: TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> Vec<AnyElement> {
+    let mut rendered = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    for (index, node) in nodes.iter().enumerate() {
         if let Node::LetDecl(decl) = node {
-            if decl.is_default && ctx.vars.contains_key(&decl.name) {
-                // Default: skip if already set by parent props
-            } else {
+            if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
                 let val = eval_expr_value(&decl.expr, &ctx);
                 ctx.vars.insert(decl.name.clone(), val);
             }
         } else {
-            rendered.push(render_node(node, &ctx));
-        }
-    }
-
-    match rendered.len() {
-        0 => div().into_any_element(),
-        1 => rendered.remove(0),
-        _ => {
-            let mut d = div();
-            for child in rendered {
-                d = d.child(child);
+            let id = node_id(scope, index, node, &ctx);
+            if !ids.insert(id.clone()) {
+                rendered.push(render_error(format!(
+                    "Duplicate GPUI template identity `{id}`"
+                )));
+                continue;
             }
-            d.into_any_element()
+            rendered.push(render_node_in_scope(node, &ctx, &id, bindings));
         }
+    }
+    rendered
+}
+
+fn render_nodes_with_ctx(
+    nodes: &[Node],
+    ctx: TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
+    let mut rendered = render_children(nodes, ctx, scope, bindings);
+    match rendered.len() {
+        1 => rendered.remove(0),
+        _ => div().children(rendered).into_any_element(),
     }
 }
 
+#[track_caller]
 pub fn render_node(node: &Node, ctx: &TemplateContext) -> AnyElement {
+    let caller = std::panic::Location::caller();
+    let id = node_id(&format!("{caller}"), 0, node, ctx);
+    render_node_in_scope(node, ctx, &id, &RuntimeBindings::default())
+}
+
+fn render_node_in_scope(
+    node: &Node,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
     match node {
-        Node::Element(el) => render_element(el, ctx),
-        Node::Text(parts) => {
-            let text = render_text(parts, ctx);
-            div().child(SharedString::from(text)).into_any_element()
+        Node::Element(el) => render_element(el, ctx, scope, bindings),
+        Node::Text(parts) => div()
+            .child(SharedString::from(render_text(parts, ctx)))
+            .into_any_element(),
+        Node::If(block) => render_if(block, ctx, scope, bindings),
+        Node::For(block) => render_for(block, ctx, scope, bindings),
+        Node::Match(block) => render_match(block, ctx, scope, bindings),
+        Node::LetDecl(_) => div().into_any_element(),
+        Node::RawText(expr) | Node::RawHtml(expr) => div()
+            .child(SharedString::from(value_to_str(&eval_expr_value(
+                expr, ctx,
+            ))))
+            .into_any_element(),
+        Node::Include(inc) => render_include(inc, ctx, scope, bindings),
+        Node::Embed(_) => {
+            render_error("GPUI does not execute web embeds; register a native element instead")
         }
-        Node::If(block) => render_if(block, ctx),
-        Node::For(block) => render_for(block, ctx),
-        Node::Match(block) => render_match(block, ctx),
-        Node::LetDecl(_) => div().into_any_element(), // handled in render_nodes_with_ctx
-        Node::RawText(expr) => {
-            let val = eval_expr_value(expr, ctx);
-            div()
-                .child(SharedString::from(value_to_str(&val)))
-                .into_any_element()
-        }
-        Node::RawHtml(expr) => {
-            let val = eval_expr_value(expr, ctx);
-            div()
-                .child(SharedString::from(value_to_str(&val)))
-                .into_any_element()
-        }
-        Node::Include(inc) => render_include(inc, ctx),
-        Node::Embed(_) => div().into_any_element(),
     }
 }
 
-fn render_element(el: &Element, ctx: &TemplateContext) -> AnyElement {
-    // Intercept the `slot` pseudo-tag: render slot content from parent, or fallback children.
+fn render_element(
+    el: &Element,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
     if el.tag == "slot" {
         return if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
-            render_nodes(slot_nodes, slot_ctx)
+            render_nodes_with_ctx(slot_nodes, (**slot_ctx).clone(), scope, bindings)
         } else {
-            render_nodes(&el.children, ctx)
+            render_nodes_with_ctx(&el.children, ctx.clone(), scope, bindings)
         };
     }
-
-    // Web-only rotating text: GPUI shows the first phrase as a static preview.
-    if el.tag == "slot-rotate" {
+    if bindings.has_element(&el.tag) {
+        return bindings.render_element(ElementRequest {
+            id: SharedString::from(scope.to_owned()),
+            element: el.clone(),
+            context: ctx.clone(),
+            children: render_children(&el.children, ctx.clone(), scope, bindings),
+        });
+    }
+    if el.tag == "input" {
+        return crate::text_input::runtime_input(el, ctx, scope, bindings)
+            .unwrap_or_else(render_error);
+    }
+    if el.tag == "textarea" {
+        return render_error(
+            "GPUI textarea/multiline editing is not implemented; register a native editor",
+        );
+    }
+    if !matches!(
+        el.tag.as_str(),
+        "div"
+            | "section"
+            | "article"
+            | "main"
+            | "header"
+            | "footer"
+            | "nav"
+            | "aside"
+            | "figure"
+            | "ul"
+            | "ol"
+            | "li"
+            | "span"
+            | "p"
+            | "label"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "strong"
+            | "em"
+            | "small"
+            | "button"
+            | "img"
+            | "image"
+            | "svg"
+            | "slot-rotate"
+    ) {
+        return render_error(format!(
+            "Unregistered GPUI element `{}`; register a native factory",
+            el.tag
+        ));
+    }
+    let classes = el.classes.iter().map(String::as_str).chain(
+        el.conditional_classes
+            .iter()
+            .filter(|cc| eval_condition_bool(ctx, &cc.condition))
+            .map(|cc| cc.class.as_str()),
+    );
+    let mut d = apply_element_classes(
+        base_tag_element(&el.tag).id(SharedString::from(scope.to_owned())),
+        classes,
+        Some(ctx),
+    );
+    if el.tag == "button" {
+        d = d.role(gpui::accesskit::Role::Button);
+    }
+    if matches!(el.tag.as_str(), "img" | "image" | "svg") {
+        d = d.role(gpui::accesskit::Role::Image);
+    }
+    d = match crate::runtime_element::apply_bindings(d, el, ctx) {
+        Ok(d) => d,
+        Err(e) => return render_error(e),
+    };
+    d = match crate::runtime_element::apply_events(d, el, ctx, scope, bindings) {
+        Ok(d) => d,
+        Err(e) => return render_error(e),
+    };
+    if el.tag == "img" || el.tag == "image" {
+        let source = el
+            .bindings
+            .iter()
+            .find(|b| b.prop == "src" || b.prop == "path");
+        let Some(source) = source else {
+            return render_error(
+                "GPUI image requires src={...} (asset/URL) or path={...} (filesystem)",
+            );
+        };
+        let value = value_to_str(&eval_expr_value(&source.value, ctx));
+        let source: gpui::ImageSource = if source.prop == "path" {
+            std::path::PathBuf::from(value).into()
+        } else {
+            SharedString::from(value).into()
+        };
+        // Img does not expose its own a11y node in the pinned CE release.
+        let mut image = gpui::img(source).id("image");
+        transfer_image_size(&mut d, &mut image);
+        d = d.child(image);
+    } else if el.tag == "svg" {
+        let Some(source) = el.bindings.iter().find(|b| b.prop == "src") else {
+            return render_error("GPUI svg requires src={...}");
+        };
+        let path = SharedString::from(value_to_str(&eval_expr_value(&source.value, ctx)));
+        let mut image = gpui::svg().path(path).id("image");
+        transfer_image_size(&mut d, &mut image);
+        if image.style().size.width.is_none() {
+            image = image.w(gpui::rems(1.));
+        }
+        if image.style().size.height.is_none() {
+            image = image.h(gpui::rems(1.));
+        }
+        d = d.child(image);
+    } else if el.tag == "slot-rotate" {
         let label = slot_rotate_child_phrases(&el.children)
             .ok()
             .and_then(|p| p.into_iter().next())
             .unwrap_or_default();
-        let mut d = div();
-        for class in &el.classes {
-            d = apply_class_with_ctx(d, class, Some(ctx));
-        }
-        for cc in &el.conditional_classes {
-            if eval_condition_bool(ctx, &cc.condition) {
-                d = apply_class_with_ctx(d, &cc.class, Some(ctx));
-            }
-        }
-        return d.child(SharedString::from(label)).into_any_element();
+        d = d.child(SharedString::from(label));
+    } else {
+        d = d.children(render_children(&el.children, ctx.clone(), scope, bindings));
     }
-
-    let mut d = base_tag_element(&el.tag);
-
-    // Apply static and dynamic classes with context for expression resolution
-    for class in &el.classes {
-        d = apply_class_with_ctx(d, class, Some(ctx));
-    }
-
-    // Apply conditional classes
-    for cc in &el.conditional_classes {
-        if eval_condition_bool(ctx, &cc.condition) {
-            d = apply_class_with_ctx(d, &cc.class, Some(ctx));
-        }
-    }
-
-    // Render children
-    for child in &el.children {
-        let child_el = render_node(child, ctx);
-        d = d.child(child_el);
-    }
-
-    // If animations are present, wrap with GPUI animation
     if !el.animations.is_empty() {
-        return render_with_animations(d, &el.animations, &el.tag);
+        if let Some(spec) = el.animations.iter().find(|a| {
+            !matches!(
+                a.property.as_str(),
+                "opacity"
+                    | "fade"
+                    | "fade-in"
+                    | "fade-out"
+                    | "pulse"
+                    | "slide-down"
+                    | "slide-up"
+                    | "slide-right"
+                    | "slide-left"
+                    | "grow"
+            )
+        }) {
+            return render_error(format!(
+                "Unsupported GPUI animation `{}`; use a native element",
+                spec.property
+            ));
+        }
+        return render_with_animations(d, &el.animations, scope);
     }
-
     d.into_any_element()
 }
 
+// Sizing utilities apply to the actual image; the semantic wrapper follows its
+// child. Raster auto dimensions retain CE intrinsic measurement. SVG defaults
+// to one rem because the pinned Svg has no intrinsic-size measurement.
+fn transfer_image_size(wrapper: &mut impl Styled, image: &mut impl Styled) {
+    image.style().size = std::mem::take(&mut wrapper.style().size);
+    image.style().min_size = std::mem::take(&mut wrapper.style().min_size);
+    image.style().max_size = std::mem::take(&mut wrapper.style().max_size);
+}
+
 /// Wrap a div with GPUI animations based on the parsed animation specs.
-fn render_with_animations(d: gpui::Div, animations: &[AnimationSpec], tag: &str) -> AnyElement {
-    // Generate a stable element ID from the tag + animation properties
-    let props: Vec<&str> = animations.iter().map(|a| a.property.as_str()).collect();
-    let id_str = format!("crepus-anim-{}-{}", tag, props.join("-"));
+fn render_with_animations(
+    d: gpui::Stateful<gpui::Div>,
+    animations: &[AnimationSpec],
+    scope: &str,
+) -> AnyElement {
+    let id_str = scoped_id(scope, "animation");
     let id = ElementId::Name(SharedString::from(id_str));
 
     if animations.len() == 1 {
@@ -207,16 +391,11 @@ fn apply_easing(anim: Animation, easing: &str) -> Animation {
 }
 
 /// Apply an animation delta (0.0 - 1.0) to a specific property on a div.
-fn apply_animation_property(d: gpui::Div, property: &str, delta: f32) -> gpui::Div {
+fn apply_animation_property<E: Styled>(d: E, property: &str, delta: f32) -> E {
     match property {
         "opacity" | "fade" | "fade-in" => d.opacity(delta),
         "fade-out" => d.opacity(1.0 - delta),
         "pulse" => d.opacity(0.4 + delta * 0.6),
-        "scale" => {
-            // Scale from 0.8 to 1.0
-            let scale = 0.8 + delta * 0.2;
-            d.opacity(scale) // GPUI doesn't have transform: scale; use opacity as approximation
-        }
         "slide-down" => {
             // Slide from -10px to 0px
             let offset = gpui::px(-10.0 * (1.0 - delta));
@@ -264,72 +443,138 @@ fn render_text(parts: &[TextPart], ctx: &TemplateContext) -> String {
     result
 }
 
-fn render_if(block: &IfBlock, ctx: &TemplateContext) -> AnyElement {
+fn render_if(
+    block: &IfBlock,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
     if eval_condition_bool(ctx, &block.condition) {
-        render_nodes(&block.then_children, ctx)
+        render_nodes_with_ctx(
+            &block.then_children,
+            ctx.clone(),
+            &scoped_id(scope, "then"),
+            bindings,
+        )
     } else if let Some(else_children) = &block.else_children {
-        render_nodes(else_children, ctx)
+        render_nodes_with_ctx(
+            else_children,
+            ctx.clone(),
+            &scoped_id(scope, "else"),
+            bindings,
+        )
     } else {
         div().into_any_element()
     }
 }
 
-fn render_for(block: &ForBlock, ctx: &TemplateContext) -> AnyElement {
-    let items = ctx.get_list_ref(&block.iterator);
+fn render_for(
+    block: &ForBlock,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
+    let items = match crepuscularity_core::eval::eval_expr(&block.iterator, ctx) {
+        Ok(TemplateValue::List(items)) => items,
+        Ok(_) => return render_error("GPUI loop iterator must evaluate to a list"),
+        Err(e) => return render_error(e.to_string()),
+    };
 
     let mut d = div();
     let mut child_ctx = ctx.clone();
     let pattern = block.pattern.trim();
     let has_pattern = !pattern.is_empty();
-    for item_ctx in items {
-        let item_str = if has_pattern {
-            item_ctx.get_str("value")
-        } else {
-            String::new()
-        };
+    let mut keys = std::collections::HashSet::new();
+    for (index, item_ctx) in items.iter().enumerate() {
         child_ctx.vars.clone_from(&ctx.vars);
-        for (k, v) in &item_ctx.vars {
-            child_ctx.vars.insert(k.clone(), v.clone());
+        child_ctx.vars.extend(item_ctx.vars.clone());
+        if has_pattern {
+            let value = if item_ctx.vars.len() == 1 {
+                item_ctx
+                    .vars
+                    .get("value")
+                    .cloned()
+                    .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()))
+            } else {
+                TemplateValue::Scope(item_ctx.clone())
+            };
+            child_ctx.vars.insert(pattern.to_owned(), value);
         }
-        if has_pattern && !item_str.is_empty() {
-            child_ctx
-                .vars
-                .insert(pattern.to_string(), TemplateValue::Str(item_str));
+        let key = if let [Node::Element(root)] = block.body.as_slice() {
+            root.bindings
+                .iter()
+                .find(|b| b.prop == "key")
+                .map(|b| value_to_str(&eval_expr_value(&b.value, &child_ctx)))
+        } else {
+            None
         }
-
-        let child = render_nodes(&block.body, &child_ctx);
+        .unwrap_or_else(|| index.to_string());
+        if !keys.insert(key.clone()) {
+            return render_error(format!("Duplicate GPUI loop key `{key}`"));
+        }
+        let child = render_nodes_with_ctx(
+            &block.body,
+            child_ctx.clone(),
+            &scoped_id(scope, &format!("item:{key}")),
+            bindings,
+        );
         d = d.child(child);
     }
     d.into_any_element()
 }
 
-fn render_match(block: &MatchBlock, ctx: &TemplateContext) -> AnyElement {
+fn render_match(
+    block: &MatchBlock,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
     let val = eval_expr_value(&block.expr, ctx);
     let value = value_to_str(&val);
 
-    for arm in &block.arms {
+    for (index, arm) in block.arms.iter().enumerate() {
         let pattern = arm.pattern.trim();
         if pattern == "_" {
-            return render_nodes(&arm.body, ctx);
+            return render_nodes_with_ctx(
+                &arm.body,
+                ctx.clone(),
+                &scoped_id(scope, &format!("arm:{index}")),
+                bindings,
+            );
         }
         if pattern.starts_with('"') && pattern.ends_with('"') {
             let lit = &pattern[1..pattern.len() - 1];
             if value == lit {
-                return render_nodes(&arm.body, ctx);
+                return render_nodes_with_ctx(
+                    &arm.body,
+                    ctx.clone(),
+                    &scoped_id(scope, &format!("arm:{index}")),
+                    bindings,
+                );
             }
         }
         if value == pattern {
-            return render_nodes(&arm.body, ctx);
+            return render_nodes_with_ctx(
+                &arm.body,
+                ctx.clone(),
+                &scoped_id(scope, &format!("arm:{index}")),
+                bindings,
+            );
         }
     }
 
     div().into_any_element()
 }
 
-fn render_include(inc: &IncludeNode, ctx: &TemplateContext) -> AnyElement {
+fn render_include(
+    inc: &IncludeNode,
+    ctx: &TemplateContext,
+    scope: &str,
+    bindings: &RuntimeBindings,
+) -> AnyElement {
     // Multi-component syntax: "path/file.crepus#ComponentName"
     if let Some((file_part, comp_name)) = inc.path.split_once('#') {
-        return render_named_component(inc, ctx, file_part, comp_name);
+        return render_named_component(inc, ctx, file_part, comp_name, scope, bindings);
     }
 
     // Single-component file: resolve path relative to the current file's directory.
@@ -366,7 +611,7 @@ fn render_include(inc: &IncludeNode, ctx: &TemplateContext) -> AnyElement {
         child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
     }
 
-    render_nodes(nodes.as_ref(), &child_ctx)
+    render_nodes_with_ctx(nodes.as_ref(), child_ctx, scope, bindings)
 }
 
 /// Render a named component from a multi-component file (`path#Name` syntax).
@@ -375,6 +620,8 @@ fn render_named_component(
     ctx: &TemplateContext,
     file_part: &str,
     comp_name: &str,
+    scope: &str,
+    bindings: &RuntimeBindings,
 ) -> AnyElement {
     let file_path = match resolve_include_path(ctx.base_dir.as_deref(), file_part) {
         Ok(path) => path,
@@ -445,5 +692,45 @@ fn render_named_component(
         child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
     }
 
-    render_nodes(&comp.nodes, &child_ctx)
+    render_nodes_with_ctx(&comp.nodes, child_ctx, scope, bindings)
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_ids_are_scoped_and_stable_when_siblings_reorder() {
+        let nodes = crepuscularity_core::parser::parse_template("button #save").unwrap();
+        let ctx = TemplateContext::new();
+        let first = node_id("instance:a", 0, &nodes[0], &ctx);
+        assert_eq!(first, node_id("instance:a", 9, &nodes[0], &ctx));
+        assert_ne!(first, node_id("instance:b", 0, &nodes[0], &ctx));
+        assert_ne!(
+            scoped_id("root", "a/b"),
+            scoped_id(&scoped_id("root", "a"), "b")
+        );
+    }
+}
+
+#[cfg(test)]
+mod image_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn image_dimensions_move_to_the_real_image_without_forcing_intrinsic_axes() {
+        let mut wrapper = gpui::div()
+            .id("wrapper")
+            .w(gpui::px(24.))
+            .max_h(gpui::px(48.));
+        let expected_width = wrapper.style().size.width.clone();
+        let expected_max_height = wrapper.style().max_size.height.clone();
+        let mut image = gpui::img("embedded.png").id("image");
+        transfer_image_size(&mut wrapper, &mut image);
+        assert_eq!(image.style().size.width, expected_width);
+        assert_eq!(image.style().max_size.height, expected_max_height);
+        assert!(image.style().size.height.is_none());
+        assert!(wrapper.style().size.width.is_none());
+        assert!(gpui::Element::id(&image).is_some());
+    }
 }

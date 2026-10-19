@@ -32,7 +32,7 @@ use gpui::{
 };
 use notify::Watcher;
 
-use crate::renderer::render_nodes;
+use crate::{renderer::render_nodes_with_bindings, RuntimeBindings};
 use crepuscularity_core::ast::Node;
 use crepuscularity_core::context::TemplateContext;
 
@@ -41,6 +41,7 @@ pub struct HotReloadState {
     pub path: PathBuf,
     pub template: Result<Arc<Vec<Node>>, String>,
     pub context: TemplateContext,
+    pub bindings: RuntimeBindings,
     pub changed: Arc<Mutex<bool>>,
 
     /// Owning handle to the `notify` watcher. Dropped with `Self`, which
@@ -118,6 +119,7 @@ impl HotReloadState {
             path,
             template,
             context,
+            bindings: RuntimeBindings::default(),
             changed,
             _watcher: watcher,
             cancel,
@@ -156,7 +158,12 @@ impl Render for HotReloadView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         match &state.template {
-            Ok(nodes) => render_nodes(nodes.as_ref(), &state.context),
+            Ok(nodes) => render_nodes_with_bindings(
+                &format!("hot-template:{:?}", self.state.entity_id()),
+                nodes.as_ref(),
+                &state.context,
+                &state.bindings,
+            ),
             Err(err) => {
                 let msg = format!("Parse error:\n\n{}", err);
                 div()
