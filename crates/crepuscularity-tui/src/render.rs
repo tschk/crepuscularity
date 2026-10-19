@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
-use crepuscularity_core::eval::eval_expr;
-use crepuscularity_core::include_paths::resolve_include_path;
+use crepuscularity_core::eval::{eval_expr, eval_literal};
+use crepuscularity_core::include_paths::{include_frontend_path, resolve_include_path};
 use crepuscularity_core::parser::{parse_component_file, parse_template, ComponentDef};
 use crepuscularity_core::preprocess::slot_rotate_child_phrases;
 use crepuscularity_core::virtual_files::lookup_virtual_file;
@@ -40,10 +40,6 @@ fn eval_value(expr: &str, ctx: &TemplateContext) -> TemplateValue {
 
 fn eval_condition(ctx: &TemplateContext, expr: &str) -> bool {
     ctx.eval_condition(expr).unwrap_or(false)
-}
-
-fn interpolate_str(ctx: &TemplateContext, s: &str) -> String {
-    ctx.interpolate(s).unwrap_or_else(|_| s.to_string())
 }
 
 fn read_file(ctx: &TemplateContext, path: &std::path::Path) -> Result<String, CrepusError> {
@@ -522,6 +518,17 @@ pub fn render_component_to_buffer(
 }
 // ─── Phase 1: Build ───────────────────────────────────────────────────────────
 
+fn apply_declaration(
+    decl: &LetDecl,
+    ctx: &mut std::borrow::Cow<'_, TemplateContext>,
+) -> Result<(), CrepusError> {
+    if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
+        let value = eval_expr(&decl.expr, ctx)?;
+        ctx.to_mut().vars.insert(decl.name.clone(), value);
+    }
+    Ok(())
+}
+
 /// Convert a slice of nodes into a list of `WidgetChild`s.
 ///
 /// `parent_dir` controls which `SizeHint` dimension (width vs. height) is used
@@ -532,6 +539,7 @@ fn build_children(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
     // Borrowed until a `let` declaration actually mutates the scope: cloning a
     // context whose vars hold the loop's item list is O(list length), so an
@@ -542,55 +550,88 @@ fn build_children(
     let mut text_buf: Vec<Line<'static>> = Vec::new();
 
     for node in nodes {
+        if renderer.build_error.is_some() {
+            break;
+        }
         match node {
             // Variable declarations mutate context for subsequent siblings.
             Node::LetDecl(decl) => {
-                let val = eval_value(&decl.expr, &ctx);
-                if decl.is_default {
-                    if !ctx.vars.contains_key(&decl.name) {
-                        ctx.to_mut().vars.insert(decl.name.clone(), val);
-                    }
-                } else {
-                    let ctx = ctx.to_mut();
-                    if let Some(v) = ctx.vars.get_mut(&decl.name) {
-                        *v = val;
-                    } else {
-                        ctx.vars.insert(decl.name.clone(), val);
-                    }
+                if let Err(error) = apply_declaration(decl, &mut ctx) {
+                    renderer.build_error.get_or_insert(error);
                 }
             }
-            Node::Text(parts) => {
-                text_buf.push(build_line(parts, &ctx));
-            }
-            Node::RawText(expr) => {
-                text_buf.push(Line::raw(value_to_str(&eval_value(expr, &ctx))));
-            }
-            Node::RawHtml(expr) => {
-                text_buf.push(Line::raw(value_to_str(&eval_value(expr, &ctx))));
-            }
+            Node::Text(parts) => match build_lines(parts, &ctx) {
+                Ok(lines) => text_buf.extend(lines),
+                Err(error) => {
+                    renderer.build_error.get_or_insert(error);
+                }
+            },
+            Node::RawText(expr) | Node::RawHtml(expr) => match eval_expr(expr, &ctx) {
+                Ok(value) => text_buf.extend(Text::raw(value_to_str(&value)).lines),
+                Err(error) => {
+                    renderer.build_error.get_or_insert(error);
+                }
+            },
             // Structural nodes: flush buffered text first, then emit.
             Node::Element(el) => {
+                let classes = match active_classes(el, &ctx) {
+                    Ok(classes) => classes,
+                    Err(error) => {
+                        renderer.build_error.get_or_insert(error);
+                        break;
+                    }
+                };
+                match element_is_hidden(el, &ctx, &classes) {
+                    // Omit the entire subtree before layout so hidden children add no gap.
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => {
+                        renderer.build_error.get_or_insert(error);
+                        break;
+                    }
+                }
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.push(build_element(el, &ctx, parent_dir, inherited, renderer));
+                let invisible = classes.iter().any(|class| class == "invisible");
+                let mut child =
+                    build_element(el, &ctx, parent_dir, inherited, renderer, classes, slot);
+                if invisible {
+                    match &mut child.node {
+                        WidgetNode::Content { block, .. } | WidgetNode::Container { block, .. } => {
+                            block.get_or_insert_with(BlockSpec::default).invisible = true;
+                        }
+                        WidgetNode::Empty => {}
+                    }
+                }
+                out.push(child);
             }
             Node::If(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_if(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_if(block, &ctx, parent_dir, inherited, renderer, slot));
             }
             Node::For(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_for(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_for(
+                    block, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
             Node::Match(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_match(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_match(
+                    block, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
             Node::Include(inc) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_include(inc, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_include(
+                    inc, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
-            Node::Embed(_) => {
+            Node::Embed(embed) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
+                out.extend(error_children(&format!(
+                    "embed '{}' is not supported by the TUI target; guard with is_web",
+                    embed.src
+                )));
             }
         }
     }
@@ -610,7 +651,7 @@ fn flush_text(
         return;
     }
     let lines = std::mem::take(buf);
-    let height = lines.len() as u16;
+    let height = lines.len().min(u16::MAX as usize) as u16;
     let constraint = match parent_dir {
         // In a vertical stack, text takes exactly as many rows as it has lines.
         Direction::Vertical => Constraint::Length(height),
@@ -621,7 +662,10 @@ fn flush_text(
         node: WidgetNode::Content {
             lines,
             style: inherited,
-            block: None,
+            block: Some(BlockSpec {
+                auto_height: true,
+                ..BlockSpec::default()
+            }),
             alignment: Alignment::Left,
         },
         constraint,
@@ -1728,6 +1772,22 @@ mod slot_rotate_tests {
             rendered(current_slot_rotate_line(&phrases, interval, 3000)),
             "one"
         );
+    }
+
+    #[test]
+    fn current_slot_rotate_line_preserves_large_tick_counts() {
+        let phrases = lines(&["one", "two", "three"]);
+        for (interval, now, expected) in [
+            (1, u32::MAX as u64, "one"),
+            (1, u32::MAX as u64 + 1, "two"),
+            (1000, (u32::MAX as u64 + 2) * 1000, "three"),
+            (1, u64::MAX, "one"),
+        ] {
+            assert_eq!(
+                rendered(current_slot_rotate_line(&phrases, interval, now)),
+                expected
+            );
+        }
     }
 
     #[test]
