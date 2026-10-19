@@ -43,7 +43,10 @@ fn clipped_scroll_output_matches_full_buffer_rendering() {
         }
     }
     // Captured with the former full-height buffer to verify clipping compatibility.
-    assert_eq!(snapshot, include_str!("fixtures/scroll_clipping.snap"));
+    assert_eq!(
+        snapshot,
+        include_str!("fixtures/scroll_clipping.snap").replace("\r\n", "\n")
+    );
 }
 
 #[test]
