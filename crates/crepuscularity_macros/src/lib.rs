@@ -1654,12 +1654,16 @@ fn generate_element(element: &Element) -> Result<TokenStream2, String> {
 }
 
 fn generate_conditional_class(cc: &ConditionalClass) -> Result<TokenStream2, String> {
+    let builder = syn::Ident::new("__el", Span::mixed_site());
     let condition: syn::Expr = syn::parse_str(&cc.condition)
         .map_err(|e| format!("Invalid condition in class:{}: {e}", cc.class))?;
-    let style = map_class_to_style(&cc.class)
+    let Some(class) = gpui_class(&cc.class) else {
+        return Ok(quote! {});
+    };
+    let style = map_class_to_style(class)
         .ok_or_else(|| format!("Unknown class `{}` in conditional class", cc.class))?;
     Ok(quote! {
-        .when(#condition, |__el| __el #style)
+        .when(#condition, |#builder| #builder #style)
     })
 }
 
