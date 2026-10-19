@@ -171,15 +171,22 @@
       }
     }
 
+    const storageSets = {};
+    const promises = [];
     for (const s of (program.statements ?? [])) {
       if (s.type === "storage_set") {
-        await api.storage[s.area].set({ [s.key]: resolveExpr(s.value) }).catch(() => {});
+        storageSets[s.area] ??= {};
+        storageSets[s.area][s.key] = resolveExpr(s.value);
       } else if (s.type === "runtime_send") {
-        await api.runtime.sendMessage(resolveObj(s.payload)).catch(() => {});
+        promises.push(api.runtime.sendMessage(resolveObj(s.payload)).catch(() => {}));
       } else if (s.type === "console_log") {
         console.log(...(s.args ?? []).map(resolveExpr));
       }
     }
+    for (const [area, keys] of Object.entries(storageSets)) {
+      promises.push(api.storage[area].set(keys).catch(() => {}));
+    }
+    await Promise.all(promises);
   }
 
   function codeBlockReplaceTarget(pre) {
