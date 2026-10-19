@@ -1,7 +1,15 @@
 
+    @Synchronized
     private fun imagePickerValue(method: String): JSONObject {
         if (method != "pick") error("unsupported imagePicker method: $method")
+        val open = openMedia ?: error("media picker unavailable")
+        check(pendingPickerAction == null) { "picker already active" }
         pendingPickerAction = "imagePicker.pick"
-        openMedia?.invoke() ?: emit(errorJson("imagePicker.pick", "media picker unavailable"))
+        try {
+            open()
+        } catch (error: Exception) {
+            pendingPickerAction = null
+            throw error
+        }
         return JSONObject().put("opening", true)
     }

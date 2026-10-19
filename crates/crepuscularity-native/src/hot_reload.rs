@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crepuscularity_core::ast::{Element, MatchArm, Node, TextPart};
 use crepuscularity_core::context::TemplateContext;
-use crepuscularity_core::parse_template;
+use crepuscularity_core::parse_template_with_path;
 
 use crate::ir::ViewIr;
 use crate::mutations::{diff_ir, IrMutation};
-use crate::render::render_template_to_ir;
+use crate::render::render_template_to_ir_with_path;
 
 /// Envelope suitable for transport (SSE, WebSocket, IPC).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,10 +74,20 @@ pub fn plan_hot_reload(
     new_template: &str,
     ctx: &TemplateContext,
 ) -> HotReloadMessage {
-    let old_nodes = match parse_template(old_template) {
+    plan_hot_reload_with_path(old_template, new_template, ctx, None)
+}
+
+/// Plan a reload using the selected file's parser frontend.
+pub fn plan_hot_reload_with_path(
+    old_template: &str,
+    new_template: &str,
+    ctx: &TemplateContext,
+    path: Option<&std::path::Path>,
+) -> HotReloadMessage {
+    let old_nodes = match parse_template_with_path(old_template, path) {
         Ok(nodes) => nodes,
         Err(_) => {
-            return match render_template_to_ir(new_template, ctx) {
+            return match render_template_to_ir_with_path(new_template, ctx, path) {
                 Ok(ir) => HotReloadMessage::FullReload {
                     ir,
                     reason: "previous template parse failed".to_string(),
@@ -89,7 +99,7 @@ pub fn plan_hot_reload(
         }
     };
 
-    let new_nodes = match parse_template(new_template) {
+    let new_nodes = match parse_template_with_path(new_template, path) {
         Ok(nodes) => nodes,
         Err(e) => {
             return HotReloadMessage::Error {
@@ -98,7 +108,7 @@ pub fn plan_hot_reload(
         }
     };
 
-    let new_ir = match render_template_to_ir(new_template, ctx) {
+    let new_ir = match render_template_to_ir_with_path(new_template, ctx, path) {
         Ok(ir) => ir,
         Err(e) => {
             return HotReloadMessage::Error {
@@ -114,7 +124,7 @@ pub fn plan_hot_reload(
         };
     }
 
-    let old_ir = match render_template_to_ir(old_template, ctx) {
+    let old_ir = match render_template_to_ir_with_path(old_template, ctx, path) {
         Ok(ir) => ir,
         Err(_) => {
             return HotReloadMessage::FullReload {
@@ -213,7 +223,12 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
         .event_handlers
         .iter()
         .zip(&new.event_handlers)
-        .any(|(a, b)| a.event != b.event || a.modifiers != b.modifiers || a.handler != b.handler)
+        .any(|(a, b)| {
+            a.event != b.event
+                || a.modifiers != b.modifiers
+                || a.handler != b.handler
+                || a.model_before_listener != b.model_before_listener
+        })
     {
         return false;
     }
@@ -246,4 +261,50 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
     }
 
     ast_shape_compatible(&old.children, &new.children)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn svelte_reload_uses_the_selected_frontend() {
+        let path = Some(std::path::Path::new("View.svelte"));
+        let mut context = TemplateContext::new();
+        context.set("show", true);
+        let old = "{#if show}<p>Before</p>{/if}";
+        let new = "{#if show}<p>After</p>{/if}";
+        let HotReloadMessage::Patch { mutations } =
+            plan_hot_reload_with_path(old, new, &context, path)
+        else {
+            panic!("literal change should produce a patch")
+        };
+        let mut applied = render_template_to_ir_with_path(old, &context, path).unwrap();
+        crate::apply_mutations(&mut applied, &mutations).unwrap();
+        assert_eq!(
+            applied,
+            render_template_to_ir_with_path(new, &context, path).unwrap()
+        );
+        assert!(matches!(
+            plan_hot_reload_with_path(old, "{#if show}", &context, path),
+            HotReloadMessage::Error { .. }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod model_order_tests {
+    use super::*;
+    #[test]
+    fn changing_native_model_listener_order_requires_replacement() {
+        let old = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child v-model="value" @update:modelValue="observe"/></template>"#,
+        )
+        .unwrap();
+        let new = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child @update:modelValue="observe" v-model="value"/></template>"#,
+        )
+        .unwrap();
+        assert!(!ast_shape_compatible(&old, &new));
+    }
 }

@@ -1,5 +1,5 @@
 mod compose;
-mod shared;
+pub(crate) mod shared;
 mod swiftui;
 
 use crate::ir::ViewIr;

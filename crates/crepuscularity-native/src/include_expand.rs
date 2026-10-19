@@ -1,18 +1,33 @@
 //! Expand `include` directives into parsed child nodes + context (no cycles with IR lowering).
 
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crepuscularity_core::ast::{IncludeNode, Node};
 use crepuscularity_core::context::TemplateContext;
 use crepuscularity_core::eval::eval_expr;
-use crepuscularity_core::include_paths::resolve_include_path;
+use crepuscularity_core::include_paths::{include_frontend_path, resolve_include_path};
 use crepuscularity_core::parser::{parse_component_file, parse_template_with_path};
 use crepuscularity_core::virtual_files::lookup_virtual_file;
 use crepuscularity_core::CrepusError;
 
 /// Maximum include nesting depth to prevent infinite recursion / stack overflow.
 const MAX_INCLUDE_DEPTH: usize = 64;
+
+thread_local! {
+    static INCLUDE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+pub(crate) struct IncludeGuard(PhantomData<Rc<()>>);
+
+impl Drop for IncludeGuard {
+    fn drop(&mut self) {
+        INCLUDE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
 
 pub(crate) fn read_file(ctx: &TemplateContext, path: &Path) -> Result<String, CrepusError> {
     if let Some(content) = lookup_virtual_file(ctx, path) {
@@ -29,18 +44,21 @@ pub(crate) fn read_file(ctx: &TemplateContext, path: &Path) -> Result<String, Cr
     }
 }
 
-/// Parsed nodes to render and the child context to use (base_dir, virtual_files, vars, slot).
+/// Parsed nodes, child context, and a guard to keep alive while rendering them.
 pub(crate) fn expand_include(
     inc: &IncludeNode,
     ctx: &TemplateContext,
-) -> Result<(Vec<Node>, TemplateContext), CrepusError> {
-    expand_include_with_depth(inc, ctx, 0)
+) -> Result<(Vec<Node>, TemplateContext, IncludeGuard), CrepusError> {
+    let depth = INCLUDE_DEPTH.with(Cell::get);
+    let (nodes, child_ctx) = expand_include_with_depth(inc, ctx, depth)?;
+    INCLUDE_DEPTH.with(|current| current.set(depth + 1));
+    Ok((nodes, child_ctx, IncludeGuard(PhantomData)))
 }
 
 /// Depth-aware version of [`expand_include`]. Callers that recurse on the returned
-/// nodes should pass `depth + 1` so that circular includes are detected before
-/// stack overflow.
-pub(crate) fn expand_include_with_depth(
+/// nodes keep the guard from `expand_include` alive so depth includes nested
+/// elements and slot rendering, even when their template context changes.
+fn expand_include_with_depth(
     inc: &IncludeNode,
     ctx: &TemplateContext,
     depth: usize,
@@ -58,7 +76,8 @@ pub(crate) fn expand_include_with_depth(
 
     let file_path = resolve_include_path(ctx.base_dir.as_deref(), &inc.path)?;
     let content = read_file(ctx, &file_path)?;
-    let nodes = parse_template_with_path(&content, Some(&file_path))
+    let frontend_path = include_frontend_path(&file_path, &inc.path);
+    let nodes = parse_template_with_path(&content, Some(&frontend_path))
         .map_err(|e| CrepusError::render(format!("include parse error: {e}")))?;
 
     let mut child_ctx = TemplateContext::new();

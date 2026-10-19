@@ -1,28 +1,26 @@
 use crate::ir::{StackAxis, ViewIr, ViewNode, ViewStyle};
 
-use super::shared::{bool_literal, indent_str, SWIFT};
+use super::shared::{
+    bool_literal, finite_opt, indent_str, nonnegative_opt, text_line_limit,
+    vertical_divider_height, ScopeBinding, SWIFT,
+};
 
 pub(super) fn generate_swiftui(ir: &ViewIr, view_name: &str) -> String {
-    let body = swiftui_nodes(&ir.root, 2, None, None);
+    let body = swiftui_nodes(&ir.root, 2, &[]);
     let webview = "import WebKit\n#if canImport(UIKit)\npublic struct CrepusWebView: UIViewRepresentable {\n    public let source: String\n\n    public func makeUIView(context: Context) -> WKWebView {\n        WKWebView()\n    }\n\n    public func updateUIView(_ webView: WKWebView, context: Context) {\n        guard webView.url?.absoluteString != source, let url = URL(string: source) else { return }\n        webView.load(URLRequest(url: url))\n    }\n}\n#elseif canImport(AppKit)\npublic struct CrepusWebView: NSViewRepresentable {\n    public let source: String\n\n    public func makeNSView(context: Context) -> WKWebView {\n        WKWebView()\n    }\n\n    public func updateNSView(_ webView: WKWebView, context: Context) {\n        guard webView.url?.absoluteString != source, let url = URL(string: source) else { return }\n        webView.load(URLRequest(url: url))\n    }\n}\n#endif\n\n";
     format!(
-        "import Foundation\nimport SwiftUI\n{webview}#if canImport(UIKit)\nimport UIKit\n#endif\n#if canImport(AppKit)\nimport AppKit\n#endif\n\n@MainActor\npublic enum CrepusActions {{\n    public static let model = CrepusStateStore.shared\n    public static var dispatch: (String) -> String = {{ _ in \"{{}}\" }}\n    public static var resultSink: (String) -> Void = {{ _ in }}\n\n    public static func applyResult(_ json: String) {{\n        model.applyResult(json)\n    }}\n\n    public static func perform(_ action: String) {{\n        let dispatch = dispatch\n        let resultSink = resultSink\n        DispatchQueue.global(qos: .userInitiated).async {{\n            let result = dispatch(action)\n            DispatchQueue.main.async {{\n                resultSink(result)\n            }}\n        }}\n    }}\n\n    public static func performChange(_ action: String?, bind: String, value: Any) {{\n        resultSink(CrepusRustActions.dispatchChangeStored(action ?? \"\", bind: bind, value: value))\n    }}\n\n    public static func dismissKeyboard() {{\n#if canImport(UIKit)\n        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)\n#elseif canImport(AppKit)\n        NSApp.keyWindow?.makeFirstResponder(nil)\n#endif\n    }}\n}}\n\n@MainActor\npublic struct {view_name}: View {{\n    @ObservedObject private var model = CrepusActions.model\n\n    public init() {{}}\n\n    public var body: some View {{\n{body}\n        .contentShape(Rectangle())\n        .onTapGesture {{ CrepusActions.dismissKeyboard() }}\n    }}\n}}\n"
+        "import Foundation\nimport SwiftUI\n{webview}#if canImport(UIKit)\nimport UIKit\n#endif\n#if canImport(AppKit)\nimport AppKit\n#endif\n\n@MainActor\npublic enum CrepusActions {{\n    public static let model = CrepusStateStore.shared\n    public static var dispatch: (String) -> String = {{ _ in \"{{}}\" }}\n    public static var resultSink: (String) -> Void = {{ _ in }}\n\n    public static func applyResult(_ json: String) {{\n        model.applyResult(json)\n    }}\n\n    private static let actionQueue = DispatchQueue(label: \"dev.crepuscularity.native.actions\", qos: .userInitiated)\n\n    public static func perform(_ action: String) {{\n        let dispatch = dispatch\n        let resultSink = resultSink\n        actionQueue.async {{\n            let result = dispatch(action)\n            DispatchQueue.main.sync {{\n                resultSink(result)\n            }}\n        }}\n    }}\n\n    // Drafts keep controls responsive; the captured sink owns authoritative commits.\n    public static func performChange(_ action: String?, bind: String, value: Any) {{\n        let resultSink = resultSink\n        guard let valueJson = CrepusRustActions.encodeQueuedChangeValue(value),\n              let sequence = model.beginDraft(path: bind, valueJson: valueJson) else {{\n            resultSink(\"{{\\\"ok\\\":false,\\\"error\\\":\\\"json encode failure\\\"}}\")\n            return\n        }}\n        let action = action ?? \"\"\n        actionQueue.async {{\n            let result = CrepusRustActions.dispatchQueuedChange(action, bind: bind, valueJson: valueJson)\n            DispatchQueue.main.sync {{\n                defer {{ model.finishDraft(path: bind, sequence: sequence) }}\n                resultSink(result)\n            }}\n        }}\n    }}\n\n    public static func dismissKeyboard() {{\n#if canImport(UIKit)\n        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)\n#elseif canImport(AppKit)\n        NSApp.keyWindow?.makeFirstResponder(nil)\n#endif\n    }}\n}}\n\n@MainActor\npublic struct {view_name}: View {{\n    @ObservedObject private var model = CrepusActions.model\n\n    public init() {{}}\n\n    public var body: some View {{\n{body}\n        .contentShape(Rectangle())\n        .onTapGesture {{ CrepusActions.dismissKeyboard() }}\n    }}\n}}\n"
     )
 }
 
-fn swiftui_nodes(
-    nodes: &[ViewNode],
-    indent: usize,
-    scope_name: Option<&str>,
-    scope_var: Option<&str>,
-) -> String {
+fn swiftui_nodes(nodes: &[ViewNode], indent: usize, scopes: &[ScopeBinding]) -> String {
     if nodes.len() == 1 {
-        swiftui_node(&nodes[0], indent, scope_name, scope_var)
+        swiftui_node(&nodes[0], indent, scopes)
     } else {
         let pad = indent_str(indent);
         let inner = nodes
             .iter()
-            .map(|node| swiftui_node(node, indent + 1, scope_name, scope_var))
+            .map(|node| swiftui_node(node, indent + 1, scopes))
             .collect::<Vec<_>>()
             .join("\n");
         format!("{pad}Group {{\n{inner}\n{pad}}}")
@@ -34,40 +32,31 @@ fn swiftui_stack_children(
     justify_content: Option<&str>,
     children: &[ViewNode],
     indent: usize,
-    scope_name: Option<&str>,
-    scope_var: Option<&str>,
+    scopes: &[ScopeBinding],
 ) -> String {
-    let child_lines = swiftui_children(children, indent, scope_name, scope_var);
+    let child_lines = swiftui_children(children, indent, scopes);
     let spacer = format!("{}Spacer()", indent_str(indent));
     match justify_content {
         Some("end") => format!("{spacer}\n{child_lines}"),
         Some("between") if children.len() > 1 => children
             .iter()
-            .map(|child| swiftui_node(child, indent, scope_name, scope_var))
+            .map(|child| swiftui_node(child, indent, scopes))
             .collect::<Vec<_>>()
             .join(&format!("\n{spacer}\n")),
         _ => child_lines,
     }
 }
 
-fn swiftui_node(
-    node: &ViewNode,
-    indent: usize,
-    scope_name: Option<&str>,
-    scope_var: Option<&str>,
-) -> String {
+fn swiftui_node(node: &ViewNode, indent: usize, scopes: &[ScopeBinding]) -> String {
     let pad = indent_str(indent);
-    match node {
+    let mut out = match node {
         ViewNode::Text {
             content,
             bind,
             style,
             ..
         } => {
-            let text = bind
-                .as_deref()
-                .map(|bind| SWIFT.model_text(bind, scope_name, scope_var))
-                .unwrap_or_else(|| format!("\"{}\"", SWIFT.escape(content)));
+            let text = SWIFT.text_content(content, bind.as_deref(), scopes);
             let mut out = format!("{pad}Text({text})");
             swiftui_style(&mut out, style.as_ref(), true, indent);
             out
@@ -78,10 +67,10 @@ fn swiftui_node(
             else_children,
             ..
         } => {
-            let then_inner = swiftui_children(then_children, indent + 1, scope_name, scope_var);
-            let condition = SWIFT.model_bool(condition, scope_name, scope_var);
+            let then_inner = swiftui_children(then_children, indent + 1, scopes);
+            let condition = SWIFT.model_bool(condition, scopes);
             if let Some(else_children) = else_children {
-                let else_inner = swiftui_children(else_children, indent + 1, scope_name, scope_var);
+                let else_inner = swiftui_children(else_children, indent + 1, scopes);
                 format!(
                     "{pad}if {condition} {{\n{then_inner}\n{pad}}} else {{\n{else_inner}\n{pad}}}"
                 )
@@ -95,11 +84,18 @@ fn swiftui_node(
             item_body,
             ..
         } => {
-            let item_var = SWIFT.identifier(item_name);
-            let items = SWIFT.model_items(bind, scope_name, scope_var);
-            let inner = swiftui_children(item_body, indent + 1, Some(item_name), Some(&item_var));
+            let binding = SWIFT.loop_binding(item_name, scopes);
+            let item_var = &binding.variable;
+            let index_var =
+                SWIFT.identifier(&format!("{}__crepusIndex", item_var.trim_matches('`')));
+            let items = SWIFT.model_items(bind, scopes);
+            let path_var = SWIFT.binding_path_var(item_var);
+            let path = SWIFT.binding_path(bind, scopes);
+            let mut child_scopes = scopes.to_vec();
+            child_scopes.push(binding.clone());
+            let inner = swiftui_children(item_body, indent + 1, &child_scopes);
             format!(
-                "{pad}ForEach(Array({items}.enumerated()), id: \\.offset) {{ _, {item_var} in\n{inner}\n{pad}}}"
+                "{pad}ForEach(Array({items}.enumerated()), id: \\.offset) {{ {index_var}, {item_var} in\n{}let {path_var} = {path} + \".\" + String({index_var})\n{inner}\n{pad}}}", indent_str(indent + 1)
             )
         }
         ViewNode::Stack {
@@ -112,14 +108,13 @@ fn swiftui_node(
             ..
         } => {
             let align = swiftui_stack_alignment(*axis, align_items.as_deref());
-            let gap = spacing.unwrap_or(8.0);
+            let gap = finite_opt(*spacing).unwrap_or(8.0);
             let inner = swiftui_stack_children(
                 *axis,
                 justify_content.as_deref(),
                 children,
                 indent + 1,
-                scope_name,
-                scope_var,
+                scopes,
             );
             let mut out = if *axis == StackAxis::Row
                 && style.as_ref().and_then(|style| style.flex_wrap) == Some(true)
@@ -146,15 +141,16 @@ fn swiftui_node(
         }
         ViewNode::Button {
             label,
+            label_parts,
             on_click,
             style,
             ..
         } => {
             let action = swiftui_action(on_click.as_deref());
             let mut out = format!(
-                "{pad}Button(action: {{ {action} }}) {{\n{}Text(\"{}\")\n{pad}}}",
+                "{pad}Button(action: {{ {action} }}) {{\n{}Text({})\n{pad}}}",
                 indent_str(indent + 1),
-                SWIFT.escape(label)
+                SWIFT.label_text(label, label_parts, scopes)
             );
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
@@ -166,22 +162,8 @@ fn swiftui_node(
             on_change,
             style,
             ..
-        } => {
-            let binding = bind
-                .as_deref()
-                .map(|bind| {
-                    format!(
-                        "Binding(get: {{ {} }}, set: {{ newValue in {} }})",
-                        SWIFT.model_bool(bind, scope_name, scope_var),
-                        swiftui_change(on_change.as_deref(), bind, "newValue")
-                    )
-                })
-                .unwrap_or_else(|| format!(".constant({})", bool_literal(*checked)));
-            let mut out = format!("{pad}Toggle(\"{}\", isOn: {binding})", SWIFT.escape(label));
-            swiftui_style(&mut out, style.as_ref(), false, indent);
-            out
         }
-        ViewNode::Checkbox {
+        | ViewNode::Checkbox {
             label,
             bind,
             checked,
@@ -194,11 +176,21 @@ fn swiftui_node(
                 .map(|bind| {
                     format!(
                         "Binding(get: {{ {} }}, set: {{ newValue in {} }})",
-                        SWIFT.model_bool(bind, scope_name, scope_var),
-                        swiftui_change(on_change.as_deref(), bind, "newValue")
+                        swiftui_draft_getter("Bool", bind, scopes),
+                        swiftui_change(on_change.as_deref(), bind, "newValue", scopes)
                     )
                 })
-                .unwrap_or_else(|| format!(".constant({})", bool_literal(*checked)));
+                .unwrap_or_else(|| {
+                    if on_change.is_some() {
+                        format!(
+                            "Binding(get: {{ {} }}, set: {{ _ in {} }})",
+                            bool_literal(*checked),
+                            swiftui_action(on_change.as_deref())
+                        )
+                    } else {
+                        format!(".constant({})", bool_literal(*checked))
+                    }
+                });
             let mut out = format!("{pad}Toggle(\"{}\", isOn: {binding})", SWIFT.escape(label));
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
@@ -214,19 +206,28 @@ fn swiftui_node(
             style,
             ..
         } => {
-            let step_arg = step.map(|v| format!(", step: {v:.1}")).unwrap_or_default();
+            let (value, min, max, step) = super::shared::slider_values(*value, *min, *max, *step);
+            let step_arg = step.map(|v| format!(", step: {v:?}")).unwrap_or_default();
             let slider_value = bind
                 .as_deref()
                 .map(|bind| {
                     format!(
-                        "Binding(get: {{ {} }}, set: {{ newValue in {} }})",
-                        SWIFT.model_number(bind, scope_name, scope_var),
-                        swiftui_change(on_change.as_deref(), bind, "newValue")
+                        "Binding(get: {{ Swift.min(Swift.max({}, {min:?}), {max:?}) }}, set: {{ newValue in {} }})",
+                        swiftui_draft_getter("Number", bind, scopes),
+                        swiftui_change(on_change.as_deref(), bind, "newValue", scopes)
                     )
                 })
-                .unwrap_or_else(|| format!(".constant({value:.3})"));
-            let control =
-                format!("Slider(value: {slider_value}, in: {min:.3}...{max:.3}{step_arg})");
+                .unwrap_or_else(|| {
+                    if on_change.is_some() {
+                        format!(
+                            "Binding(get: {{ {value:?} }}, set: {{ _ in {} }})",
+                            swiftui_action(on_change.as_deref())
+                        )
+                    } else {
+                        format!(".constant({value:?})")
+                    }
+                });
+            let control = format!("Slider(value: {slider_value}, in: {min:?}...{max:?}{step_arg})");
             let mut out = if let Some(label) = label {
                 format!(
                     "{pad}VStack(alignment: .leading, spacing: 8.0) {{\n{}Text(\"{}\")\n{}{control}\n{pad}}}",
@@ -246,13 +247,14 @@ fn swiftui_node(
             max,
             style,
         } => {
+            let (value, max) = super::shared::progress_values(*value, *max);
             let mut out = if let Some(label) = label {
                 format!(
-                    "{pad}ProgressView(\"{}\", value: {value:.3}, total: {max:.3})",
+                    "{pad}ProgressView(\"{}\", value: {value:?}, total: {max:?})",
                     SWIFT.escape(label)
                 )
             } else {
-                format!("{pad}ProgressView(value: {value:.3}, total: {max:.3})")
+                format!("{pad}ProgressView(value: {value:?}, total: {max:?})")
             };
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
@@ -260,31 +262,42 @@ fn swiftui_node(
         ViewNode::Meter {
             label,
             value,
+            min,
             max,
             style,
-            ..
         } => {
-            let text = label
-                .as_deref()
-                .map(|label| format!("{label}: {value:.1}/{max:.1}"))
-                .unwrap_or_else(|| format!("{value:.1}/{max:.1}"));
-            let mut out = format!("{pad}Text(\"{}\")", SWIFT.escape(&text));
-            swiftui_style(&mut out, style.as_ref(), true, indent);
-            out
+            let progress = ViewNode::Progress {
+                label: label.clone(),
+                value: super::shared::meter_fraction(*value, *min, *max),
+                max: 1.0,
+                style: style.clone(),
+            };
+            swiftui_node(&progress, indent, scopes)
         }
         ViewNode::Badge { label, style, .. } => {
             let mut out = format!("{pad}Text(\"{}\")", SWIFT.escape(label));
             swiftui_style(&mut out, style.as_ref(), true, indent);
             out
         }
-        ViewNode::Divider { style, .. } => {
-            let mut out = format!("{pad}Divider()");
+        ViewNode::Divider { axis, style } => {
+            let mut out = match axis {
+                StackAxis::Row => {
+                    let height = vertical_divider_height(
+                        style.as_ref().and_then(|style| style.height),
+                        style.as_ref().and_then(|style| style.max_height),
+                    )
+                    .map(|height| format!("{height:?}"))
+                    .unwrap_or_else(|| "nil".into());
+                    format!("{pad}HStack(spacing: 0) {{ Divider() }}\n{pad}.frame(width: 1, height: {height})")
+                }
+                StackAxis::Column => format!("{pad}VStack(spacing: 0) {{ Divider() }}"),
+            };
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
         }
         ViewNode::Spacer { size, style } => {
-            let mut out = size
-                .map(|v| format!("{pad}Spacer(minLength: {v:.1})"))
+            let mut out = nonnegative_opt(*size)
+                .map(|v| format!("{pad}Spacer(minLength: {v:?})"))
                 .unwrap_or_else(|| format!("{pad}Spacer()"));
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
@@ -302,7 +315,7 @@ fn swiftui_node(
                     SWIFT.escape(label)
                 )
             } else {
-                swiftui_children(children, indent + 1, scope_name, scope_var)
+                swiftui_children(children, indent + 1, scopes)
             };
             let mut out =
                 format!("{pad}VStack(alignment: .leading, spacing: 8.0) {{\n{inner}\n{pad}}}");
@@ -325,10 +338,20 @@ fn swiftui_node(
             out
         }
         ViewNode::Image {
-            src, alt, style, ..
+            src,
+            src_bind,
+            alt,
+            style,
+            ..
         } => {
             let label = alt.as_deref().unwrap_or(src);
-            let mut out = format!("{pad}Text(\"{}\")", SWIFT.escape(label));
+            let value = if alt.is_none() {
+                src_bind.as_ref().map(|bind| SWIFT.model_text(bind, scopes))
+            } else {
+                None
+            }
+            .unwrap_or_else(|| format!("\"{}\"", SWIFT.escape(label)));
+            let mut out = format!("{pad}Text({value})");
             swiftui_style(&mut out, style.as_ref(), true, indent);
             out
         }
@@ -341,6 +364,7 @@ fn swiftui_node(
             axis,
             style,
             children,
+            ..
         } => {
             let scroll_axis = match axis {
                 StackAxis::Row => ".horizontal",
@@ -357,8 +381,7 @@ fn swiftui_node(
                     children: children.clone(),
                 },
                 indent + 1,
-                scope_name,
-                scope_var,
+                scopes,
             );
             let mut out = format!("{pad}ScrollView({scroll_axis}) {{\n{inner}\n{pad}}}");
             swiftui_style(&mut out, style.as_ref(), false, indent);
@@ -379,11 +402,11 @@ fn swiftui_node(
                             indent_str(indent + 1),
                             indent_str(indent + 2),
                             idx + 1,
-                            swiftui_node(child, indent + 2, scope_name, scope_var),
+                            swiftui_node(child, indent + 2, scopes),
                             indent_str(indent + 1)
                         )
                     } else {
-                        swiftui_node(child, indent + 1, scope_name, scope_var)
+                        swiftui_node(child, indent + 1, scopes)
                     }
                 })
                 .collect::<Vec<_>>()
@@ -395,18 +418,40 @@ fn swiftui_node(
         ViewNode::ListItem {
             style, children, ..
         } => {
-            let inner = swiftui_children(children, indent + 1, scope_name, scope_var);
+            let inner = swiftui_children(children, indent + 1, scopes);
             let mut out =
                 format!("{pad}VStack(alignment: .leading, spacing: 4.0) {{\n{inner}\n{pad}}}");
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
         }
         ViewNode::Link {
-            style, children, ..
+            href,
+            href_bind,
+            style,
+            children,
+            ..
         } => {
-            let inner = swiftui_children(children, indent + 1, scope_name, scope_var);
-            let mut out =
-                format!("{pad}VStack(alignment: .leading, spacing: 0.0) {{\n{inner}\n{pad}}}");
+            let mut out = if href_bind.is_none() && href.is_empty() {
+                let inner = swiftui_children(children, indent + 1, scopes);
+                format!("{pad}VStack(alignment: .leading, spacing: 0.0) {{\n{inner}\n{pad}}}")
+            } else {
+                let label = swiftui_children(children, indent + 3, scopes);
+                let fallback = swiftui_children(children, indent + 2, scopes);
+                let (setup, destination, condition) = if let Some(bind) = href_bind {
+                    (
+                        format!(
+                            "let crepusHref = {}\n{}",
+                            SWIFT.model_text(bind, scopes),
+                            indent_str(indent + 1)
+                        ),
+                        "crepusHref".to_string(),
+                        "!crepusHref.isEmpty, ",
+                    )
+                } else {
+                    (String::new(), format!("\"{}\"", SWIFT.escape(href)), "")
+                };
+                format!("{pad}Group {{\n{}{setup}if {condition}let crepusDestination = Foundation.URL(string: {destination}) {{\n{}SwiftUI.Link(destination: crepusDestination) {{\n{}VStack(alignment: .leading, spacing: 0.0) {{\n{label}\n{}}}\n{}}}\n{}}} else {{\n{}VStack(alignment: .leading, spacing: 0.0) {{\n{fallback}\n{}}}\n{}}}\n{pad}}}", indent_str(indent+1), indent_str(indent+2), indent_str(indent+3), indent_str(indent+3), indent_str(indent+2), indent_str(indent+1), indent_str(indent+2), indent_str(indent+2), indent_str(indent+1))
+            };
             swiftui_style(&mut out, style.as_ref(), false, indent);
             out
         }
@@ -424,29 +469,40 @@ fn swiftui_node(
             multiline,
             secure,
             on_change,
+            on_input,
             style,
             ..
         } => {
-            let mut out = if *multiline {
+            // Native setters expose edits; both actions follow one binding update.
+            let mut on_value_change =
+                swiftui_change(on_change.as_deref(), bind, "newValue", scopes);
+            if let Some(action) = on_input.as_deref() {
+                if !on_value_change.is_empty() {
+                    on_value_change.push_str("; ");
+                }
+                on_value_change.push_str(&swiftui_action(Some(action)));
+            }
+            // Directly supplied IR must not turn secure text into an unmasked editor.
+            let mut out = if *multiline && !secure {
                 format!(
                     "{pad}TextEditor(text: Binding(get: {{ {} }}, set: {{ newValue in {} }}))",
-                    SWIFT.model_text(bind, scope_name, scope_var),
-                    swiftui_change(on_change.as_deref(), bind, "newValue")
+                    swiftui_draft_getter("Text", bind, scopes),
+                    on_value_change
                 )
             } else if *secure {
                 format!(
                     "{pad}SecureField(\"{}\", text: Binding(get: {{ {} }}, set: {{ newValue in {} }}))",
                     SWIFT.escape(placeholder),
-                    SWIFT.model_text(bind, scope_name, scope_var),
-                    swiftui_change(on_change.as_deref(), bind, "newValue")
+                    swiftui_draft_getter("Text", bind, scopes),
+                    on_value_change
                 )
             } else {
                 format!(
                     "{pad}TextField(\"{}\", text: Binding(get: {{ {} }}, set: {{ newValue in {} }}))",
                     SWIFT.escape(placeholder)
                     ,
-                    SWIFT.model_text(bind, scope_name, scope_var),
-                    swiftui_change(on_change.as_deref(), bind, "newValue")
+                    swiftui_draft_getter("Text", bind, scopes),
+                    on_value_change
                 )
             };
             swiftui_style(&mut out, style.as_ref(), false, indent);
@@ -474,8 +530,8 @@ fn swiftui_node(
                 .join("\n");
             let mut out = format!(
                 "{pad}Picker(\"\", selection: Binding(get: {{ {} }}, set: {{ newValue in {} }})) {{\n{rows}\n{pad}}}",
-                SWIFT.model_text(bind, scope_name, scope_var),
-                swiftui_change(on_change.as_deref(), bind, "newValue")
+                swiftui_draft_getter("Text", bind, scopes),
+                swiftui_change(on_change.as_deref(), bind, "newValue", scopes)
             );
             out.push('\n');
             out.push_str(&indent_str(indent));
@@ -497,7 +553,7 @@ fn swiftui_node(
             let rows = tabs
                 .iter()
                 .map(|tab| {
-                    let content = swiftui_nodes(&tab.children, indent + 1, scope_name, scope_var);
+                    let content = swiftui_nodes(&tab.children, indent + 1, scopes);
                     let tab_item = if let Some(icon) = tab.icon.as_deref() {
                         format!(
                             "Label(\"{}\", systemImage: \"{}\")",
@@ -518,8 +574,8 @@ fn swiftui_node(
                 .join("\n");
             let mut out = format!(
                 "{pad}TabView(selection: Binding(get: {{ {} }}, set: {{ newValue in {} }})) {{\n{rows}\n{pad}}}",
-                SWIFT.model_text(bind, scope_name, scope_var),
-                swiftui_change(on_change.as_deref(), bind, "newValue")
+                swiftui_draft_getter("Text", bind, scopes),
+                swiftui_change(on_change.as_deref(), bind, "newValue", scopes)
             );
             swiftui_style(&mut out, style.as_ref(), false, indent);
             if first.is_empty() {
@@ -527,7 +583,23 @@ fn swiftui_node(
             }
             out
         }
+    };
+    let on_long_press = match node {
+        ViewNode::Stack { on_long_press, .. }
+        | ViewNode::Scroll { on_long_press, .. }
+        | ViewNode::Button { on_long_press, .. }
+        | ViewNode::Toggle { on_long_press, .. }
+        | ViewNode::Image { on_long_press, .. }
+        | ViewNode::ListItem { on_long_press, .. } => on_long_press.as_deref(),
+        _ => None,
+    };
+    if let Some(action) = on_long_press {
+        out.push_str(&format!(
+            "\n{pad}.highPriorityGesture(LongPressGesture().onEnded {{ _ in {} }})",
+            swiftui_action(Some(action))
+        ));
     }
+    out
 }
 
 fn swiftui_action(on_click: Option<&str>) -> String {
@@ -536,27 +608,47 @@ fn swiftui_action(on_click: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-fn swiftui_change(on_change: Option<&str>, bind: &str, value: &str) -> String {
+fn swiftui_draft_getter(kind: &str, bind: &str, scopes: &[ScopeBinding]) -> String {
+    let bind = bind.trim();
+    let fallback = match kind {
+        "Bool" => SWIFT.model_bool(bind, scopes),
+        "Number" => SWIFT.model_number(bind, scopes),
+        _ => SWIFT.model_text(bind, scopes),
+    };
+    if bind.is_empty() {
+        return fallback;
+    }
+    format!(
+        "model.draft{kind}(path: {}, fallback: {fallback})",
+        SWIFT.binding_path(bind, scopes)
+    )
+}
+
+fn swiftui_change(
+    on_change: Option<&str>,
+    bind: &str,
+    value: &str,
+    scopes: &[ScopeBinding],
+) -> String {
+    let bind = bind.trim();
+    if bind.is_empty() {
+        return swiftui_action(on_change);
+    }
     let action = on_change
         .map(|action| format!("\"{}\"", SWIFT.escape(action)))
         .unwrap_or_else(|| SWIFT.null.to_string());
     format!(
-        "CrepusActions.performChange({}, bind: \"{}\", value: {})",
+        "CrepusActions.performChange({}, bind: {}, value: {})",
         action,
-        SWIFT.escape(bind),
+        SWIFT.binding_path(bind, scopes),
         value
     )
 }
 
-fn swiftui_children(
-    children: &[ViewNode],
-    indent: usize,
-    scope_name: Option<&str>,
-    scope_var: Option<&str>,
-) -> String {
+fn swiftui_children(children: &[ViewNode], indent: usize, scopes: &[ScopeBinding]) -> String {
     children
         .iter()
-        .map(|child| swiftui_node(child, indent, scope_name, scope_var))
+        .map(|child| swiftui_node(child, indent, scopes))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -599,8 +691,8 @@ fn swiftui_style_with_alignment(
         return;
     };
     let pad = indent_str(indent + 1);
-    if let Some(size) = style.font_size {
-        out.push_str(&format!("\n{pad}.font(.system(size: {size:.1}))"));
+    if let Some(size) = finite_opt(style.font_size) {
+        out.push_str(&format!("\n{pad}.font(.system(size: {size:?}))"));
     }
     if let Some(weight) = style.font_weight {
         out.push_str(&format!(
@@ -608,10 +700,22 @@ fn swiftui_style_with_alignment(
             swiftui_font_weight(weight)
         ));
     }
+    let design = match style.font_family.as_deref() {
+        Some("sans") => Some(".default"),
+        Some("serif") => Some(".serif"),
+        Some("mono") => Some(".monospaced"),
+        _ => None,
+    };
+    if let Some(design) = design {
+        out.push_str(&format!("\n{pad}.fontDesign({design})"));
+    }
     if let Some(color) = &style.foreground_color {
         out.push_str(&format!("\n{pad}.foregroundStyle({})", swift_color(color)));
     }
     if is_text {
+        if let Some(spacing) = finite_opt(style.letter_spacing) {
+            out.push_str(&format!("\n{pad}.tracking({spacing:?})"));
+        }
         if let Some(align) = swiftui_text_align(style.text_align.as_deref()) {
             out.push_str(&format!("\n{pad}.multilineTextAlignment({align})"));
         }
@@ -624,14 +728,14 @@ fn swiftui_style_with_alignment(
         if style.strikethrough == Some(true) {
             out.push_str(&format!("\n{pad}.strikethrough()"));
         }
-        if let Some(lines) = style.line_clamp {
+        if let Some(lines) = text_line_limit(style) {
             out.push_str(&format!("\n{pad}.lineLimit({lines})"));
         }
     }
     swiftui_frame(out, style, &pad, frame_alignment);
     swiftui_spacing(out, style, &pad, "padding");
     swiftui_spacing(out, style, &pad, "margin");
-    if let Some(opacity) = style.opacity {
+    if let Some(opacity) = finite_opt(style.opacity) {
         out.push_str(&format!("\n{pad}.opacity({opacity:.3})"));
     }
     if style.hidden == Some(true) {
@@ -640,12 +744,12 @@ fn swiftui_style_with_alignment(
     if let Some(background) = &style.background_color {
         out.push_str(&format!("\n{pad}.background({})", swift_color(background)));
     }
-    if let Some(radius) = style.corner_radius {
+    if let Some(radius) = finite_opt(style.corner_radius) {
         out.push_str(&format!(
             "\n{pad}.clipShape(RoundedRectangle(cornerRadius: {radius:.1}))"
         ));
     }
-    if let Some(width) = style.border_width {
+    if let Some(width) = finite_opt(style.border_width) {
         let color = style
             .border_color
             .as_deref()
@@ -656,33 +760,37 @@ fn swiftui_style_with_alignment(
     if style.overflow_hidden == Some(true) {
         out.push_str(&format!("\n{pad}.clipped()"));
     }
-    if let Some(radius) = style.shadow_radius {
+    if let Some(radius) = finite_opt(style.shadow_radius) {
         let color = style
             .shadow_color
             .as_deref()
             .map(swift_color)
             .unwrap_or_else(|| "Color.black.opacity(0.25)".to_string());
-        let x = style.shadow_offset_x.unwrap_or(0.0);
-        let y = style.shadow_offset_y.unwrap_or(0.0);
+        let x = finite_opt(style.shadow_offset_x).unwrap_or(0.0);
+        let y = finite_opt(style.shadow_offset_y).unwrap_or(0.0);
         out.push_str(&format!(
             "\n{pad}.shadow(color: {color}, radius: {radius:.1}, x: {x:.1}, y: {y:.1})"
         ));
     }
-    if style.translate_x.is_some() || style.translate_y.is_some() {
+    let translate_x = finite_opt(style.translate_x);
+    let translate_y = finite_opt(style.translate_y);
+    if translate_x.is_some() || translate_y.is_some() {
         out.push_str(&format!(
             "\n{pad}.offset(x: {:.1}, y: {:.1})",
-            style.translate_x.unwrap_or(0.0),
-            style.translate_y.unwrap_or(0.0)
+            translate_x.unwrap_or(0.0),
+            translate_y.unwrap_or(0.0)
         ));
     }
-    if let Some(rotate) = style.rotate {
+    if let Some(rotate) = finite_opt(style.rotate) {
         out.push_str(&format!("\n{pad}.rotationEffect(.degrees({rotate:.1}))"));
     }
-    if style.scale_x.is_some() || style.scale_y.is_some() {
+    let scale_x = finite_opt(style.scale_x);
+    let scale_y = finite_opt(style.scale_y);
+    if scale_x.is_some() || scale_y.is_some() {
         out.push_str(&format!(
             "\n{pad}.scaleEffect(x: {:.3}, y: {:.3})",
-            style.scale_x.unwrap_or(1.0),
-            style.scale_y.unwrap_or(1.0)
+            scale_x.unwrap_or(1.0),
+            scale_y.unwrap_or(1.0)
         ));
     }
 }
@@ -709,40 +817,31 @@ fn swiftui_spacing(out: &mut String, style: &ViewStyle, pad: &str, kind: &str) {
             (style.margin_right, ".trailing"),
         ]
     };
+    let filter: fn(Option<f32>) -> Option<f32> = if kind == "padding" {
+        nonnegative_opt
+    } else {
+        finite_opt
+    };
     for (value, edge) in values {
-        if let Some(value) = value {
+        if let Some(value) = filter(value) {
             if edge.is_empty() {
-                out.push_str(&format!("\n{pad}.padding({value:.0})"));
+                out.push_str(&format!("\n{pad}.padding({value})"));
             } else {
-                out.push_str(&format!("\n{pad}.padding({edge}, {value:.0})"));
+                out.push_str(&format!("\n{pad}.padding({edge}, {value})"));
             }
         }
     }
 }
 
 fn swiftui_frame(out: &mut String, style: &ViewStyle, pad: &str, alignment: &str) {
-    if style.width == Some(-1.0) || style.height == Some(-1.0) {
-        let max_width = if style.width == Some(-1.0) {
-            ".infinity".to_string()
-        } else {
-            "nil".to_string()
-        };
-        let max_height = if style.height == Some(-1.0) {
-            ".infinity".to_string()
-        } else {
-            "nil".to_string()
-        };
-        out.push_str(&format!(
-            "\n{pad}.frame(maxWidth: {max_width}, maxHeight: {max_height}, alignment: {alignment})"
-        ));
-    } else if style.width.is_some() || style.height.is_some() {
-        let width = style
-            .width
+    let width = finite_opt(style.width);
+    let height = finite_opt(style.height);
+    if width.is_some_and(|value| value > 0.0) || height.is_some_and(|value| value > 0.0) {
+        let width = width
             .filter(|v| *v > 0.0)
             .map(|v| format!("{v:.1}"))
             .unwrap_or_else(|| "nil".to_string());
-        let height = style
-            .height
+        let height = height
             .filter(|v| *v > 0.0)
             .map(|v| format!("{v:.1}"))
             .unwrap_or_else(|| "nil".to_string());
@@ -750,15 +849,45 @@ fn swiftui_frame(out: &mut String, style: &ViewStyle, pad: &str, alignment: &str
             "\n{pad}.frame(width: {width}, height: {height}, alignment: {alignment})"
         ));
     }
-    if style.min_width.is_some()
-        || style.max_width.is_some()
-        || style.min_height.is_some()
-        || style.max_height.is_some()
-    {
-        let min_width = swiftui_dimension(style.min_width);
-        let max_width = swiftui_dimension(style.max_width);
-        let min_height = swiftui_dimension(style.min_height);
-        let max_height = swiftui_dimension(style.max_height);
+    if width == Some(-2.0) || height == Some(-2.0) {
+        out.push_str(&format!(
+            "\n{pad}.fixedSize(horizontal: {}, vertical: {})",
+            width == Some(-2.0),
+            height == Some(-2.0)
+        ));
+    }
+    if width == Some(-1.0) || height == Some(-1.0) {
+        let max_width = if width == Some(-1.0) {
+            ".infinity".to_string()
+        } else {
+            "nil".to_string()
+        };
+        let max_height = if height == Some(-1.0) {
+            ".infinity".to_string()
+        } else {
+            "nil".to_string()
+        };
+        out.push_str(&format!(
+            "\n{pad}.frame(maxWidth: {max_width}, maxHeight: {max_height}, alignment: {alignment})"
+        ));
+    }
+    let min_width = finite_opt(style.min_width);
+    let max_width = finite_opt(style.max_width);
+    let min_height = finite_opt(style.min_height);
+    let max_height = finite_opt(style.max_height);
+    if min_width.is_some() || max_width.is_some() || min_height.is_some() || max_height.is_some() {
+        let min_width = swiftui_dimension(min_width);
+        let max_width = if max_width == Some(-1.0) {
+            ".infinity".into()
+        } else {
+            swiftui_dimension(max_width)
+        };
+        let min_height = swiftui_dimension(min_height);
+        let max_height = if max_height == Some(-1.0) {
+            ".infinity".into()
+        } else {
+            swiftui_dimension(max_height)
+        };
         out.push_str(&format!(
             "\n{pad}.frame(minWidth: {min_width}, maxWidth: {max_width}, minHeight: {min_height}, maxHeight: {max_height}, alignment: {alignment})"
         ));
@@ -788,7 +917,7 @@ fn swiftui_frame_alignment(
 }
 
 fn swiftui_dimension(value: Option<f32>) -> String {
-    value
+    finite_opt(value)
         .filter(|value| *value > 0.0)
         .map(|value| format!("{value:.1}"))
         .unwrap_or_else(|| "nil".to_string())
@@ -806,49 +935,75 @@ fn swiftui_text_align(value: Option<&str>) -> Option<&'static str> {
 
 fn swiftui_font_weight(weight: u16) -> &'static str {
     match weight {
-        0..=299 => ".thin",
+        0..=199 => ".ultraLight",
+        200..=299 => ".thin",
         300..=399 => ".light",
         400..=499 => ".regular",
         500..=599 => ".medium",
         600..=699 => ".semibold",
         700..=799 => ".bold",
-        _ => ".heavy",
+        800..=899 => ".heavy",
+        _ => ".black",
     }
 }
 
 fn swift_color(color: &str) -> String {
-    let trimmed = color.trim_start_matches('#');
-    let Some((r, g, b, a)) = parse_hex_rgba(trimmed) else {
+    let Some([r, g, b, a]) = crate::colors::resolve_rgba(color)
+        .or_else(|| crate::colors::resolve_rgba(&format!("#{color}")))
+    else {
         return "Color.gray".to_string();
     };
-    format!(
-        "Color(red: {:.3}, green: {:.3}, blue: {:.3}, opacity: {:.3})",
-        r as f32 / 255.0,
-        g as f32 / 255.0,
-        b as f32 / 255.0,
-        a as f32 / 255.0
-    )
+    format!("Color(red: {r:.3}, green: {g:.3}, blue: {b:.3}, opacity: {a:.3})")
 }
 
-fn parse_hex_rgba(hex: &str) -> Option<(u8, u8, u8, u8)> {
-    if hex.len() != 6 && hex.len() != 8 {
-        return None;
-    }
-    let value = u32::from_str_radix(hex, 16).ok()?;
-    if hex.len() == 8 {
-        Some((
-            ((value & 0x00ff0000) >> 16) as u8,
-            ((value & 0x0000ff00) >> 8) as u8,
-            (value & 0x000000ff) as u8,
-            ((value & 0xff000000) >> 24) as u8,
-        ))
-    } else {
-        Some((
-            ((value & 0xff0000) >> 16) as u8,
-            ((value & 0x00ff00) >> 8) as u8,
-            (value & 0x0000ff) as u8,
-            255,
-        ))
+#[cfg(test)]
+mod dynamic_url_tests {
+    use super::*;
+    #[test]
+    fn links_and_image_placeholders_use_scoped_model_reads() {
+        let scopes = [ScopeBinding {
+            name: "row".into(),
+            variable: "rowValue".into(),
+        }];
+        for node in [
+            ViewNode::Image {
+                src: "snapshot.png".into(),
+                src_bind: Some("row.url".into()),
+                alt: None,
+                placeholder: None,
+                on_long_press: None,
+                style: None,
+            },
+            ViewNode::Link {
+                href: "snapshot.html".into(),
+                href_bind: Some("row.url".into()),
+                target: None,
+                rel: None,
+                style: None,
+                children: vec![],
+            },
+        ] {
+            let output = swiftui_node(&node, 0, &scopes);
+            assert!(
+                output.contains(".text(\"row.url\"") && output.contains("rowValue"),
+                "{output}"
+            );
+            assert!(!output.contains("snapshot."), "{output}");
+        }
+        let node = ViewNode::Link {
+            href: String::new(),
+            href_bind: Some("url".into()),
+            target: None,
+            rel: None,
+            style: None,
+            children: vec![],
+        };
+        let output = swiftui_node(&node, 0, &[]);
+        assert!(output.contains(".text(\"url\""), "{output}");
+        assert!(
+            output.contains("isNotEmpty") || output.contains("!crepusHref.isEmpty"),
+            "{output}"
+        );
     }
 }
 

@@ -33,6 +33,8 @@ pub enum IrMutation {
 }
 
 /// Compute a path-based patch from one IR tree to another.
+/// Patches do not carry the document version. For differing versions, use a full
+/// document reload; the returned root replacement alone does not migrate it.
 pub fn diff_ir(old: &ViewIr, new: &ViewIr) -> Vec<IrMutation> {
     if old.version != new.version {
         return vec![IrMutation::ReplaceRoot {
@@ -45,8 +47,18 @@ pub fn diff_ir(old: &ViewIr, new: &ViewIr) -> Vec<IrMutation> {
     out
 }
 
-/// Apply a patch onto a mutable [`ViewIr`].
+/// Apply an ordered patch atomically; an error leaves the original [`ViewIr`] unchanged.
 pub fn apply_mutations(ir: &mut ViewIr, ops: &[IrMutation]) -> Result<(), String> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let mut next = ir.clone();
+    apply_mutations_in_place(&mut next, ops)?;
+    *ir = next;
+    Ok(())
+}
+
+fn apply_mutations_in_place(ir: &mut ViewIr, ops: &[IrMutation]) -> Result<(), String> {
     for op in ops {
         match op {
             IrMutation::ReplaceRoot { root } => ir.root = root.clone(),
@@ -168,6 +180,7 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
         }
         (
             ViewNode::Stack {
+                on_long_press: olp,
                 axis: oa,
                 spacing: og,
                 align_items: oai,
@@ -177,6 +190,7 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
                 ..
             },
             ViewNode::Stack {
+                on_long_press: nlp,
                 axis: na,
                 spacing: ng,
                 align_items: nai,
@@ -186,7 +200,7 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
                 ..
             },
         ) => {
-            if oa != na || og != ng || oai != nai || ojc != njc {
+            if oa != na || og != ng || oai != nai || ojc != njc || olp != nlp {
                 out.push(IrMutation::ReplaceNode {
                     path: path.to_vec(),
                     node: new.clone(),
@@ -204,16 +218,18 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
         (
             ViewNode::Scroll {
                 axis: oa,
+                on_long_press: ol,
                 style: os,
                 children: och,
             },
             ViewNode::Scroll {
                 axis: na,
+                on_long_press: nl,
                 style: ns,
                 children: nch,
             },
         ) => {
-            if oa != na {
+            if oa != na || ol != nl {
                 out.push(IrMutation::ReplaceNode {
                     path: path.to_vec(),
                     node: new.clone(),
@@ -230,19 +246,23 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
         }
         (
             ViewNode::Button {
+                on_long_press: olp,
                 label: ol,
+                label_parts: op,
                 on_click: oo,
                 style: os,
                 ..
             },
             ViewNode::Button {
+                on_long_press: nlp,
                 label: nl,
+                label_parts: np,
                 on_click: no,
                 style: ns,
                 ..
             },
         ) => {
-            if ol != nl || oo != no {
+            if ol != nl || op != np || oo != no || olp != nlp {
                 out.push(IrMutation::ReplaceNode {
                     path: path.to_vec(),
                     node: new.clone(),
@@ -258,21 +278,25 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
         }
         (
             ViewNode::Image {
+                on_long_press: olp,
                 src: osrc,
+                src_bind: osrc_bind,
                 alt: oalt,
                 placeholder: oph,
                 style: os,
                 ..
             },
             ViewNode::Image {
+                on_long_press: nlp,
                 src: nsrc,
+                src_bind: nsrc_bind,
                 alt: nalt,
                 placeholder: nph,
                 style: ns,
                 ..
             },
         ) => {
-            if osrc != nsrc || oalt != nalt || oph != nph {
+            if osrc != nsrc || osrc_bind != nsrc_bind || oalt != nalt || oph != nph || olp != nlp {
                 out.push(IrMutation::ReplaceNode {
                     path: path.to_vec(),
                     node: new.clone(),
@@ -319,6 +343,7 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
                 multiline: om,
                 secure: osq,
                 on_change: oc,
+                on_input: oi,
                 style: os,
             },
             ViewNode::Input {
@@ -327,10 +352,11 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
                 multiline: nm,
                 secure: nsq,
                 on_change: nc,
+                on_input: ni,
                 style: ns,
             },
         ) => {
-            if op != np || ob != nb || om != nm || osq != nsq || oc != nc {
+            if op != np || ob != nb || om != nm || osq != nsq || oc != nc || oi != ni {
                 out.push(IrMutation::ReplaceNode {
                     path: path.to_vec(),
                     node: new.clone(),
@@ -372,6 +398,7 @@ fn diff_node(old: &ViewNode, new: &ViewNode, path: &[usize], out: &mut Vec<IrMut
                 });
             }
         }
+        _ if old == new => {}
         _ => out.push(IrMutation::ReplaceNode {
             path: path.to_vec(),
             node: new.clone(),
@@ -424,5 +451,74 @@ fn children_mut<'a>(
             "node at {:?} cannot contain children: {other:?}",
             parent_path
         )),
+    }
+}
+
+#[cfg(test)]
+mod long_press_tests {
+    use super::*;
+
+    #[test]
+    fn failed_patch_keeps_the_original_document() {
+        let original = ViewIr {
+            version: 1,
+            root: vec![],
+        };
+        let mut document = original.clone();
+        let patch = [
+            IrMutation::ReplaceRoot {
+                root: vec![ViewNode::Button {
+                    label: "Hold".into(),
+                    label_parts: vec![],
+                    on_click: None,
+                    on_long_press: Some("hold".into()),
+                    style: None,
+                }],
+            },
+            IrMutation::RemoveNode { path: vec![99] },
+        ];
+        assert!(apply_mutations(&mut document, &patch).is_err());
+        assert_eq!(document, original);
+    }
+
+    #[test]
+    fn button_long_press_changes_replace_the_node() {
+        let button = |handler: Option<&str>| ViewNode::Button {
+            label: "Hold".into(),
+            label_parts: vec![],
+            on_click: None,
+            on_long_press: handler.map(str::to_owned),
+            style: None,
+        };
+        for (old, new) in [
+            (None, Some("hold")),
+            (Some("hold"), Some("other")),
+            (Some("hold"), None),
+        ] {
+            let new = button(new);
+            let mut changes = vec![];
+            diff_node_lists(
+                &[button(old)],
+                std::slice::from_ref(&new),
+                &[],
+                &mut changes,
+            );
+            assert_eq!(
+                changes,
+                vec![IrMutation::ReplaceNode {
+                    path: vec![0],
+                    node: new
+                }]
+            );
+        }
+        let same = button(Some("hold"));
+        let mut changes = vec![];
+        diff_node_lists(
+            std::slice::from_ref(&same),
+            std::slice::from_ref(&same),
+            &[],
+            &mut changes,
+        );
+        assert!(changes.is_empty());
     }
 }
