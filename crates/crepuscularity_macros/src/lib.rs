@@ -2885,11 +2885,13 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
             full.display()
         );
     }
+    let full = LitStr::new(&full.to_string_lossy(), path.span());
     quote! {{
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #path_value))
+        include_str!(#full)
     }}
     .into()
 }
+
 #[cfg(test)]
 mod bound_id_tests {
     use super::*;
