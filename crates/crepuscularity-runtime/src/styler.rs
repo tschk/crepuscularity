@@ -1238,6 +1238,28 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     d
 }
 
+fn parse_runtime_hex_color(value: &str) -> Option<gpui::Rgba> {
+    let normalized = parse_css_hex_color(value)?;
+    let hex = u32::from_str_radix(&normalized[1..], 16).ok()?;
+    Some(if normalized.len() == 9 {
+        rgba(hex)
+    } else {
+        rgb(hex)
+    })
+}
+
+fn apply_color(d: Div, prefix: &str, color: gpui::Rgba) -> Div {
+    match prefix {
+        "text-" => d.text_color(color),
+        "border-" => d.border_color(color),
+        _ => d.bg(color),
+    }
+}
+
+fn apply_rgba(d: Div, prefix: &str, color: u32) -> Div {
+    apply_color(d, prefix, rgba(color))
+}
+
 fn apply_bg(d: Div, hex: u32) -> Div {
     d.bg(rgb(hex))
 }
@@ -1269,21 +1291,16 @@ fn parse_length(value: &str) -> Option<Length> {
 
 /// Parse a Tailwind length token into a `DefiniteLength` (no auto, no %)
 fn parse_definite_length(value: &str) -> Option<DefiniteLength> {
-    if let Some(inner) = value.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        return token_to_absolute(parse_arbitrary_length_token(inner)?).map(Into::into);
-    }
-    if value == "px" {
-        return Some(px(1.).into());
-    }
-    if let Ok(n) = value.parse::<f32>() {
-        return Some(rems(n * 0.25).into());
-    }
-    None
+    token_to_absolute(parse_length_token(value)?).map(Into::into)
 }
 
 /// Parse a CSS size string to `AbsoluteLength` (px or rem only)
 pub fn parse_absolute_length(inner: &str) -> Option<AbsoluteLength> {
     token_to_absolute(parse_arbitrary_length_token(inner)?)
+}
+
+fn parse_nonnegative_absolute_length(inner: &str) -> Option<AbsoluteLength> {
+    parse_absolute_length(inner).filter(|value| value.to_pixels(px(1.0)) >= px(0.0))
 }
 
 /// Parse a duration string like "300ms", "1s", "0.5s" into milliseconds.
@@ -1896,6 +1913,23 @@ mod class_list_tests {
             format!("{:?}", actual.style()),
             format!("{:?}", expected.style())
         );
+    }
+}
+
+#[cfg(test)]
+mod definite_length_tests {
+    use super::*;
+
+    #[test]
+    fn definite_lengths_reuse_finite_validation_and_reject_relative_units() {
+        for value in [
+            "NaN", "inf", "1e100", "[NaNpx]", "auto", "full", "1/2", "[50%]",
+        ] {
+            assert!(parse_definite_length(value).is_none(), "{value}");
+        }
+        for value in ["px", "4", "-2", "[12px]", "[1.5rem]"] {
+            assert!(parse_definite_length(value).is_some(), "{value}");
+        }
     }
 }
 
