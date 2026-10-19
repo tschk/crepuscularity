@@ -31,11 +31,7 @@ fn title_text_has_no_region_markup_and_preserves_rcdata_whitespace() {
     let mut ctx = TemplateContext::new();
     ctx.set("name", "\n雪🦀<>&\nend");
     for html in variants("<title>{name}</title>", &ctx) {
-        assert_eq!(
-            title_content(&html),
-            "\n雪🦀&lt;&gt;&amp;\nend",
-            "{html}"
-        );
+        assert_eq!(title_content(&html), "\n雪🦀&lt;&gt;&amp;\nend", "{html}");
     }
 }
 

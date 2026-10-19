@@ -509,7 +509,7 @@ fn false_boolean_attributes_are_omitted_but_aria_values_are_preserved() {
         (false, "<input aria-disabled=\"false\" />"),
         (
             true,
-            "<input disabled=\"true\" checked=\"true\" aria-disabled=\"true\" />",
+            "<input disabled=\"\" checked=\"\" aria-disabled=\"true\" />",
         ),
     ] {
         let mut ctx = TemplateContext::new();

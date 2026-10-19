@@ -1455,7 +1455,7 @@ fn vue_sfc_lowers_to_view_ir_with_class_tokens() {
     <button class="px-4 py-2" @click="increment">Add</button>
     <input type="text" v-model="query" />
     <ul class="list">
-      <li v-for="(item) in items" class="row">{{ item }}</li>
+      <li v-for="item in items" class="row">{{ item }}</li>
     </ul>
   </div>
 </template>
@@ -2300,12 +2300,14 @@ fn link_and_badge_metadata_propagates_expression_errors() {
 }
 
 #[test]
-fn file_picker_multiple_evaluates_boolean_values() {
+fn file_picker_multiple_preserves_expression_presence() {
     for tag in ["file-picker", "filepicker", "media-picker"] {
         for (suffix, expected) in [
             ("", false),
             (" multiple", true),
-            (" multiple={false}", false),
+            // Portable picker expressions retain authored presence except null.
+            (" multiple={false}", true),
+            (" multiple={null}", false),
             (" multiple={true}", true),
         ] {
             let ir =
@@ -2320,13 +2322,19 @@ fn file_picker_multiple_evaluates_boolean_values() {
             render_template_to_ir(&format!("{tag} multiple={{1 +}}"), &TemplateContext::new())
                 .is_err()
         );
-        let mut ctx = TemplateContext::new();
-        ctx.set("allow_many", false);
-        let ir = render_template_to_ir(&format!("{tag} multiple={{allow_many}}"), &ctx).unwrap();
-        assert_eq!(
-            serde_json::to_value(ir).unwrap()["root"][0]["multiple"],
-            false
-        );
+        for (value, expected) in [
+            (crepuscularity_core::TemplateValue::Bool(false), true),
+            (crepuscularity_core::TemplateValue::Null, false),
+        ] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("allow_many", value);
+            let ir =
+                render_template_to_ir(&format!("{tag} multiple={{allow_many}}"), &ctx).unwrap();
+            assert_eq!(
+                serde_json::to_value(ir).unwrap()["root"][0]["multiple"],
+                expected
+            );
+        }
     }
 }
 

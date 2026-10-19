@@ -8,7 +8,6 @@
 
 Think React Native turned into a systems UI toolkit: one compact `.crepus` language can drive GPUI desktop apps, Ratatui terminal UIs, Chromium/Firefox extensions, web output, native mobile shells, embedded panels, and LVGL Pro.
 
-Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. Importable React, Svelte 5, Vue 3, and SolidJS components are available through `crepus web build --emit react|svelte|vue|solid`; `--emit moonshine` generates a Moonshine app entry. JSX, Svelte, and Vue are also supported as template input syntaxes.
 ## 60-Second Quick Start
 
 ```bash
@@ -53,7 +52,7 @@ crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase
 
 ## Overview
 
-Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. React output is available through the Moonshine TSX emit (`crepus web build --emit moonshine`); JSX, Svelte, Vue, Astro, and Angular are supported as **input** syntaxes, not as output targets.
+Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. Importable React, Svelte 5, Vue 3, SolidJS, and Imba components are available through `crepus web build --emit react|svelte|vue|solid|imba`; `--emit moonshine` generates a Moonshine app entry. JSX, Svelte, Vue, Astro, and Angular are also supported as template input syntaxes.
 
 Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS + iOS apps.
 
@@ -142,15 +141,18 @@ The `.crepus` DSL is the primary language. Each output target is a renderer that
 
 ## Input Frontends
 
-The core parser has **six frontends**, selected by file extension or filename suffix, all
+The core parser has **six frontends**, selected by file extension, all
 compiling to the same AST: indentation (`.crepus`), JSX/HTML tags
-(`.csx`/`.jsx`/`.tsx`), Svelte (`.svelte`), Vue SFC (`.vue`), Astro (`.astro`), and Angular
-(`.component.html`/`.ng.html`/`.ng`). All are hand-written Rust.
+(`.csx`/`.jsx`/`.tsx`), Svelte (`.svelte`), Vue SFC (`.vue`), Astro
+(`.astro`), and Angular component templates (`.component.html`/`.ng.html`/`.ng`).
+The Svelte, Vue, Astro, and Angular frontends are hand-written Rust with no
+`svelte`, `vue`, `astro`, or `@angular` dependency.
 
-They compile the **template only**. Svelte/Vue scripts and Astro frontmatter
-never execute, and Angular component classes are never read. Runes, stores,
-the Composition API, and lifecycle hooks do not run;
-unsupported markup constructs are hard parse errors rather than silent drops.
+The shared parsers compile the **template only**. `<script>` and frontmatter
+are extracted rather than executed, and Angular component classes are not run.
+Native Moonshine module builds have separate authored Svelte and Vue compilers;
+see the support matrix for their bounded script behavior. Unsupported markup
+constructs are hard parse errors rather than silent drops;
 [`docs/frontends.md`](docs/frontends.md) lists exactly what is and is not
 supported.
 

@@ -804,7 +804,8 @@ fn resolve_under_dir(base: &Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     let base = std::fs::canonicalize(base).ok()?;
-    let resolved = std::fs::canonicalize(base.join(rel)).ok()?;
+    let candidate = base.join(rel);
+    let resolved = std::fs::canonicalize(&candidate).ok()?;
     resolved.starts_with(&base).then_some(resolved)
 }
 

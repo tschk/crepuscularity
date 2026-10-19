@@ -356,7 +356,7 @@ fn render_element(
     }
 
     for binding in &el.bindings {
-        if binding.origin == BindingOrigin::Attribute && binding.prop == "class" {
+        if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
             if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
                 classes.extend(value_to_str(&value).split_whitespace().map(str::to_string));
             }
@@ -382,11 +382,11 @@ fn render_element(
     apply_class_attrs(&classes, &mut attrs);
     for binding in &el.bindings {
         if binding.origin == BindingOrigin::Attribute {
-            if binding.prop == "class" {
+            if binding.matches_prop("class") {
                 continue;
             }
             if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
-                let mut name = binding.prop.replace('-', "_");
+                let mut name = lvgl_html_attribute_name(&binding.prop);
                 let value = if matches!(
                     name.to_ascii_lowercase().as_str(),
                     "hidden" | "disabled" | "checked"
@@ -732,6 +732,19 @@ fn eval_form_binding(
     }
 }
 
+// Only known HTML attribute mappings are case-insensitive. Custom XML names
+// retain their authored case, and ordinary property bindings retain exact matching.
+fn lvgl_html_attribute_name(name: &str) -> String {
+    for known in ["class", "src", "value", "placeholder", "disabled"] {
+        if name.eq_ignore_ascii_case(known) {
+            // Attribute-origin values keep the HTML attribute contract; only
+            // ordinary property bindings apply tag-specific control lowering.
+            return lvgl_attr_name("", known);
+        }
+    }
+    lvgl_attr_name("", name)
+}
+
 fn lvgl_attr_name(tag: &str, name: &str) -> String {
     match name {
         "class" => "class".into(),
@@ -1066,7 +1079,9 @@ unknown-tag
 custom-tag
 "#;
         let xml = render_template_to_lvgl_xml(template, &TemplateContext::new()).unwrap();
-        assert!(xml.contains(r#"<lv_obj text="Text"/>"#));
+        assert!(xml.contains("<lv_obj>"), "{xml}");
+        assert!(xml.contains(r#"<lv_label text="Text"/>"#), "{xml}");
+        assert!(!xml.contains(r#"<lv_obj text="Text""#), "{xml}");
         assert!(xml.contains(r#"<lv_obj/>"#));
     }
 }

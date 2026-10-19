@@ -48,9 +48,13 @@ pub struct HotReloadState {
     /// Last completed snapshot; empty until the initial background load finishes.
     pub template: Result<Arc<Vec<Node>>, String>,
     pub context: TemplateContext,
+    pub bindings: crate::RuntimeBindings,
+    binding_namespace: String,
     pub changed: Arc<Mutex<bool>>,
 
     prepared: Option<PreparedSnapshot>,
+    #[cfg(test)]
+    preparation_gate: Option<Arc<PreparationGate>>,
 
     /// Owning watcher handle; dropping it signals background cleanup.
     _watcher: Option<Box<dyn Watcher + Send>>,
@@ -113,6 +117,24 @@ impl PreparedSnapshot {
         )
     }
 
+    fn render_bound(
+        &self,
+        current: &TemplateContext,
+        namespace: &str,
+        bindings: &crate::RuntimeBindings,
+    ) -> gpui::AnyElement {
+        if namespace == "root" && bindings.is_empty() {
+            return self.render(current);
+        }
+        crate::renderer::render_nodes_prepared_with_bindings(
+            namespace,
+            &self.nodes,
+            &self.render_context(current),
+            Arc::clone(&self.includes),
+            bindings,
+        )
+    }
+
     fn render_context<'a>(&self, current: &'a TemplateContext) -> Cow<'a, TemplateContext> {
         if same_environment(&self.environment, current) {
             return Cow::Borrowed(current);
@@ -133,6 +155,8 @@ struct LoadRequest {
     environment: TemplateContext,
     reload_entry: bool,
     needs_watcher: bool,
+    #[cfg(test)]
+    gate: Option<Arc<PreparationGate>>,
 }
 
 impl HotReloadState {
@@ -193,6 +217,8 @@ impl HotReloadState {
                             .is_some_and(|snapshot| snapshot.matches(nodes, &state.context))
                     });
                     (is_changed || needs_preparation).then(|| LoadRequest {
+                        #[cfg(test)]
+                        gate: state.preparation_gate.take(),
                         path: state.path.clone(),
                         template: state.template.clone(),
                         environment: include_environment(&state.context),
@@ -245,6 +271,12 @@ impl HotReloadState {
                                 );
                                 let preparation_context =
                                     context.as_ref().unwrap_or(&request.environment);
+                                // Gate the worker's actual include-preparation boundary after
+                                // root/context loading, never the UI dispatch path.
+                                #[cfg(test)]
+                                if let Some(gate) = &request.gate {
+                                    gate.wait().await;
+                                }
                                 let prepared =
                                     template.as_ref().ok().map(|nodes| PreparedSnapshot {
                                         nodes: Arc::clone(nodes),
@@ -310,8 +342,12 @@ impl HotReloadState {
             path,
             template,
             context,
+            bindings: crate::RuntimeBindings::default(),
+            binding_namespace: format!("hot-template:{:?}", cx.entity_id()),
             changed,
             prepared: None,
+            #[cfg(test)]
+            preparation_gate: None,
             _watcher: None,
             watcher_path: None,
             cancel,
@@ -356,9 +392,9 @@ impl HotReloadState {
     fn render(&mut self) -> gpui::AnyElement {
         match &self.template {
             Ok(_) => match &self.prepared {
-                Some(snapshot) => {
-                    with_gpui_target_in_place(&mut self.context, |context| snapshot.render(context))
-                }
+                Some(snapshot) => with_gpui_target_in_place(&mut self.context, |context| {
+                    snapshot.render_bound(context, &self.binding_namespace, &self.bindings)
+                }),
                 None => div().into_any_element(),
             },
             Err(err) => {
@@ -401,8 +437,187 @@ impl Render for HotReloadView {
     }
 }
 
+// An asynchronous gate models slow worker preparation without blocking GPUI's
+// deterministic test executor or adding sleeps/OS scheduling assumptions.
+#[cfg(test)]
+#[derive(Default)]
+struct PreparationGate {
+    entered: AtomicBool,
+    released: AtomicBool,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+#[cfg(test)]
+impl PreparationGate {
+    async fn wait(&self) {
+        std::future::poll_fn(|cx| {
+            self.entered.store(true, Ordering::SeqCst);
+            let mut waker = self.waker.lock().unwrap();
+            if self.released.load(Ordering::SeqCst) {
+                std::task::Poll::Ready(())
+            } else {
+                *waker = Some(cx.waker().clone());
+                std::task::Poll::Pending
+            }
+        })
+        .await
+    }
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use gpui::AppContext;
+
+    fn poll(cx: &mut gpui::TestAppContext) {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+    fn tag(state: &Entity<HotReloadState>, cx: &mut gpui::TestAppContext) -> String {
+        state.read_with(cx, |state, _| {
+            match &state.prepared.as_ref().unwrap().nodes[0] {
+                Node::Element(el) => el.tag.clone(),
+                _ => panic!("expected element"),
+            }
+        })
+    }
+    #[gpui::test]
+    fn gated_worker_keeps_ui_responsive_retains_snapshot_rejects_stale_and_disposes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.crepus");
+        std::fs::write(&path, "div").unwrap();
+        let state = cx.new(|cx| HotReloadState::new(path.clone(), TemplateContext::new(), cx));
+        cx.run_until_parked();
+        let previous = state.read_with(cx, |state, _| {
+            Arc::clone(&state.prepared.as_ref().unwrap().nodes)
+        });
+        let gate = Arc::new(PreparationGate::default());
+        std::fs::write(&path, "nav").unwrap();
+        state.update(cx, |state, _| {
+            state.preparation_gate = Some(Arc::clone(&gate));
+            state.reload();
+        });
+        poll(cx);
+        assert!(gate.entered.load(Ordering::SeqCst));
+        // A UI callback completes while the worker remains pending. Rendering
+        // uses the previous prepared graph, without falling back to file IO.
+        state.update(cx, |state, _| {
+            assert!(!gate.released.load(Ordering::SeqCst));
+            assert!(Arc::ptr_eq(
+                &previous,
+                &state.prepared.as_ref().unwrap().nodes
+            ));
+            let _ = state.render();
+            state.context.set("ui_callback", "completed");
+        });
+        assert_eq!(
+            state.read_with(cx, |state, _| state.context.get_str("ui_callback")),
+            "completed"
+        );
+        std::fs::write(&path, "main").unwrap();
+        state.update(cx, |state, _| state.reload());
+        gate.release();
+        cx.run_until_parked();
+        assert_eq!(tag(&state, cx), "main");
+
+        let gate = Arc::new(PreparationGate::default());
+        let cancel = state.read_with(cx, |state, _| Arc::clone(&state.cancel));
+        let weak = state.downgrade();
+        state.update(cx, |state, _| {
+            state.preparation_gate = Some(Arc::clone(&gate));
+            state.reload();
+        });
+        poll(cx);
+        assert!(gate.entered.load(Ordering::SeqCst));
+        drop(state);
+        cx.update(|_| {});
+        assert!(cancel.load(Ordering::Relaxed));
+        gate.release();
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    fn environment_changes_keep_old_graph_until_prepared_and_errors_recover(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.crepus");
+        std::fs::write(&path, "include child.crepus").unwrap();
+        let mut context = TemplateContext::new();
+        Arc::make_mut(&mut context.virtual_files).insert("child.crepus".into(), "div".into());
+        let state = cx.new(|cx| HotReloadState::new(path.clone(), context, cx));
+        cx.run_until_parked();
+        let previous = state.read_with(cx, |state, _| {
+            Arc::clone(&state.prepared.as_ref().unwrap().includes)
+        });
+        state.update(cx, |state, _| {
+            Arc::make_mut(&mut state.context.virtual_files)
+                .insert("child.crepus".into(), "nav".into());
+            let snapshot = state.prepared.as_ref().unwrap();
+            let retained = snapshot.render_context(&state.context);
+            assert!(same_environment(&snapshot.environment, &retained));
+            assert!(!same_environment(&snapshot.environment, &state.context));
+            let _ = state.render();
+        });
+        poll(cx);
+        assert!(!state.read_with(cx, |state, _| Arc::ptr_eq(
+            &previous,
+            &state.prepared.as_ref().unwrap().includes
+        )));
+        std::fs::remove_file(&path).unwrap();
+        state.update(cx, |state, _| state.reload());
+        poll(cx);
+        assert!(state.read_with(cx, |state, _| state.template.is_err()));
+        std::fs::write(&path, "main").unwrap();
+        state.update(cx, |state, _| state.reload());
+        poll(cx);
+        assert_eq!(tag(&state, cx), "main");
+    }
+
+    #[gpui::test]
+    fn initial_load_is_deferred_and_context_loader_replaces_snapshot(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        fn loader(path: &std::path::Path) -> TemplateContext {
+            let mut ctx = TemplateContext::new();
+            ctx.set(
+                "value",
+                std::fs::read_to_string(path.with_extension("context")).unwrap(),
+            );
+            ctx
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.crepus");
+        let state = cx.new(|cx| HotReloadState::new_with_context_loader(path.clone(), loader, cx));
+        assert!(state.read_with(cx, |state, _| state.template.as_ref().unwrap().is_empty()));
+        std::fs::write(&path, "div").unwrap();
+        std::fs::write(path.with_extension("context"), "before").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            state.read_with(cx, |state, _| state.context.get_str("value")),
+            "before"
+        );
+        std::fs::write(path.with_extension("context"), "after").unwrap();
+        state.update(cx, |state, _| state.reload());
+        poll(cx);
+        assert_eq!(
+            state.read_with(cx, |state, _| state.context.get_str("value")),
+            "after"
+        );
+    }
+}
+
+#[cfg(test)]
+mod target_and_snapshot_tests {
     use super::*;
     use gpui::AppContext;
 

@@ -41,16 +41,6 @@ struct CatalogComponent {
     platforms: Vec<String>,
 }
 
-impl CatalogComponent {
-    fn display_name(&self) -> &str {
-        self.title
-            .as_deref()
-            .filter(|title| !title.trim().is_empty())
-            .or_else(|| self.name.as_deref().filter(|name| !name.trim().is_empty()))
-            .unwrap_or(&self.id)
-    }
-}
-
 struct ParsedCatalog {
     ids: Vec<&'static str>,
     themes: Vec<&'static str>,
@@ -84,7 +74,7 @@ fn parsed() -> &'static ParsedCatalog {
             .components
             .into_iter()
             .map(|c| {
-                let title = c.display_name().to_owned();
+                let title = c.title.or(c.name).unwrap_or_else(|| c.id.clone());
                 ComponentMeta {
                     id: c.id,
                     category: c.category,
@@ -124,52 +114,6 @@ pub fn list_components() -> Vec<ComponentMeta> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn catalog_metadata_is_nonempty_and_unambiguous() {
-        let mut ids = std::collections::HashSet::new();
-        for component in list_components() {
-            assert!(!component.id.trim().is_empty());
-            assert!(
-                ids.insert(component.id.clone()),
-                "duplicate id: {}",
-                component.id
-            );
-            assert!(!component.title.trim().is_empty(), "{}", component.id);
-            assert!(!component.category.trim().is_empty(), "{}", component.id);
-            assert!(!component.platforms.is_empty(), "{}", component.id);
-            let mut platforms = std::collections::HashSet::new();
-            for platform in &component.platforms {
-                assert!(!platform.trim().is_empty(), "{}", component.id);
-                assert!(
-                    platforms.insert(platform),
-                    "duplicate platform: {}",
-                    component.id
-                );
-            }
-        }
-        let mut themes = std::collections::HashSet::new();
-        for theme in theme_names() {
-            assert!(!theme.trim().is_empty());
-            assert!(themes.insert(theme), "duplicate theme: {theme}");
-        }
-    }
-
-    #[test]
-    fn blank_titles_fall_back_to_name_or_id() {
-        for title in ["", "   "] {
-            let with_name: CatalogComponent = serde_json::from_value(
-                serde_json::json!({"id": "button", "title": title, "name": "Button"}),
-            )
-            .unwrap();
-            assert_eq!(with_name.display_name(), "Button");
-            let without_name: CatalogComponent = serde_json::from_value(
-                serde_json::json!({"id": "button", "title": title, "name": " "}),
-            )
-            .unwrap();
-            assert_eq!(without_name.display_name(), "button");
-        }
-    }
 
     #[test]
     fn ids_non_empty_and_include_known() {

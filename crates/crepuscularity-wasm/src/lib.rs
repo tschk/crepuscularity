@@ -39,7 +39,7 @@ fn parse_template_json_inner(
     let path = filename.map(std::path::Path::new);
     let ir = render_template_to_ir_with_path(source, &ctx, path)
         .map_err(|e| format!("lower template to View IR: {e}"))?;
-    crepuscularity_native::to_json_owned(ir).map_err(|e| format!("serialize View IR: {e}"))
+    serde_json::to_string(&ir).map_err(|e| format!("serialize View IR: {e}"))
 }
 
 /// Parse `.crepus` source into View IR, serialized as JSON.
@@ -55,7 +55,7 @@ fn parse_crepus_json_inner(source: &str, context_json: Option<&str>) -> Result<S
     let ctx = build_context_inner(context_json)?;
     let ir = render_template_to_ir(source, &ctx)
         .map_err(|e| format!("lower .crepus to View IR: {e}"))?;
-    crepuscularity_native::to_json_owned(ir).map_err(|e| format!("serialize View IR: {e}"))
+    serde_json::to_string(&ir).map_err(|e| format!("serialize View IR: {e}"))
 }
 
 fn build_context_inner(context_json: Option<&str>) -> Result<TemplateContext, String> {
@@ -110,9 +110,10 @@ mod tests {
 
     #[test]
     fn test_parse_template_json_inner_filename_dispatch() {
-        let src = "<div>Hello</div>";
-        let res = parse_template_json_inner(src, Some("test.vue"), None);
-        assert!(res.is_ok());
+        let src = "<template><div>Hello {{name}}</div></template>";
+        let ir = parse_template_json_inner(src, Some("test.vue"), Some(r#"{"name":"World"}"#))
+            .expect("filename dispatch must accept a Vue SFC and evaluate Vue interpolation");
+        assert!(ir.contains("Hello World"), "{ir}");
     }
 
     #[test]
@@ -156,6 +157,20 @@ mod tests {
     fn test_build_context_inner_valid() {
         let ctx = build_context_inner(Some(r#"{"key": "value"}"#)).unwrap();
         assert_eq!(format!("{:?}", ctx.get("key").unwrap()), r#"Str("value")"#);
+    }
+
+    #[test]
+    fn context_scalars_keep_their_types() {
+        let ctx = build_context_inner(Some(
+            r#"{"no":false,"yes":true,"nothing":null,"integer":7,"fraction":1.5,"list":[1]}"#,
+        ))
+        .unwrap();
+        assert!(matches!(ctx.get("no"), Some(TemplateValue::Bool(false))));
+        assert!(matches!(ctx.get("yes"), Some(TemplateValue::Bool(true))));
+        assert!(matches!(ctx.get("nothing"), Some(TemplateValue::Null)));
+        assert!(matches!(ctx.get("integer"), Some(TemplateValue::Int(7))));
+        assert!(matches!(ctx.get("fraction"), Some(TemplateValue::Float(value)) if *value == 1.5));
+        assert!(matches!(ctx.get("list"), Some(TemplateValue::Str(value)) if value == "[1]"));
     }
 
     #[test]

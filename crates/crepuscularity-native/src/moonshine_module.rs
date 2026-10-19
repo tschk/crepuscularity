@@ -259,7 +259,6 @@ impl Inspect<'_> {
                 self.reject(
                     "Solid client resources require explicit @jsxImportSource solid-js provenance",
                 );
-
             }
             return;
         }
@@ -2521,11 +2520,8 @@ fn component_getters(
                             }
                         }
                         if !single {
-                            self.edits.push((
-                                last.end as usize,
-                                last.end as usize,
-                                "]".into(),
-                            ));
+                            self.edits
+                                .push((last.end as usize, last.end as usize, "]".into()));
                         }
                     }
                     walk::walk_call_expression(self, node);
@@ -3469,16 +3465,18 @@ mod svelte_component_prop_tests {
             },
         )
         .unwrap();
-        assert!(compiled.source.contains("[\"ref\"]: cb"), "{}", compiled.source);
+        assert!(
+            compiled.source.contains("[\"ref\"]: cb"),
+            "{}",
+            compiled.source
+        );
         assert!(
             compiled.source.contains("[referenceSymbol]: {"),
             "{}",
             compiled.source
         );
         assert!(
-            compiled
-                .source
-                .contains("as K extends symbol ? never : K"),
+            compiled.source.contains("as K extends symbol ? never : K"),
             "{}",
             compiled.source
         );

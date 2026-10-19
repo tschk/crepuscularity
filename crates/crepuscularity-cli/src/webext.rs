@@ -89,7 +89,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-webext = { version = "0.3.5" }
+crepuscularity-webext = { version = "0.3.6" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde-wasm-bindgen = "0.6"
@@ -103,17 +103,18 @@ pub fn runtime_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+// Add application behavior to these startup hooks; the scaffold starts with no-op hooks.
 #[wasm_bindgen]
-pub fn popup_main() { todo!("implement popup scaffolding") }
+pub fn popup_main() {}
 
 #[wasm_bindgen]
-pub fn options_main() { todo!("implement options scaffolding") }
+pub fn options_main() {}
 
 #[wasm_bindgen]
-pub fn content_main() { todo!("implement content script scaffolding") }
+pub fn content_main() {}
 
 #[wasm_bindgen]
-pub fn background_main() { todo!("implement background script scaffolding") }
+pub fn background_main() {}
 
 #[wasm_bindgen]
 pub fn settings_seed() -> Result<(), JsValue> {
@@ -1725,6 +1726,14 @@ mod tests {
             manifest.to_manifest_v3().options_ui.unwrap().page,
             "pages/custom.html#ui"
         );
+    }
+
+    #[test]
+    fn scaffold_startup_hooks_are_non_panicking_placeholders() {
+        for name in ["popup", "options", "content", "background"] {
+            assert!(WEBEXT_LIB_RS.contains(&format!("pub fn {name}_main() {{}}")));
+        }
+        assert!(!WEBEXT_LIB_RS.contains("todo!("));
     }
 
     #[test]

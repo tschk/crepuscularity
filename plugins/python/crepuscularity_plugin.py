@@ -81,7 +81,7 @@ def render_ir(path: str | Path, context: dict[str, Any] | None = None, allowed_d
     input_data = None
     if context is not None:
         source = template_path.read_bytes().decode("utf-8")
-        payload = {"template": source, "context": context, "filename": command_path, "baseDir": str(template_path.parent)}
+        payload = {"template": source, "context": context, "filename": str(path), "baseDir": str(template_path.parent)}
         args = [_crepus_bin(), "native", "ir", "--stdin-json"]
         input_data = json.dumps(payload).encode("utf-8")
     proc = subprocess.run(args, input=input_data, capture_output=True, check=False)

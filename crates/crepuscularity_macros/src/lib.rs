@@ -220,7 +220,7 @@ fn expand_includes_text_with_depth(
             }
         }
     }
-    let mut output = String::with_capacity(template.len() + 1024);
+    let mut output = String::new();
     let mut in_text = false;
     for line in template.lines() {
         let trimmed = line.trim_start();
@@ -270,18 +270,17 @@ fn expand_includes_text_with_depth(
             };
             let include_path = base_dir.join(file_str);
             let include_dir = include_path.parent().unwrap_or(base_dir).to_path_buf();
-            let included = cache
-                .entry(include_path.clone())
-                .or_insert_with(|| {
-                    std::rc::Rc::new(std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to read included template file `{}`: {}",
-                            include_path.display(),
-                            e
-                        )
-                    }))
-                })
-                .clone();
+            if !cache.contains_key(&include_path) {
+                let text = std::fs::read_to_string(&include_path).unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to read included template file `{}`: {}",
+                        include_path.display(),
+                        e
+                    )
+                });
+                cache.insert(include_path.clone(), std::rc::Rc::new(text));
+            }
+            let included = cache.get(&include_path).unwrap().clone();
             dependencies.insert(include_path.clone());
             let section = match component_name {
                 Some(name) => extract_component_section(&included, name),
@@ -502,6 +501,8 @@ mod component_section_tests {
             "+++\n[Card]\ndescription = 42\n+++\n--- Card\nspan #lost",
         )
         .unwrap();
+        // Diagnostics name the canonical source, which can expand Windows short temp paths.
+        let diagnostic_path = path.canonicalize().unwrap();
         let result = collect_ids_from_path(&path, "crepus_refs!");
         std::fs::write(&path, "--- Card\nspan #card\n--- Button\nbutton #button").unwrap();
         let valid = collect_ids_from_path(&path, "crepus_refs!");
@@ -509,7 +510,10 @@ mod component_section_tests {
         let error = result.unwrap_err();
         assert!(error.contains("crepus_refs!"));
         assert!(error.contains("description must be"));
-        assert!(error.contains(path.to_str().unwrap()));
+        assert!(
+            error.contains(&diagnostic_path.display().to_string()),
+            "{error}"
+        );
         assert_eq!(valid.unwrap().0, ["button", "card"]);
     }
 
@@ -3521,5 +3525,21 @@ mod symlink_frontend_tests {
                 "{body}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod binding_origin_tests {
+    use super::*;
+    #[test]
+    fn attribute_binding_provenance_reaches_explicit_gpui_rejection() {
+        let nodes = crepuscularity_core::parse_template_with_path(
+            "<input [attr.checked]=\"false\"/>",
+            Some(std::path::Path::new("View.ng")),
+        )
+        .unwrap();
+        let node = core_node_to_macro(&nodes[0]).unwrap();
+        let error = generate_node(&node).unwrap_err();
+        assert!(error.contains("attr.checked"), "{error}");
     }
 }

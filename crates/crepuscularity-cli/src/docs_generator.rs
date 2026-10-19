@@ -442,6 +442,7 @@ mod tests {
         .unwrap();
         assert_eq!(index.len(), 2);
     }
+
     use crate::web::ThemeCss;
 
     #[test]

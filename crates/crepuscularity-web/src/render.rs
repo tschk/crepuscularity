@@ -541,12 +541,12 @@ impl<'a> Walker<'a> {
         }
         let mut class_attr = crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
             .unwrap_or_default();
-        if let Some(binding) = el.bindings.iter().find(|binding| {
-            binding.origin == BindingOrigin::Attribute && binding.prop.eq_ignore_ascii_case("class")
-        }) {
-            if let Some(value) = eval_binding(binding, ctx)? {
-                class_attr.push(' ');
-                class_attr.push_str(&crate::escape_html_attribute(&value_to_str(&value)));
+        for binding in &el.bindings {
+            if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
+                if let Some(value) = eval_binding(binding, ctx)? {
+                    class_attr.push(' ');
+                    class_attr.push_str(&crate::escape_html_attribute(&value_to_str(&value)));
+                }
             }
         }
         if !class_attr.is_empty() {
@@ -750,27 +750,34 @@ pub(crate) fn push_bindings(
         {
             continue;
         }
-        let Some(evaluated) = eval_binding(binding, ctx)? else {
+        let Some(evaluated) = crepuscularity_core::eval::eval_binding(binding, ctx)? else {
             continue;
         };
-        if matches!(evaluated, TemplateValue::Bool(false) | TemplateValue::Null)
-            && (is_boolean_html_attribute(&binding.prop)
-                || binding.prop.eq_ignore_ascii_case("hidden")
-                || binding.prop.eq_ignore_ascii_case("download"))
-        {
-            continue;
-        }
-        let value = if binding.prop.eq_ignore_ascii_case("hidden")
-            && matches!(evaluated, TemplateValue::Bool(true))
-        {
-            "hidden".to_string()
-        } else if (binding.prop.eq_ignore_ascii_case("download")
-            || is_boolean_html_attribute(&binding.prop))
-            && matches!(evaluated, TemplateValue::Bool(true))
-        {
-            String::new()
-        } else {
-            value_to_str(&evaluated)
+        let value = match evaluated {
+            TemplateValue::Null
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("hidden")
+                    || binding.prop.eq_ignore_ascii_case("download") =>
+            {
+                continue
+            }
+            TemplateValue::Bool(false)
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("hidden") =>
+            {
+                continue
+            }
+            TemplateValue::Bool(true) if binding.prop.eq_ignore_ascii_case("hidden") => {
+                "hidden".to_string()
+            }
+            TemplateValue::Bool(true)
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("download") =>
+            {
+                String::new()
+            }
+            TemplateValue::Bool(false) if binding.prop.eq_ignore_ascii_case("download") => continue,
+            value => value_to_str(&value),
         };
         if crate::is_url_attr(&binding.prop) && !crate::is_safe_url_value(&binding.prop, &value) {
             continue;

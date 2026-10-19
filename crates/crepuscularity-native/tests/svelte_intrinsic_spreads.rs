@@ -93,8 +93,13 @@ fn form_spreads_use_native_dom_and_typed_ssr_contracts() {
     for tag in ["input", "textarea", "select", "option"] {
         let source = format!("<script>let props=$props();</script><{tag} {{...props}}/>");
         for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
-            let output = compile_moonshine_svelte(&source, Path::new("Form.svelte"), target).unwrap();
-            let expected = if matches!(target, MoonshineModuleTarget::Dom) { "installElementSpread" } else { "spreadServerElement" };
+            let output =
+                compile_moonshine_svelte(&source, Path::new("Form.svelte"), target).unwrap();
+            let expected = if matches!(target, MoonshineModuleTarget::Dom) {
+                "installElementSpread"
+            } else {
+                "spreadServerElement"
+            };
             assert!(output.source.contains(expected), "{}", output.source);
             assert!(!output.source.contains("__crepusSvelteElementSpread"));
         }
@@ -125,7 +130,11 @@ fn select_binding_spreads_use_typed_form_ssr_without_erasing_option_identity() {
     let source = "<script>let attrs=$props();const item={id:1};let value=$state(item);</script><select {...attrs} bind:value><option value={item}>Same</option></select>";
     for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
         let output = compile_moonshine_svelte(source, Path::new("Select.svelte"), target).unwrap();
-        let expected = if matches!(target, MoonshineModuleTarget::Dom) { "installBoundElementSpread" } else { "spreadServerElement" };
+        let expected = if matches!(target, MoonshineModuleTarget::Dom) {
+            "installBoundElementSpread"
+        } else {
+            "spreadServerElement"
+        };
         assert!(output.source.contains(expected), "{}", output.source);
     }
 }
@@ -134,19 +143,27 @@ fn select_binding_spreads_use_typed_form_ssr_without_erasing_option_identity() {
 fn file_binding_spreads_keep_server_model_reads_unreachable() {
     let source = "<script lang=\"ts\">let attrs=$props();let files=$state<FileList|null>(null);</script><input type=\"file\" bind:files {...attrs}/>";
     for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
-        let output=compile_moonshine_svelte(source,Path::new("Files.svelte"),target).unwrap();
-        let expected=if matches!(target,MoonshineModuleTarget::Dom){"installBoundElementSpread"}else{"spreadServerElement"};
-        assert!(output.source.contains(expected),"{}",output.source);
+        let output = compile_moonshine_svelte(source, Path::new("Files.svelte"), target).unwrap();
+        let expected = if matches!(target, MoonshineModuleTarget::Dom) {
+            "installBoundElementSpread"
+        } else {
+            "spreadServerElement"
+        };
+        assert!(output.source.contains(expected), "{}", output.source);
     }
 }
 
 #[test]
 fn open_binding_spreads_preserve_owned_dom_and_boolean_ssr_paths() {
     let source="<script>let attrs=$props();let open=$state(false);</script><details {...attrs} bind:open><summary>Title</summary>Body</details>";
-    for target in [MoonshineModuleTarget::Dom,MoonshineModuleTarget::Ssr] {
-        let output=compile_moonshine_svelte(source,Path::new("Open.svelte"),target).unwrap();
-        let expected=if matches!(target,MoonshineModuleTarget::Dom){"installBoundElementSpread"}else{"spreadServerEntries"};
-        assert!(output.source.contains(expected),"{}",output.source);
+    for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
+        let output = compile_moonshine_svelte(source, Path::new("Open.svelte"), target).unwrap();
+        let expected = if matches!(target, MoonshineModuleTarget::Dom) {
+            "installBoundElementSpread"
+        } else {
+            "spreadServerEntries"
+        };
+        assert!(output.source.contains(expected), "{}", output.source);
     }
 }
 
@@ -162,15 +179,42 @@ let dynamicVal=$state('b');
 <input type="checkbox" value={dynamicVal} {...attrs} bind:group={selected}/>
 <input type="radio" value="a" bind:group={choice} {...attrs}/>"#;
     for target in [MoonshineModuleTarget::Dom, MoonshineModuleTarget::Ssr] {
-        let output = compile_moonshine_svelte(source, Path::new("GroupSpread.svelte"), target).unwrap();
+        let output =
+            compile_moonshine_svelte(source, Path::new("GroupSpread.svelte"), target).unwrap();
         if matches!(target, MoonshineModuleTarget::Dom) {
-            assert!(output.source.contains("installBoundElementSpread"), "{}", output.source);
-            assert!(output.source.contains("createInputGroup"), "{}", output.source);
-            assert!(!output.source.contains("__installGroupMember"), "{}", output.source);
-            assert!(output.source.contains(".bind(__groupInput, () => dynamicVal.value)"), "{}", output.source);
+            assert!(
+                output.source.contains("installBoundElementSpread"),
+                "{}",
+                output.source
+            );
+            assert!(
+                output.source.contains("createInputGroup"),
+                "{}",
+                output.source
+            );
+            assert!(
+                !output.source.contains("__installGroupMember"),
+                "{}",
+                output.source
+            );
+            assert!(
+                output
+                    .source
+                    .contains(".bind(__groupInput, () => dynamicVal.value)"),
+                "{}",
+                output.source
+            );
         } else {
-            assert!(output.source.contains("spreadServerElement"), "{}", output.source);
-            assert!(!output.source.contains("hSourceEntries"), "{}", output.source);
+            assert!(
+                output.source.contains("spreadServerElement"),
+                "{}",
+                output.source
+            );
+            assert!(
+                !output.source.contains("hSourceEntries"),
+                "{}",
+                output.source
+            );
             assert!(output.source.contains(".includes("), "{}", output.source);
         }
     }

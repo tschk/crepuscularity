@@ -6,30 +6,30 @@ using System.Runtime.InteropServices;
 
 public static class EquilibriumImports
 {
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern IntPtr @crepus_session_new();
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern void @crepus_session_free(IntPtr p0);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_set_template_string(IntPtr p0, IntPtr p1, IntPtr p2);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_set_component(IntPtr p0, IntPtr p1);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_set_files_json(IntPtr p0, IntPtr p1);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_set_context_json(IntPtr p0, IntPtr p1);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_apply_context_patch_json(IntPtr p0, IntPtr p1);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern int @crepus_session_set_event_callback(IntPtr p0, IntPtr p1, IntPtr p2);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern IntPtr @crepus_session_render_ir_json(IntPtr p0);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern IntPtr @crepus_session_dispatch_event_json(IntPtr p0, IntPtr p1);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern IntPtr @crepus_session_take_last_error(IntPtr p0);
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern IntPtr @crepus_last_error();
-    [DllImport(@"crepuscularity_abi", CallingConvention = global::System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    public static extern void @crepus_string_free(IntPtr p0);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr crepus_session_new();
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void crepus_session_free(IntPtr session);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_set_template_string(IntPtr session, IntPtr template_utf8, IntPtr base_dir_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_set_component(IntPtr session, IntPtr component_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_set_files_json(IntPtr session, IntPtr files_json_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_set_context_json(IntPtr session, IntPtr context_json_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_apply_context_patch_json(IntPtr session, IntPtr context_json_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int crepus_session_set_event_callback(IntPtr session, IntPtr callback, IntPtr userdata);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr crepus_session_render_ir_json(IntPtr session);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr crepus_session_dispatch_event_json(IntPtr session, IntPtr event_json_utf8);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr crepus_session_take_last_error(IntPtr session);
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr crepus_last_error();
+    [DllImport("crepuscularity_abi", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void crepus_string_free(IntPtr ptr);
 }

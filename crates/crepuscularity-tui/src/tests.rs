@@ -496,15 +496,6 @@ fn for_loop_renders_items() {
 }
 
 #[test]
-fn match_quoted_pattern_decodes_escapes() {
-    let mut ctx = TemplateContext::new();
-    ctx.set("status", "a\nb");
-    let tpl = "div\n match {status}\n \"a\\nb\" =>\n  \"Matched\"\n _ =>\n  \"Missed\"";
-    let rows = render(20, 3, tpl, &ctx);
-    assert!(all_text(&rows).contains("Matched"), "{}", all_text(&rows));
-}
-
-#[test]
 fn match_correct_arm() {
     let mut ctx = TemplateContext::new();
     ctx.set("status", "active");

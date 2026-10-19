@@ -906,7 +906,11 @@ pub fn compile_moonshine_svelte(
     binding_helpers.extend(component.text_component.iter().cloned());
     binding_helpers.extend(component.raw_html_component);
     binding_helpers.extend(component.render_component);
-    let (synthetic, spread_metadata) = crate::svelte_spreads::prepare_target(&synthetic, target, component.intrinsic_namespace_attribute.as_deref())?;
+    let (synthetic, spread_metadata) = crate::svelte_spreads::prepare_target(
+        &synthetic,
+        target,
+        component.intrinsic_namespace_attribute.as_deref(),
+    )?;
     let (synthetic, prop_helper) = match target {
         MoonshineModuleTarget::Dom => {
             let mut static_helpers = binding_helpers.clone();

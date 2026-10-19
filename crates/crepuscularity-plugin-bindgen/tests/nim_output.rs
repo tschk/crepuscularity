@@ -42,6 +42,45 @@ fn options(output: &Path, header: Option<PathBuf>) -> BindgenOptions {
     }
 }
 
+fn assert_generated_signatures(output: &Path) {
+    let source = std::fs::read_to_string(output.join("nim/abi_generated.nim")).unwrap();
+    assert!(
+        source.contains(
+            r#"type CrepusEventCallback* = proc(event_json: cstring; userdata: pointer) {.cdecl.}"#
+        ),
+        "{source}"
+    );
+    for expected in [
+        r#"proc `crepus_session_new`*(): ptr CrepusSession {.importc: "crepus_session_new", cdecl.}"#,
+        r#"proc `crepus_session_free`*(`session`: ptr CrepusSession) {.importc: "crepus_session_free", cdecl.}"#,
+        r#"proc `crepus_session_set_template_string`*(`session`: ptr CrepusSession; `template_utf8`: cstring; `base_dir_utf8`: cstring): int32 {.importc: "crepus_session_set_template_string", cdecl.}"#,
+        r#"proc `crepus_session_set_component`*(`session`: ptr CrepusSession; `component_utf8`: cstring): int32 {.importc: "crepus_session_set_component", cdecl.}"#,
+        r#"proc `crepus_session_set_files_json`*(`session`: ptr CrepusSession; `files_json_utf8`: cstring): int32 {.importc: "crepus_session_set_files_json", cdecl.}"#,
+        r#"proc `crepus_session_set_context_json`*(`session`: ptr CrepusSession; `context_json_utf8`: cstring): int32 {.importc: "crepus_session_set_context_json", cdecl.}"#,
+        r#"proc `crepus_session_apply_context_patch_json`*(`session`: ptr CrepusSession; `context_json_utf8`: cstring): int32 {.importc: "crepus_session_apply_context_patch_json", cdecl.}"#,
+        r#"proc `crepus_session_set_event_callback`*(`session`: ptr CrepusSession; `callback`: CrepusEventCallback; `userdata`: pointer): int32 {.importc: "crepus_session_set_event_callback", cdecl.}"#,
+        r#"proc `crepus_session_render_ir_json`*(`session`: ptr CrepusSession): cstring {.importc: "crepus_session_render_ir_json", cdecl.}"#,
+        r#"proc `crepus_session_dispatch_event_json`*(`session`: ptr CrepusSession; `event_json_utf8`: cstring): cstring {.importc: "crepus_session_dispatch_event_json", cdecl.}"#,
+        r#"proc `crepus_session_take_last_error`*(`session`: ptr CrepusSession): cstring {.importc: "crepus_session_take_last_error", cdecl.}"#,
+        r#"proc `crepus_last_error`*(): cstring {.importc: "crepus_last_error", cdecl.}"#,
+        r#"proc `crepus_string_free`*(`ptr`: cstring) {.importc: "crepus_string_free", cdecl.}"#,
+    ] {
+        assert!(
+            source.lines().any(|line| line.trim() == expected),
+            "missing {expected}:\n{source}"
+        );
+    }
+    if source.contains("`crepus_extra`") {
+        assert!(source.contains(r#"proc `crepus_extra`*(`value`: int32; `userdata`: pointer; `name`: cstring): int32 {.importc: "crepus_extra", cdecl.}"#), "{source}");
+    }
+    if source.contains("`crepus_float`") {
+        assert!(source.contains(r#"proc `crepus_float`*(`value`: float32): float32 {.importc: "crepus_float", cdecl.}"#), "{source}");
+    }
+    if source.contains("`crepus_double`") {
+        assert!(source.contains(r#"proc `crepus_double`*(`value`: float64): float64 {.importc: "crepus_double", cdecl.}"#), "{source}");
+    }
+}
+
 const SIGNATURES: &str = r#"import abi_generated
 
 proc callback(event: cstring, userdata: pointer) {.cdecl.} = discard
@@ -139,8 +178,9 @@ crepus_session_free(session)
     );
 }
 
-#[test]
-fn actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module() {
+fn actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module_case(
+    compile_external: bool,
+) {
     let output = Output::new();
     let files = generate_all(&options(&output.0, None)).unwrap();
     assert_eq!(files.len(), 1);
@@ -153,11 +193,24 @@ fn actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module
         13,
         "{generated}"
     );
-    compile_import(&output.0, "");
+    assert_generated_signatures(&output.0);
+    if compile_external {
+        compile_import(&output.0, "");
+    }
 }
 
 #[test]
-fn selected_header_extra_function_preserves_pointer_and_scalar_types() {
+fn actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module() {
+    actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Nim and a C compiler"]
+fn actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module_compiler_check() {
+    actual_header_exports_all_thirteen_typed_abi_functions_to_an_importing_module_case(true);
+}
+
+fn selected_header_extra_function_preserves_pointer_and_scalar_types_case(compile_external: bool) {
     let output = Output::new();
     let original = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -165,7 +218,8 @@ fn selected_header_extra_function_preserves_pointer_and_scalar_types() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("custom.h");
     let extra = "int32_t crepus_extra(int32_t value, void *userdata, const char *name);\nfloat crepus_float(float value);\ndouble crepus_double(double value);\n";
     std::fs::write(
@@ -187,7 +241,26 @@ fn selected_header_extra_function_preserves_pointer_and_scalar_types() {
         16,
         "{generated}"
     );
-    compile_import(&output.0, "let extra: proc(value: int32, userdata: pointer, name: cstring): int32 {.cdecl.} = crepus_extra\nlet floatFn: proc(value: float32): float32 {.cdecl.} = crepus_float\nlet doubleFn: proc(value: float64): float64 {.cdecl.} = crepus_double");
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("nim/abi_generated.nim")).unwrap();
+    for name in ["crepus_extra", "crepus_float", "crepus_double"] {
+        assert!(source.contains(name), "missing {name}: {source}");
+    }
+
+    if compile_external {
+        compile_import(&output.0, "let extra: proc(value: int32, userdata: pointer, name: cstring): int32 {.cdecl.} = crepus_extra\nlet floatFn: proc(value: float32): float32 {.cdecl.} = crepus_float\nlet doubleFn: proc(value: float64): float64 {.cdecl.} = crepus_double");
+    }
+}
+
+#[test]
+fn selected_header_extra_function_preserves_pointer_and_scalar_types() {
+    selected_header_extra_function_preserves_pointer_and_scalar_types_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Nim and a C compiler"]
+fn selected_header_extra_function_preserves_pointer_and_scalar_types_compiler_check() {
+    selected_header_extra_function_preserves_pointer_and_scalar_types_case(true);
 }
 
 #[test]
@@ -204,7 +277,8 @@ fn unsupported_array_or_unknown_type_fails_without_writing_bindings() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("unsupported.h");
         std::fs::write(
             &header,
@@ -227,6 +301,7 @@ fn unsupported_array_or_unknown_type_fails_without_writing_bindings() {
 }
 
 #[test]
+#[ignore = "requires installed Nim and a C compiler"]
 fn generated_typed_callbacks_roundtrip_through_an_independent_real_header_c_stub() {
     let output = Output::new();
     let config = options(&output.0, None);
@@ -415,7 +490,8 @@ fn style_insensitive_function_names_fail_without_writing_bindings() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("collision.h");
     std::fs::write(
         &header,
@@ -432,8 +508,9 @@ fn style_insensitive_function_names_fail_without_writing_bindings() {
     assert!(!output.0.join("nim/abi_generated.nim").exists());
 }
 
-#[test]
-fn style_insensitive_function_names_preserve_distinct_parameter_overloads() {
+fn style_insensitive_function_names_preserve_distinct_parameter_overloads_case(
+    compile_external: bool,
+) {
     let output = Output::new();
     let original = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -441,7 +518,8 @@ fn style_insensitive_function_names_preserve_distinct_parameter_overloads() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("overloads.h");
     std::fs::write(&header, source.replacen(
         "#ifdef __cplusplus",
@@ -449,7 +527,31 @@ fn style_insensitive_function_names_preserve_distinct_parameter_overloads() {
         1,
     )).unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
-    compile_import(&output.0, "let number: proc(value: int32) {.cdecl.} = crepus_overload\nlet text: proc(value: cstring) {.cdecl.} = crepusOverload");
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("nim/abi_generated.nim")).unwrap();
+    assert!(
+        source.contains(r#"proc `crepus_overload`*(`value`: int32)"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#"proc `crepusOverload`*(`value`: cstring)"#),
+        "{source}"
+    );
+
+    if compile_external {
+        compile_import(&output.0, "let number: proc(value: int32) {.cdecl.} = crepus_overload\nlet text: proc(value: cstring) {.cdecl.} = crepusOverload");
+    }
+}
+
+#[test]
+fn style_insensitive_function_names_preserve_distinct_parameter_overloads() {
+    style_insensitive_function_names_preserve_distinct_parameter_overloads_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Nim and a C compiler"]
+fn style_insensitive_function_names_preserve_distinct_parameter_overloads_compiler_check() {
+    style_insensitive_function_names_preserve_distinct_parameter_overloads_case(true);
 }
 
 #[test]
@@ -461,7 +563,8 @@ fn style_insensitive_parameter_names_fail_without_writing_bindings() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("parameter-collision.h");
     std::fs::write(
         &header,
@@ -478,8 +581,7 @@ fn style_insensitive_parameter_names_fail_without_writing_bindings() {
     assert!(!output.0.join("nim/abi_generated.nim").exists());
 }
 
-#[test]
-fn parameter_first_character_case_remains_distinct() {
+fn parameter_first_character_case_remains_distinct_case(compile_external: bool) {
     let output = Output::new();
     let original = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -487,7 +589,8 @@ fn parameter_first_character_case_remains_distinct() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("parameter-case.h");
     std::fs::write(
         &header,
@@ -499,7 +602,27 @@ fn parameter_first_character_case_remains_distinct() {
     )
     .unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
-    compile_import(&output.0, "");
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("nim/abi_generated.nim")).unwrap();
+    assert!(
+        source.contains(r#"proc `crepus_parameters`*(`Value`: int32; `value`: int32)"#),
+        "{source}"
+    );
+
+    if compile_external {
+        compile_import(&output.0, "");
+    }
+}
+
+#[test]
+fn parameter_first_character_case_remains_distinct() {
+    parameter_first_character_case_remains_distinct_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Nim and a C compiler"]
+fn parameter_first_character_case_remains_distinct_compiler_check() {
+    parameter_first_character_case_remains_distinct_case(true);
 }
 
 #[test]
@@ -523,7 +646,8 @@ fn equivalent_parameter_type_aliases_fail_without_writing_bindings() {
                 .repo_root
                 .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let header = output.0.join("alias-collision.h");
         let extra = format!("void crepus_alias({left} value);\nvoid crepusAlias({right} value);\n#ifdef __cplusplus");
         std::fs::write(&header, source.replacen("#ifdef __cplusplus", &extra, 1)).unwrap();
@@ -537,8 +661,7 @@ fn equivalent_parameter_type_aliases_fail_without_writing_bindings() {
     }
 }
 
-#[test]
-fn distinct_long_and_character_overloads_remain_supported() {
+fn distinct_long_and_character_overloads_remain_supported_case(compile_external: bool) {
     let output = Output::new();
     let original = options(&output.0, None);
     let source = std::fs::read_to_string(
@@ -546,7 +669,8 @@ fn distinct_long_and_character_overloads_remain_supported() {
             .repo_root
             .join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let header = output.0.join("long-overloads.h");
     std::fs::write(
         &header,
@@ -558,5 +682,37 @@ fn distinct_long_and_character_overloads_remain_supported() {
     )
     .unwrap();
     generate_all(&options(&output.0, Some(header))).unwrap();
-    compile_import(&output.0, "");
+    assert_generated_signatures(&output.0);
+    let source = std::fs::read_to_string(output.0.join("nim/abi_generated.nim")).unwrap();
+    assert!(
+        source.contains(r#"proc `crepus_alias`*(`value`: clong)"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#"proc `crepusAlias`*(`value`: int64)"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#"proc `crepus_byte`*(`value`: cuchar)"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#"proc `crepusByte`*(`value`: uint8)"#),
+        "{source}"
+    );
+
+    if compile_external {
+        compile_import(&output.0, "");
+    }
+}
+
+#[test]
+fn distinct_long_and_character_overloads_remain_supported() {
+    distinct_long_and_character_overloads_remain_supported_case(false);
+}
+
+#[test]
+#[ignore = "requires installed Nim and a C compiler"]
+fn distinct_long_and_character_overloads_remain_supported_compiler_check() {
+    distinct_long_and_character_overloads_remain_supported_case(true);
 }

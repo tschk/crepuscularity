@@ -268,7 +268,8 @@ pub(crate) fn allocate_with_spreads(
                     let JSXAttributeItem::Attribute(attr) = item else {
                         return None;
                     };
-                    if !matches!(&attr.name, JSXAttributeName::Identifier(id) if id.name == "value") {
+                    if !matches!(&attr.name, JSXAttributeName::Identifier(id) if id.name == "value")
+                    {
                         return None;
                     }
                     match &attr.value {
@@ -422,7 +423,8 @@ mod allocation_tests {
         );
     }
     #[test]
-    fn spread_group_members_keep_change_handlers_in_spread_layers_and_watch_authored_dynamic_values() {
+    fn spread_group_members_keep_change_handlers_in_spread_layers_and_watch_authored_dynamic_values(
+    ) {
         let source = "function App(){let selected;let dynamicVal;let attrs;return <><input type={'checkbox'} value={dynamicVal} __crepusSvelteElementSpread0={attrs} onChange={event=>selected} Group={selected}/><input type={'checkbox'} __crepusSvelteElementSpread1={attrs} Group={selected}/></> }";
         let spread_markers = vec![
             "__crepusSvelteElementSpread0".to_string(),
@@ -489,7 +491,9 @@ pub(crate) fn ssr(
                 Some(JSXAttributeValue::ExpressionContainer(value))=>Some((attribute.span, value.expression.span())),_=>None,
             },_=>None,
         });
-        let Some((marker_span, target)) = binding else { continue };
+        let Some((marker_span, target)) = binding else {
+            continue;
+        };
         let kind = input_kind(element)?;
         let target = &source[target.start as usize..target.end as usize];
         let model =
@@ -670,10 +674,7 @@ mod ssr_tests {
         let (output, helper) = ssr(source, "Group", None).unwrap();
         assert!(helper.is_none());
         assert!(!output.contains("hSourceEntries"), "{output}");
-        assert!(
-            output.contains("{...(false?{checked:"),
-            "{output}"
-        );
+        assert!(output.contains("{...(false?{checked:"), "{output}");
         assert!(
             output.contains("{...attrs} {...{checked:((false?"),
             "{output}"

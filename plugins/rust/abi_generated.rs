@@ -12,7 +12,7 @@ pub type CrepusEventCallback = Option<unsafe extern "C" fn(*const c_char, *mut c
 use std::os::raw::*;
 
 #[allow(non_camel_case_types, non_snake_case, dead_code)]
-unsafe extern "C" {
+extern "C" {
     pub fn crepus_session_new() -> *mut CrepusSession;
     pub fn crepus_session_free(session: *mut CrepusSession);
     pub fn crepus_session_set_template_string(session: *mut CrepusSession, template_utf8: *const c_char, base_dir_utf8: *const c_char) -> i32;

@@ -192,7 +192,7 @@ fn write_desktop_project(
     fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"crepus-tauri-desktop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngpui = { package = \"gpui-ce\", version = \"0.2.2\", default-features = false }\n\n[target.'cfg(target_os = \"macos\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"macos\"] }\n\n[target.'cfg(target_os = \"linux\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"x11\"] }\n\n[target.'cfg(target_os = \"windows\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"windows\"] }\n",
+        "[package]\nname = \"crepus-tauri-desktop\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngpui = { package = \"gpui-ce\", version = \"0.2.2\", default-features = false }\ngpui_platform = { package = \"gpui_ce_platform\", version = \"0.1.0\", features = [\"font-kit\"] }\n\n[target.'cfg(target_os = \"macos\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"macos\"] }\n\n[target.'cfg(target_os = \"linux\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"x11\"] }\n\n[target.'cfg(target_os = \"windows\")'.dependencies]\ncrepuscularity-gpui = { version = \"0.5.10\", features = [\"windows\"] }\n",
     )
     .map_err(|e| e.to_string())?;
     let opens = windows
@@ -230,7 +230,7 @@ fn replace(path: impl AsRef<Path>, from: &str, to: &str) -> Result<(), String> {
 mod scaffold_dependency_tests {
     use super::*;
     #[test]
-    fn desktop_manifest_is_valid_and_matches_backend_pin() {
+    fn desktop_manifest_is_valid_and_matches_backend_registry_dependencies() {
         let dir = tempfile::tempdir().unwrap();
         write_desktop_project(dir.path(), &[]).unwrap();
         let generated: toml::Value =
@@ -238,9 +238,31 @@ mod scaffold_dependency_tests {
                 .unwrap();
         let backend: toml::Value =
             toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
+        for dependency in ["gpui", "gpui_platform"] {
+            let emitted = &generated["dependencies"][dependency];
+            let shipped = &backend["dependencies"][dependency];
+            for field in ["package", "version"] {
+                assert_eq!(emitted[field], shipped[field], "{dependency}.{field}");
+            }
+            for field in ["git", "rev", "path"] {
+                assert!(emitted.get(field).is_none(), "{dependency}.{field}");
+            }
+        }
         assert_eq!(
-            generated["dependencies"]["gpui"]["rev"],
-            backend["dependencies"]["gpui"]["rev"]
+            generated["dependencies"]["gpui"]["default-features"],
+            backend["dependencies"]["gpui"]["default-features"]
         );
+        assert!(generated["dependencies"]["gpui_platform"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature.as_str() == Some("font-kit")));
+        for feature in ["gpui/font-kit", "gpui_platform/font-kit"] {
+            assert!(backend["features"]["font-kit"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.as_str() == Some(feature)));
+        }
     }
 }

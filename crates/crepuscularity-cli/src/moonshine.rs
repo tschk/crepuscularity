@@ -122,9 +122,9 @@ fn package_json_template(slug: &str, core: &str, crepus: &str, components: &str)
 // outside this developer's machine. A `file:` path here would resolve against a
 // sibling directory the user does not have, so `bun install` would fail on a
 // freshly scaffolded project; the published packages are the working default.
-const PLACEHOLDER_CORE: &str = "^0.3.4";
-const PLACEHOLDER_CREPUS: &str = "^0.3.4";
-const PLACEHOLDER_COMPONENTS: &str = "^0.3.4";
+const PLACEHOLDER_CORE: &str = "^0.4.49";
+const PLACEHOLDER_CREPUS: &str = "^0.4.49";
+const PLACEHOLDER_COMPONENTS: &str = "^0.4.49";
 
 const INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -415,21 +415,19 @@ fn scaffold_app(name: &str) {
                 ui::warn()
             );
             eprintln!(
-                "  {} scaffolding with placeholder file:../moonshine/… — clone tschk/moonshine first (see README)",
+                "  {} scaffolding with published npm packages (^0.4.49); no local checkout is required",
                 ui::dim("→")
             );
             (
                 PLACEHOLDER_CORE.to_string(),
                 PLACEHOLDER_CREPUS.to_string(),
                 PLACEHOLDER_COMPONENTS.to_string(),
-                r#"No local moonshine checkout was found. Clone it next to this app (or set `MOONSHINE_PATH`):
+                r#"No local moonshine checkout was found. `package.json` uses the published
+`@tschk/moonshine`, `@tschk/crepus-moonshine`, and `@tschk/moonshine-components`
+packages at `^0.4.49`. Run `bun install`; no local checkout is required.
 
-```bash
-git clone https://github.com/tschk/moonshine.git ../moonshine
-# packages: packages/core, packages/crepus-moonshine, components
-```
-
-`package.json` already uses placeholder `file:../moonshine/…` paths."#
+For local Moonshine development, clone the repository and set `MOONSHINE_PATH`
+before scaffolding to select local `file:` dependencies."#
                     .to_string(),
             )
         }
@@ -490,7 +488,7 @@ mod rust_scaffold {
     use crate::scaffold;
     use crate::ui;
 
-    const SCAFFOLD_NATIVE_VERSION: &str = "0.6.4";
+    const SCAFFOLD_NATIVE_VERSION: &str = "0.6.5";
 
     const CARGO_TOML: &str = r#"[package]
 name = "{{slug}}"
@@ -788,7 +786,7 @@ createApp({ root: Root }).mount("#app");
                 PLACEHOLDER_CREPUS.to_string(),
                 PLACEHOLDER_COMPONENTS.to_string(),
                 "no local moonshine checkout found (MOONSHINE_PATH, ../moonshine, or \
-                 ~/projects/moonshine) — using placeholder file: paths"
+                 ~/projects/moonshine) — using published npm packages (^0.4.49)"
                     .to_string(),
             ),
         };
@@ -873,20 +871,10 @@ createApp({ root: Root }).mount("#app");
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        let mut aliased_destination = false;
         for entry in &entries {
             let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
             scaffold::validate_copy_destination(&destination, relative)
                 .map_err(|e| e.to_string())?;
-            let mut candidate = destination.clone();
-            for component in relative.components() {
-                candidate.push(component.as_os_str());
-                if std::fs::symlink_metadata(&candidate)
-                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
-                {
-                    aliased_destination = true;
-                }
-            }
             let identity = entry.path().canonicalize().map_err(|e| e.to_string())?;
             if identity.starts_with(&destination) {
                 return Err(format!(
@@ -895,28 +883,14 @@ createApp({ root: Root }).mount("#app");
                 ));
             }
         }
-        use rayon::prelude::*;
-        for entry in &entries {
-            if entry.file_type().is_dir() {
-                let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
-                std::fs::create_dir_all(dest.join(relative)).map_err(|e| e.to_string())?;
-            }
-        }
-        let copy_file = |entry: &walkdir::DirEntry| {
+        for entry in entries {
             let relative = entry.path().strip_prefix(src).map_err(|e| e.to_string())?;
-            std::fs::copy(entry.path(), dest.join(relative)).map_err(|e| e.to_string())?;
-            Ok::<_, String>(())
-        };
-        if aliased_destination {
-            // Contained links may map multiple logical files to one output.
-            for entry in entries.iter().filter(|entry| entry.file_type().is_file()) {
-                copy_file(entry)?;
+            let output = dest.join(relative);
+            if entry.file_type().is_dir() {
+                std::fs::create_dir_all(output).map_err(|e| e.to_string())?;
+            } else if entry.file_type().is_file() {
+                std::fs::copy(entry.path(), output).map_err(|e| e.to_string())?;
             }
-        } else {
-            entries
-                .par_iter()
-                .filter(|entry| entry.file_type().is_file())
-                .try_for_each(copy_file)?;
         }
 
         Ok(())
@@ -1105,7 +1079,13 @@ mod tests {
         assert!(pkg.contains("\"react\""));
         assert!(pkg.contains("\"react-dom\""));
         assert!(pkg.contains("@vitejs/plugin-react"));
-        assert!(pkg.contains("\"@tschk/moonshine\": \"^0.3.4\""));
+        for name in [
+            "@tschk/moonshine",
+            "@tschk/crepus-moonshine",
+            "@tschk/moonshine-components",
+        ] {
+            assert!(pkg.contains(&format!("\"{name}\": \"^0.4.49\"")), "{pkg}");
+        }
         // Without a local checkout the fallback must be installable anywhere, so
         // no `file:` path may reach a scaffolded package.json.
         assert!(!pkg.contains("file:"), "{pkg}");

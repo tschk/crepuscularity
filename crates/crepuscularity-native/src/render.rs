@@ -300,7 +300,11 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<ViewNode, Crepu
     }
     if let Some(id) = &el.id {
         node.set_id(id.clone());
-    } else if let Some(binding) = el.bindings.iter().find(|binding| binding.prop == "id") {
+    } else if let Some(binding) = el
+        .bindings
+        .iter()
+        .find(|binding| binding.matches_prop("id"))
+    {
         if let Some(value) = eval_binding(binding, ctx)? {
             node.set_id(value_to_str(&value));
         }
@@ -308,7 +312,7 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<ViewNode, Crepu
     if el
         .bindings
         .iter()
-        .any(|binding| binding.prop == "hidden" && binding.origin == BindingOrigin::Attribute)
+        .any(|binding| binding.matches_prop("hidden") && binding.origin == BindingOrigin::Attribute)
         && single_binding_value(el, "hidden", ctx)?.is_some()
     {
         node.style_mut().get_or_insert_with(Default::default).hidden = Some(true);
@@ -317,7 +321,7 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<ViewNode, Crepu
     let mut names = el
         .bindings
         .iter()
-        .filter(|binding| binding.prop == "aria-label");
+        .filter(|binding| binding.matches_prop("aria-label"));
     if let Some(name) = names.next() {
         if names.next().is_some() {
             return Err(CrepusError::render(
@@ -332,7 +336,7 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> Result<ViewNode, Crepu
         let mut targets = el
             .bindings
             .iter()
-            .filter(|binding| matches!(binding.prop.as_str(), "for" | "htmlFor"));
+            .filter(|binding| binding.matches_prop("for") || binding.matches_prop("htmlFor"));
         if let Some(target) = targets.next() {
             if targets.next().is_some() {
                 return Err(CrepusError::render(
@@ -648,6 +652,13 @@ fn render_form_element(
             single_binding_value(el, "multiple", ctx)?.is_some_and(|value| {
                 !matches!(value, TemplateValue::Bool(false) | TemplateValue::Null)
             })
+        } else if el.bindings.iter().any(|binding| {
+            binding.matches_prop("multiple") && binding.origin == BindingOrigin::Expression
+        }) {
+            // Portable picker expressions retain the existing authored-presence
+            // contract. Newly distinguished literal false values keep coercion.
+            single_binding_value(el, "multiple", ctx)?
+                .is_some_and(|value| !matches!(value, TemplateValue::Null))
         } else {
             binding_bool(el, "multiple", ctx)?
                 .unwrap_or_else(|| classes.iter().any(|c| c == "multiple"))
@@ -919,7 +930,15 @@ fn render_media_element(
         let hints = style::extract_stack_hints(classes.to_vec(), Some(ctx));
         return Ok(Some(ViewNode::WebView {
             src: binding_value_string(el, "src", ctx)?
-                .map(|source| source.trim().to_string())
+                .map(|source| {
+                    if el.bindings.iter().any(|binding| {
+                        binding.origin == BindingOrigin::Attribute && binding.matches_prop("src")
+                    }) {
+                        source
+                    } else {
+                        source.trim().to_string()
+                    }
+                })
                 .unwrap_or_default(),
             style: hints.style.opt(),
         }));
@@ -1080,7 +1099,10 @@ fn single_binding_value(
     prop: &str,
     ctx: &TemplateContext,
 ) -> Result<Option<TemplateValue>, CrepusError> {
-    let mut bindings = el.bindings.iter().filter(|binding| binding.prop == prop);
+    let mut bindings = el
+        .bindings
+        .iter()
+        .filter(|binding| binding.matches_prop(prop));
     let first = bindings.next();
     if bindings.next().is_some() {
         return Err(CrepusError::render(format!("duplicate {prop} binding")));
@@ -1100,7 +1122,7 @@ fn input_initial_checked(
         .into_iter()
         .filter(|name| {
             el.bindings.iter().any(|binding| {
-                binding.prop == *name
+                binding.matches_prop(name)
                     && (binding.origin != BindingOrigin::Attribute || *name == "checked")
             })
         });
@@ -1127,7 +1149,7 @@ fn input_initial_value(el: &Element, ctx: &TemplateContext) -> Result<Option<Str
         .into_iter()
         .filter(|name| {
             el.bindings.iter().any(|binding| {
-                binding.prop == *name
+                binding.matches_prop(name)
                     && (binding.origin != BindingOrigin::Attribute
                         || (*name == "value" && !el.tag.eq_ignore_ascii_case("textarea")))
             })
@@ -1211,7 +1233,7 @@ fn binding_bool(
     let attribute = el
         .bindings
         .iter()
-        .any(|binding| binding.prop == prop && binding.origin == BindingOrigin::Attribute);
+        .any(|binding| binding.matches_prop(prop) && binding.origin == BindingOrigin::Attribute);
     Ok(single_binding_value(el, prop, ctx)?.and_then(|value| {
         if attribute {
             return Some(true);
@@ -1352,7 +1374,7 @@ fn active_classes(el: &Element, ctx: &TemplateContext) -> Result<Vec<String>, Cr
     if el
         .bindings
         .iter()
-        .any(|binding| binding.prop == "class" && binding.origin == BindingOrigin::Attribute)
+        .any(|binding| binding.matches_prop("class") && binding.origin == BindingOrigin::Attribute)
     {
         if let Some(value) = single_binding_value(el, "class", ctx)? {
             expanded.extend(value_to_str(&value).split_whitespace().map(str::to_string));

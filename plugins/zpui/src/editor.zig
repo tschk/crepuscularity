@@ -259,7 +259,7 @@ pub fn State(comptime View: type) type {
                     w.paintQuad(zpui.fill(.{ .origin = p, .size = .{ .width = 1, .height = layout.lineHeight() } }, zpui.rgb(0x111827).toHsla()));
                 }
             };
-            var result = zpui.div().id("editor").relative().trackFocus(self.focus).cursorText().wFull().minH(zpui.px(28))
+            var result = zpui.div().id("editor").relative().trackFocus(self.focus).tabIndex(0).cursorText().wFull().minH(zpui.px(28))
                 .role(if (self.secure) .password_input else if (self.multiline) .multiline_text_input else .text_input)
                 .ariaLabel(self.placeholder).ariaPlaceholder(self.placeholder).ariaValue(zpui.frameAllocator().dupe(u8, display) catch @panic("OOM"))
                 .ariaTextSelection(self.displayIndex(self.anchor), self.displayIndex(self.caret))

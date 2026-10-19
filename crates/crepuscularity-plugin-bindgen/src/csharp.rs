@@ -3,6 +3,10 @@ use std::path::Path;
 use syn::{ForeignItem, Item, ReturnType, Type};
 
 pub(super) fn generate(header: &Path) -> Result<String, String> {
+    // Keep canonical signatures (including public parameter names) source-compatible.
+    if super::crepus_abi::check_header(header).is_ok_and(|checked| checked.canonical) {
+        return super::crepus_abi::generate(header, equilibrium_ffi::Language::CSharp);
+    }
     let declarations = super::header::typed_declarations(header)?;
     let library = header
         .file_stem()
@@ -10,13 +14,16 @@ pub(super) fn generate(header: &Path) -> Result<String, String> {
         .ok_or("ABI header has no UTF-8 library name")?;
     let library = format!("@\"{}\"", library.replace('"', "\"\""));
     let mut code = String::from(
-        "using System;\nusing System.Runtime.InteropServices;\n\npublic static class EquilibriumImports\n{\n",
+        "#nullable enable\nusing System;\nusing System.Runtime.InteropServices;\n\npublic static class EquilibriumImports\n{\n",
     );
     for item in declarations.items {
         match item {
             Item::Use(_) => {}
             Item::Struct(item) if item.ident == "CrepusSession" => {}
-            Item::Type(item) if item.ident == "CrepusEventCallback" => {}
+            Item::Type(item) if item.ident == "CrepusEventCallback" => {
+                // Keep the established public delegate and nullable unregister API.
+                code = code.replacen("public static class EquilibriumImports", "[UnmanagedFunctionPointer(global::System.Runtime.InteropServices.CallingConvention.Cdecl)]\npublic delegate void CrepusEventCallback(IntPtr event_json, IntPtr userdata);\n\npublic static class EquilibriumImports", 1);
+            }
             Item::ForeignMod(module) => {
                 if module.abi.name.as_ref().map(syn::LitStr::value).as_deref() != Some("C") {
                     return Err("unsupported C# ABI calling convention".into());
@@ -81,7 +88,7 @@ fn csharp_type(ty: &Type) -> Result<&'static str, String> {
                 .ok_or("unsupported C# ABI type path")?
                 .to_string();
             Ok(match name.as_str() {
-                "CrepusEventCallback" => "IntPtr",
+                "CrepusEventCallback" => "CrepusEventCallback?",
                 "c_schar" | "i8" => "sbyte",
                 "c_uchar" | "u8" => "byte",
                 "c_short" | "i16" => "short",

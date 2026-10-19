@@ -9,15 +9,20 @@ documentation = "https://docs.rs/crepuscularity-runtime"
 readme = "../../README.md"
 
 [features]
-default = []
+default = ["font-kit"]
+# Keep core text shaping and the selected native platform font backend paired.
+font-kit = ["gpui/font-kit", "gpui_platform/font-kit"]
 # See `crepuscularity_macros` / gpui_text_run_styles — Zed crates.io `gpui` 0.2.2 lacks these APIs.
 gpui_text_run_styles = []
+# Synthetic TestPlatform coverage; does not establish native OS acceptance.
+test-support = ["gpui/test-support"]
 
 [dependencies]
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
-gpui = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }
+gpui = { package = "gpui-ce", version = "0.2.2", default-features = false }
 gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
 stacker = "0.1.24"
+unicode-segmentation = "1.13.3"
 notify = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -8,15 +8,16 @@ exclude = [
     "plugins/crepuscularity-components/packages/gpui",
 ]
 members = [
+    "crates/crepuscularity-colors",
     "crates/crepuscularity",
     "crates/crepuscularity-core",
-    "crates/crepuscularity-colors",
     "crates/crepuscularity-lsp",
     "crates/crepuscularity-native",
     "crates/crepuscularity-embedded",
     "crates/crepuscularity-lvgl",
     "crates/crepuscularity-abi",
     "crates/crepuscularity-gpui",
+    "crates/crepuscularity-gpui-kit",
     "crates/crepuscularity-web",
     "crates/crepuscularity-tauri",
     "crates/crepuscularity-tauri-macros",

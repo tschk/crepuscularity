@@ -24,11 +24,7 @@ fn vue_template_refs_lower_static_and_directive_string_refs_on_elements_and_comp
         assert!(dom.source.contains("bindRef"), "{}", dom.source);
         assert!(dom.source.contains("componentRef"), "{}", dom.source);
         assert!(dom.source.contains("[\"ref\"]:"), "{}", dom.source);
-        assert!(
-            dom.source.contains("cleanup: \"commit\""),
-            "{}",
-            dom.source
-        );
+        assert!(dom.source.contains("cleanup: \"commit\""), "{}", dom.source);
         assert!(dom.source.contains("inputEl.value"), "{}", dom.source);
         assert!(dom.source.contains("childVm.value"), "{}", dom.source);
 

@@ -1187,7 +1187,10 @@ pub fn compile_moonshine_vue_with_resolver(
                             if call.optional
                                 || call.type_arguments.is_some()
                                 || call.arguments.len() > 1
-                                || matches!(call.arguments.first(), Some(Argument::SpreadElement(_)))
+                                || matches!(
+                                    call.arguments.first(),
+                                    Some(Argument::SpreadElement(_))
+                                )
                             {
                                 return Err("native Vue defineExpose requires at most one plain object argument without type arguments or spread".into());
                             }
@@ -1198,9 +1201,7 @@ pub fn compile_moonshine_vue_with_resolver(
                                 let arg_src =
                                     &script[arg_span.start as usize..arg_span.end as usize];
                                 let replacement = if slots.server {
-                                    format!(
-                                        "const {exposed} = () => ({arg_src}) satisfies object"
-                                    )
+                                    format!("const {exposed} = () => ({arg_src}) satisfies object")
                                 } else {
                                     format!(
                                         "const {exposed} = {expose_component}({expose_refs}({arg_src}))"
@@ -2461,9 +2462,7 @@ fn emit(
                             }
                             object.push('}');
                             let constant = format!("{}{}", slots.model_node, slots.models.len());
-                            slots
-                                .models
-                                .push(format!("const {constant} = {object};"));
+                            slots.models.push(format!("const {constant} = {object};"));
                             Some((key, constant))
                         }
                         None => None,
@@ -2475,7 +2474,9 @@ fn emit(
             }
             if element.tag == "option" && !slots.selections.is_empty() {
                 if element.bindings.iter().any(|binding| binding.prop == "ref") {
-                    return Err("native Vue select model options do not support ref bindings".into());
+                    return Err(
+                        "native Vue select model options do not support ref bindings".into(),
+                    );
                 }
                 model_tag = format!("{}{}", slots.model_node, slots.models.len());
                 let read = slots.selections.last().unwrap();

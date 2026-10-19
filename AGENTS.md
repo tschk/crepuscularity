@@ -58,8 +58,8 @@ extension in `parse_template_with_path`, all producing the same `ast::Node` tree
 | `.csx` `.jsx` `.tsx` (or first line starts with `<`) | JSX | `parser/jsx/` |
 | anything else | indentation | `parser/indent/` |
 
-- Svelte and Vue are **first-party Rust**; no `svelte`/`vue` crate dependency. Do not add one.
-- The shared AST parsers compile the **template only**. `<script>` is extracted verbatim and never executed there. Native web-module builds have separate authored Svelte and Vue compilers; their supported script behavior is described in `docs/frontends.md`.
+- Svelte, Vue, Astro, and Angular are **first-party Rust**; no `svelte`/`vue`/`astro`/`@angular` crate dependency. Do not add one.
+- The shared AST parsers compile the **template only**. `<script>` and Astro frontmatter are extracted verbatim and never executed there; Angular component classes are not executed. Native web-module builds have separate authored Svelte and Vue compilers; their supported script behavior is described in `docs/frontends.md`.
 - Unsupported markup constructs must be **hard parse errors**, never silent drops. Keep it that way when extending them.
 - `parseTemplate(source, filename)` in `@tschk/crepuscularity-wasm` is the one JS entry point for all six; the filename selects the frontend.
 - Full support matrix: [`docs/frontends.md`](docs/frontends.md).

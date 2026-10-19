@@ -19,10 +19,7 @@ pub fn lookup_virtual_file_entry<'a>(
     ctx: &'a TemplateContext,
     path: &Path,
 ) -> Option<(&'a str, &'a str)> {
-    let key = path
-        .to_str()
-        .map(std::borrow::Cow::Borrowed)
-        .unwrap_or_else(|| path.to_string_lossy());
+    let key = path.to_string_lossy();
     if let Some((key, content)) = ctx.virtual_files.get_key_value(key.as_ref()) {
         return Some((key.as_str(), content.as_str()));
     }

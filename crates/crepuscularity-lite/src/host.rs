@@ -1670,11 +1670,13 @@ mod tests {
     fn test_apply_host_class_dimensions() {
         let mut style = HostStyle::default();
         apply_host_class("w-full", &mut style);
-        assert_eq!(style.width, Some(100.0));
+        assert_eq!(style.width, None);
+        assert_eq!(style.width_fraction, Some(1.0));
 
         let mut style = HostStyle::default();
         apply_host_class("h-full", &mut style);
-        assert_eq!(style.height, Some(100.0));
+        assert_eq!(style.height, None);
+        assert_eq!(style.height_fraction, Some(1.0));
     }
 
     #[test]
