@@ -450,105 +450,123 @@ fn generated_directional_border_widths_preserve_other_edges() {
 
 #[test]
 fn generated_named_corner_radii_match_the_complete_runtime_scale() {
-    let cases = [
-        (view! { "div rounded-t-none" }, gpui::div().rounded_t_none()),
-        (view! { "div rounded-t-sm" }, gpui::div().rounded_t_sm()),
-        (view! { "div rounded-t-md" }, gpui::div().rounded_t_md()),
-        (view! { "div rounded-t-lg" }, gpui::div().rounded_t_lg()),
-        (view! { "div rounded-t-xl" }, gpui::div().rounded_t_xl()),
-        (view! { "div rounded-t-2xl" }, gpui::div().rounded_t_2xl()),
-        (view! { "div rounded-t-3xl" }, gpui::div().rounded_t_3xl()),
-        (view! { "div rounded-t-full" }, gpui::div().rounded_t_full()),
-        (view! { "div rounded-t" }, gpui::div().rounded_t_md()),
-        (view! { "div rounded-b-none" }, gpui::div().rounded_b_none()),
-        (view! { "div rounded-b-sm" }, gpui::div().rounded_b_sm()),
-        (view! { "div rounded-b-md" }, gpui::div().rounded_b_md()),
-        (view! { "div rounded-b-lg" }, gpui::div().rounded_b_lg()),
-        (view! { "div rounded-b-xl" }, gpui::div().rounded_b_xl()),
-        (view! { "div rounded-b-2xl" }, gpui::div().rounded_b_2xl()),
-        (view! { "div rounded-b-3xl" }, gpui::div().rounded_b_3xl()),
-        (view! { "div rounded-b-full" }, gpui::div().rounded_b_full()),
-        (view! { "div rounded-b" }, gpui::div().rounded_b_md()),
-        (view! { "div rounded-l-none" }, gpui::div().rounded_l_none()),
-        (view! { "div rounded-l-sm" }, gpui::div().rounded_l_sm()),
-        (view! { "div rounded-l-md" }, gpui::div().rounded_l_md()),
-        (view! { "div rounded-l-lg" }, gpui::div().rounded_l_lg()),
-        (view! { "div rounded-l-xl" }, gpui::div().rounded_l_xl()),
-        (view! { "div rounded-l-2xl" }, gpui::div().rounded_l_2xl()),
-        (view! { "div rounded-l-3xl" }, gpui::div().rounded_l_3xl()),
-        (view! { "div rounded-l-full" }, gpui::div().rounded_l_full()),
-        (view! { "div rounded-l" }, gpui::div().rounded_l_md()),
-        (view! { "div rounded-r-none" }, gpui::div().rounded_r_none()),
-        (view! { "div rounded-r-sm" }, gpui::div().rounded_r_sm()),
-        (view! { "div rounded-r-md" }, gpui::div().rounded_r_md()),
-        (view! { "div rounded-r-lg" }, gpui::div().rounded_r_lg()),
-        (view! { "div rounded-r-xl" }, gpui::div().rounded_r_xl()),
-        (view! { "div rounded-r-2xl" }, gpui::div().rounded_r_2xl()),
-        (view! { "div rounded-r-3xl" }, gpui::div().rounded_r_3xl()),
-        (view! { "div rounded-r-full" }, gpui::div().rounded_r_full()),
-        (view! { "div rounded-r" }, gpui::div().rounded_r_md()),
-        (
-            view! { "div rounded-tl-none" },
-            gpui::div().rounded_tl_none(),
-        ),
-        (view! { "div rounded-tl-sm" }, gpui::div().rounded_tl_sm()),
-        (view! { "div rounded-tl-md" }, gpui::div().rounded_tl_md()),
-        (view! { "div rounded-tl-lg" }, gpui::div().rounded_tl_lg()),
-        (view! { "div rounded-tl-xl" }, gpui::div().rounded_tl_xl()),
-        (view! { "div rounded-tl-2xl" }, gpui::div().rounded_tl_2xl()),
-        (view! { "div rounded-tl-3xl" }, gpui::div().rounded_tl_3xl()),
-        (
-            view! { "div rounded-tl-full" },
-            gpui::div().rounded_tl_full(),
-        ),
-        (view! { "div rounded-tl" }, gpui::div().rounded_tl_md()),
-        (
-            view! { "div rounded-tr-none" },
-            gpui::div().rounded_tr_none(),
-        ),
-        (view! { "div rounded-tr-sm" }, gpui::div().rounded_tr_sm()),
-        (view! { "div rounded-tr-md" }, gpui::div().rounded_tr_md()),
-        (view! { "div rounded-tr-lg" }, gpui::div().rounded_tr_lg()),
-        (view! { "div rounded-tr-xl" }, gpui::div().rounded_tr_xl()),
-        (view! { "div rounded-tr-2xl" }, gpui::div().rounded_tr_2xl()),
-        (view! { "div rounded-tr-3xl" }, gpui::div().rounded_tr_3xl()),
-        (
-            view! { "div rounded-tr-full" },
-            gpui::div().rounded_tr_full(),
-        ),
-        (view! { "div rounded-tr" }, gpui::div().rounded_tr_md()),
-        (
-            view! { "div rounded-bl-none" },
-            gpui::div().rounded_bl_none(),
-        ),
-        (view! { "div rounded-bl-sm" }, gpui::div().rounded_bl_sm()),
-        (view! { "div rounded-bl-md" }, gpui::div().rounded_bl_md()),
-        (view! { "div rounded-bl-lg" }, gpui::div().rounded_bl_lg()),
-        (view! { "div rounded-bl-xl" }, gpui::div().rounded_bl_xl()),
-        (view! { "div rounded-bl-2xl" }, gpui::div().rounded_bl_2xl()),
-        (view! { "div rounded-bl-3xl" }, gpui::div().rounded_bl_3xl()),
-        (
-            view! { "div rounded-bl-full" },
-            gpui::div().rounded_bl_full(),
-        ),
-        (view! { "div rounded-bl" }, gpui::div().rounded_bl_md()),
-        (
-            view! { "div rounded-br-none" },
-            gpui::div().rounded_br_none(),
-        ),
-        (view! { "div rounded-br-sm" }, gpui::div().rounded_br_sm()),
-        (view! { "div rounded-br-md" }, gpui::div().rounded_br_md()),
-        (view! { "div rounded-br-lg" }, gpui::div().rounded_br_lg()),
-        (view! { "div rounded-br-xl" }, gpui::div().rounded_br_xl()),
-        (view! { "div rounded-br-2xl" }, gpui::div().rounded_br_2xl()),
-        (view! { "div rounded-br-3xl" }, gpui::div().rounded_br_3xl()),
-        (
-            view! { "div rounded-br-full" },
-            gpui::div().rounded_br_full(),
-        ),
-        (view! { "div rounded-br" }, gpui::div().rounded_br_md()),
+    // Construct one pair per case instead of placing 144 large Div values on the test stack.
+    let cases: [fn() -> (gpui::Div, gpui::Div); 72] = [
+        || (view! { "div rounded-t-none" }, gpui::div().rounded_t_none()),
+        || (view! { "div rounded-t-sm" }, gpui::div().rounded_t_sm()),
+        || (view! { "div rounded-t-md" }, gpui::div().rounded_t_md()),
+        || (view! { "div rounded-t-lg" }, gpui::div().rounded_t_lg()),
+        || (view! { "div rounded-t-xl" }, gpui::div().rounded_t_xl()),
+        || (view! { "div rounded-t-2xl" }, gpui::div().rounded_t_2xl()),
+        || (view! { "div rounded-t-3xl" }, gpui::div().rounded_t_3xl()),
+        || (view! { "div rounded-t-full" }, gpui::div().rounded_t_full()),
+        || (view! { "div rounded-t" }, gpui::div().rounded_t_md()),
+        || (view! { "div rounded-b-none" }, gpui::div().rounded_b_none()),
+        || (view! { "div rounded-b-sm" }, gpui::div().rounded_b_sm()),
+        || (view! { "div rounded-b-md" }, gpui::div().rounded_b_md()),
+        || (view! { "div rounded-b-lg" }, gpui::div().rounded_b_lg()),
+        || (view! { "div rounded-b-xl" }, gpui::div().rounded_b_xl()),
+        || (view! { "div rounded-b-2xl" }, gpui::div().rounded_b_2xl()),
+        || (view! { "div rounded-b-3xl" }, gpui::div().rounded_b_3xl()),
+        || (view! { "div rounded-b-full" }, gpui::div().rounded_b_full()),
+        || (view! { "div rounded-b" }, gpui::div().rounded_b_md()),
+        || (view! { "div rounded-l-none" }, gpui::div().rounded_l_none()),
+        || (view! { "div rounded-l-sm" }, gpui::div().rounded_l_sm()),
+        || (view! { "div rounded-l-md" }, gpui::div().rounded_l_md()),
+        || (view! { "div rounded-l-lg" }, gpui::div().rounded_l_lg()),
+        || (view! { "div rounded-l-xl" }, gpui::div().rounded_l_xl()),
+        || (view! { "div rounded-l-2xl" }, gpui::div().rounded_l_2xl()),
+        || (view! { "div rounded-l-3xl" }, gpui::div().rounded_l_3xl()),
+        || (view! { "div rounded-l-full" }, gpui::div().rounded_l_full()),
+        || (view! { "div rounded-l" }, gpui::div().rounded_l_md()),
+        || (view! { "div rounded-r-none" }, gpui::div().rounded_r_none()),
+        || (view! { "div rounded-r-sm" }, gpui::div().rounded_r_sm()),
+        || (view! { "div rounded-r-md" }, gpui::div().rounded_r_md()),
+        || (view! { "div rounded-r-lg" }, gpui::div().rounded_r_lg()),
+        || (view! { "div rounded-r-xl" }, gpui::div().rounded_r_xl()),
+        || (view! { "div rounded-r-2xl" }, gpui::div().rounded_r_2xl()),
+        || (view! { "div rounded-r-3xl" }, gpui::div().rounded_r_3xl()),
+        || (view! { "div rounded-r-full" }, gpui::div().rounded_r_full()),
+        || (view! { "div rounded-r" }, gpui::div().rounded_r_md()),
+        || {
+            (
+                view! { "div rounded-tl-none" },
+                gpui::div().rounded_tl_none(),
+            )
+        },
+        || (view! { "div rounded-tl-sm" }, gpui::div().rounded_tl_sm()),
+        || (view! { "div rounded-tl-md" }, gpui::div().rounded_tl_md()),
+        || (view! { "div rounded-tl-lg" }, gpui::div().rounded_tl_lg()),
+        || (view! { "div rounded-tl-xl" }, gpui::div().rounded_tl_xl()),
+        || (view! { "div rounded-tl-2xl" }, gpui::div().rounded_tl_2xl()),
+        || (view! { "div rounded-tl-3xl" }, gpui::div().rounded_tl_3xl()),
+        || {
+            (
+                view! { "div rounded-tl-full" },
+                gpui::div().rounded_tl_full(),
+            )
+        },
+        || (view! { "div rounded-tl" }, gpui::div().rounded_tl_md()),
+        || {
+            (
+                view! { "div rounded-tr-none" },
+                gpui::div().rounded_tr_none(),
+            )
+        },
+        || (view! { "div rounded-tr-sm" }, gpui::div().rounded_tr_sm()),
+        || (view! { "div rounded-tr-md" }, gpui::div().rounded_tr_md()),
+        || (view! { "div rounded-tr-lg" }, gpui::div().rounded_tr_lg()),
+        || (view! { "div rounded-tr-xl" }, gpui::div().rounded_tr_xl()),
+        || (view! { "div rounded-tr-2xl" }, gpui::div().rounded_tr_2xl()),
+        || (view! { "div rounded-tr-3xl" }, gpui::div().rounded_tr_3xl()),
+        || {
+            (
+                view! { "div rounded-tr-full" },
+                gpui::div().rounded_tr_full(),
+            )
+        },
+        || (view! { "div rounded-tr" }, gpui::div().rounded_tr_md()),
+        || {
+            (
+                view! { "div rounded-bl-none" },
+                gpui::div().rounded_bl_none(),
+            )
+        },
+        || (view! { "div rounded-bl-sm" }, gpui::div().rounded_bl_sm()),
+        || (view! { "div rounded-bl-md" }, gpui::div().rounded_bl_md()),
+        || (view! { "div rounded-bl-lg" }, gpui::div().rounded_bl_lg()),
+        || (view! { "div rounded-bl-xl" }, gpui::div().rounded_bl_xl()),
+        || (view! { "div rounded-bl-2xl" }, gpui::div().rounded_bl_2xl()),
+        || (view! { "div rounded-bl-3xl" }, gpui::div().rounded_bl_3xl()),
+        || {
+            (
+                view! { "div rounded-bl-full" },
+                gpui::div().rounded_bl_full(),
+            )
+        },
+        || (view! { "div rounded-bl" }, gpui::div().rounded_bl_md()),
+        || {
+            (
+                view! { "div rounded-br-none" },
+                gpui::div().rounded_br_none(),
+            )
+        },
+        || (view! { "div rounded-br-sm" }, gpui::div().rounded_br_sm()),
+        || (view! { "div rounded-br-md" }, gpui::div().rounded_br_md()),
+        || (view! { "div rounded-br-lg" }, gpui::div().rounded_br_lg()),
+        || (view! { "div rounded-br-xl" }, gpui::div().rounded_br_xl()),
+        || (view! { "div rounded-br-2xl" }, gpui::div().rounded_br_2xl()),
+        || (view! { "div rounded-br-3xl" }, gpui::div().rounded_br_3xl()),
+        || {
+            (
+                view! { "div rounded-br-full" },
+                gpui::div().rounded_br_full(),
+            )
+        },
+        || (view! { "div rounded-br" }, gpui::div().rounded_br_md()),
     ];
-    for (mut actual, mut expected) in cases {
+    for case in cases {
+        let (mut actual, mut expected) = case();
         assert_eq!(
             format!("{:?}", actual.style()),
             format!("{:?}", expected.style())
