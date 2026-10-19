@@ -15,7 +15,7 @@ path = "src/lib.rs"
 # Default enables font-kit (cross-platform) but NO platform backend.
 # You must enable at least one of: wayland, x11, macos, or windows.
 default = ["font-kit"]
-font-kit = ["gpui/font-kit"]
+font-kit = ["gpui/font-kit", "gpui_platform/font-kit"]
 full-gpui = ["gpui/default"]
 # Platform backends (choose at least one for your target). With gpui-ce the backend crates are
 # selected automatically per-target by `gpui_platform`; these features propagate the backend
