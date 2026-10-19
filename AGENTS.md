@@ -9,7 +9,8 @@ crepuscularity/
   crates/
     crepuscularity/          — manifest/target build (crepus.toml)
     crepuscularity-cli/      — `crepus` CLI (main entrypoint)
-    crepuscularity-core/     — parser (4 frontends), eval, AST, context, error types
+    crepuscularity-colors/   — shared no-std Tailwind palette
+    crepuscularity-core/     — parser (6 frontends), eval, AST, context, error types
     crepuscularity-components/ — Rust component catalog registry (CLI)
     crepuscularity-web/      — HTML/WASM rendering (web + SSR)
     crepuscularity-webext/   — browser extension builds (MV3)
@@ -41,20 +42,22 @@ crepuscularity/
 
 ## Parser Frontends
 
-`crepuscularity-core` has four frontends under `src/parser/`, dispatched by file
+`crepuscularity-core` has six frontends under `src/parser/`, dispatched by file
 extension in `parse_template_with_path`, all producing the same `ast::Node` tree:
 
 | Extension | Frontend | Module |
 |-----------|----------|--------|
 | `.vue` | Vue SFC | `parser/vue/` |
 | `.svelte` | Svelte | `parser/svelte/` |
+| `.astro` | Astro | `parser/astro/` |
+| `.component.html` `.ng.html` `.ng` | Angular | `parser/angular/` |
 | `.csx` `.jsx` `.tsx` (or first line starts with `<`) | JSX | `parser/jsx/` |
 | anything else | indentation | `parser/indent/` |
 
 - Svelte and Vue are **first-party Rust**; no `svelte`/`vue` crate dependency. Do not add one.
-- They compile the **template only**. `<script>` is extracted verbatim and never executed — runes, stores, Composition API, and lifecycle do not run.
+- The shared AST parsers compile the **template only**. `<script>` is extracted verbatim and never executed there. Native web-module builds have separate authored Svelte and Vue compilers; their supported script behavior is described in `docs/frontends.md`.
 - Unsupported markup constructs must be **hard parse errors**, never silent drops. Keep it that way when extending them.
-- `parseTemplate(source, filename)` in `@tschk/crepuscularity-wasm` is the one JS entry point for all four; the filename selects the frontend.
+- `parseTemplate(source, filename)` in `@tschk/crepuscularity-wasm` is the one JS entry point for all six; the filename selects the frontend.
 - Full support matrix: [`docs/frontends.md`](docs/frontends.md).
 
 ## Targets & Conventions
@@ -147,7 +150,68 @@ extension in `parse_template_with_path`, all producing the same `ast::Node` tree
 - `--emit html` (default) — existing WASM site build (`index.html` + `pkg/`)
 - `--emit moonshine` — real TSX emit (`crepus-emit.moonshine.tsx`): literal JSX with `className` from `ViewStyle.classes`, importing only `createApp` from `@tschk/moonshine/react`
 
-`WebEmitTarget` has exactly these two variants (`crates/crepuscularity-cli/src/cli.rs`). The former `--emit svelte|solid|react` stubs were removed as non-functional.
+`WebEmitTarget` supports `html`, `moonshine`, `moonshine-dom`, `moonshine-ssr`,
+`react`, `svelte`, `vue`, `solid`, and `imba`
+(`crates/crepuscularity-cli/src/cli.rs`). Framework targets write importable source
+components plus `crepus-view-ir.json`; they require the corresponding host compiler
+and runtime. `react` writes `CrepusEmit.react.tsx` with `{ scope, handlers }` props
+and no Moonshine dependency. On the View IR route, source frontend scripts remain
+extracted rather than executed; framework output does not imply full source-framework
+compatibility.
+For authored `.tsx`/`.jsx` module entries, `moonshine-dom` and `moonshine-ssr`
+use a separate Oxc compiler that preserves imports, exports, types, and lexical
+state while lowering supported intrinsic JSX to Moonshine `h`. This route writes
+a target-specific module graph and `crepus-module-manifest.json`, without View IR.
+Local/imported/member component tags preserve getter props and scalar/array
+children. Fragments preserve dynamic children without a wrapper or extra runtime.
+JSX child/prop ternaries use owned native `Show` branches, retaining state while
+truthiness stays unchanged and disposing the selected branch when it switches.
+Logical JSX on either side of `&&`, `||`, and `??` shares that ownership contract,
+preserving raw left values and lazy right operands.
+Admitted named `solid-js` primitives are bridged to the native reactive host in
+every reachable module; unsupported Solid APIs and subpaths fail explicitly.
+Source CSS/assets and unsupported module forms fail explicitly; see `docs/frontends.md` for the module and SSR lifecycle contracts.
+Native `moonshine-dom`/`moonshine-ssr` authored `.svelte` entries and imports
+compile a bounded source subset: deep ordinary-object/array `$state` and
+`$state.snapshot`, shallow `$state.raw` replacement state, bare post-DOM `$effect` and `$effect.pre` (erased completely in SSR), `$effect.tracking()` (false in SSR),
+manual `$effect.root` scopes (no-op disposers in SSR), lazy
+`$derived`/`$derived.by` with mutable overrides, `$props()` aliases or flat destructuring with
+renames/defaults/readonly rest, events, imported child components, reactive local/member
+component selection with identity retention and disposal, named instance exports,
+component `bind:this` references, named component bindings (targets or captured getter/setter pairs) with `$bindable` props, ordered component spreads, target-specific text coercion, explicit `{@html}`, root snippets and `{@render}`, keyed subtree blocks, conditional
+blocks, named lifecycle helpers, and get/set/has/createContext initialization APIs and live `getAllContexts` maps.
+Authored Svelte DOM components use the native `/pre` scheduler; reference-triggered
+pre-effect phase ordering still differs from Svelte, as detailed in `docs/frontends.md`.
+The named Svelte helper import/reexport bridge also covers reachable ordinary JS/TS modules.
+DOM destructured props stay live; SSR uses raw
+state, snapshot props/defaults and mutable rest copies, with lazy cached derived
+values. DOM derived and prop cells require the native
+`@tschk/moonshine-svelte/runes` helper ABI. Generated `.svelte.ts` graphs keep
+manifest version 1. Static checkbox `bind:checked` and text/number/range/date/time/color/bodyless-textarea
+`bind:value` are supported. Date/time includes date, datetime-local, month, week
+and time with static input types. Static select bind:value supports raw option
+identity, static multiple, imported keyed options and reset/cleanup. Its SSR
+source path requires the Moonshine 0.4.10 selection-policy/value-slot ABI;
+see docs/frontends.md for runtime and initialization limits. Unusual state
+descriptors, extra state/effect variants, other bindings/directives and hydration
+remain unsupported. Native dynamic
+`svelte:element` supports ordinary HTML tags, falsy removal, intrinsic events and
+`bind:this`, with bounded scoped CSS and `class:` directives. Dynamic `xmlns`
+values select creation namespaces through the opt-in hSourceNS runtime contract;
+namespace-only updates retain the node and update its ordinary xmlns attribute.
+Local compiler sources admit static/inherited MathML and static annotation-xml
+encoding; reactive MathML update admission remains pending. Dynamic annotation-xml
+encoding, intrinsic spreads, and scoped combinators across unknown branch/component
+relations remain unsupported;
+see `docs/frontends.md`. Native View IR builds still reject scripted Vue and
+scripted Svelte files reached through DSL includes/slots. The shared parser's
+extraction-only contract is unchanged.
+Imba writes `CrepusEmit.imba` plus `CrepusEmit.bindings.ts` (keep them together).
+It exports an Imba `CrepusEmit` tag with `scope` and `handlers` props. The initial
+backend supports text/buttons, core layouts/lists, links/images, conditions/loops,
+inputs, pickers, file pickers, tabs, sliders, progress/meters, badges, checkboxes/switches, dividers/spacers, dropzones, web views, and rotating text. Unsupported source constructs and control state fail explicitly.
+Host code replacing a component prop should request its normal Imba render/update
+cycle. Verified with `imba@2.0.0-alpha.253`; this is not full Imba source support.
 
 ### `crepus flutter` — Flutter renderer dependency helper
 
