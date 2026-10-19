@@ -351,3 +351,117 @@ fn reconcile_with_mode(
     Ok((rearmed, cleanup_error))
 }
 
+/// Managed watcher for one logical file, including external symlink targets.
+///
+/// Construct lazily through [`Watcher::new`], then watch the file itself with
+/// [`RecursiveMode::NonRecursive`]. Events use the absolute logical file path,
+/// including synthetic events after root reconciliation, so debouncers share one key.
+/// One file may be active at a time; unwatching permits watching another file.
+/// Dropping or unwatching signals background teardown without joining the worker.
+pub struct SingleFileWatcher {
+    handler: Arc<Mutex<Box<dyn EventHandler>>>,
+    config: Config,
+    active: Option<(PathBuf, ManagedWatcher, Arc<std::sync::atomic::AtomicBool>)>,
+}
+
+impl SingleFileWatcher {
+    fn stop(&mut self) {
+        if let Some((_, watcher, active)) = self.active.take() {
+            active.store(false, std::sync::atomic::Ordering::Release);
+            drop(watcher);
+        }
+    }
+}
+
+impl Watcher for SingleFileWatcher {
+    fn new<F: EventHandler>(handler: F, config: Config) -> notify::Result<Self> {
+        Ok(Self {
+            handler: Arc::new(Mutex::new(Box::new(handler))),
+            config,
+            active: None,
+        })
+    }
+
+    fn watch(&mut self, path: &Path, mode: RecursiveMode) -> notify::Result<()> {
+        if mode != RecursiveMode::NonRecursive {
+            return Err(notify::Error::generic(
+                "SingleFileWatcher requires NonRecursive file watches",
+            ));
+        }
+        let path = std::path::absolute(path).map_err(notify::Error::io)?;
+        if let Some((current, _, _)) = &self.active {
+            return if current == &path {
+                Ok(())
+            } else {
+                Err(notify::Error::generic(
+                    "SingleFileWatcher supports one active file; unwatch it first",
+                ))
+            };
+        }
+        if path.is_dir() {
+            return Err(
+                notify::Error::generic("SingleFileWatcher requires a file path").add_path(path),
+            );
+        }
+        let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let enabled = Arc::clone(&active);
+        let handler = Arc::clone(&self.handler);
+        let watcher = create_engine(
+            path.clone(),
+            Policy::SingleFile,
+            self.config,
+            move |event: notify::Result<notify::Event>| {
+                if let Ok(mut handler) = handler.lock() {
+                    if enabled.load(std::sync::atomic::Ordering::Acquire) {
+                        handler.handle_event(event);
+                    }
+                }
+            },
+            "file",
+        )?;
+        self.active = Some((path, watcher, active));
+        Ok(())
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        let path = std::path::absolute(path).map_err(notify::Error::io)?;
+        if !self
+            .active
+            .as_ref()
+            .is_some_and(|(current, _, _)| current == &path)
+        {
+            return Err(notify::Error::watch_not_found().add_path(path));
+        }
+        self.stop();
+        Ok(())
+    }
+
+    fn configure(&mut self, config: Config) -> notify::Result<bool> {
+        if let Some((_, watcher, _)) = &mut self.active {
+            let configured = watcher.configure(config)?;
+            if configured {
+                self.config = config;
+            }
+            Ok(configured)
+        } else {
+            self.config = config;
+            Ok(true)
+        }
+    }
+
+    fn kind() -> WatcherKind {
+        RecommendedWatcher::kind()
+    }
+}
+
+impl Drop for SingleFileWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod single_file_tests;

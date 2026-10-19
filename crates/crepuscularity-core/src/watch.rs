@@ -27,6 +27,8 @@ pub const EXTENSION_POLL_MS: u64 = 1500;
 #[cfg(feature = "notify")]
 mod managed;
 
+#[cfg(feature = "notify")]
+pub use managed::SingleFileWatcher;
 
 /// Create a template watcher for the logical directory and resolved entry target.
 ///
