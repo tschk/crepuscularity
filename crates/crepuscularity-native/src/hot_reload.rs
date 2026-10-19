@@ -308,3 +308,68 @@ mod model_order_tests {
         assert!(!ast_shape_compatible(&old, &new));
     }
 }
+
+#[cfg(test)]
+mod ast_shape_tests {
+    use super::*;
+    use crepuscularity_core::ast::{Element, TextPart};
+
+    #[test]
+    fn different_lengths_are_incompatible() {
+        let old = vec![Node::RawText("A".to_string())];
+        let new = vec![
+            Node::RawText("A".to_string()),
+            Node::RawText("B".to_string()),
+        ];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn different_node_types_are_incompatible() {
+        let old = vec![Node::RawText("A".to_string())];
+        let new = vec![Node::RawHtml("A".to_string())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn text_literals_can_change_while_maintaining_shape() {
+        let old = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Literal("world".to_string())])];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn text_expressions_must_match_exactly() {
+        let old = vec![Node::Text(vec![TextPart::Expr("foo".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("bar".to_string())])];
+        assert!(!ast_shape_compatible(&old, &new));
+
+        let new_same = vec![Node::Text(vec![TextPart::Expr("foo".to_string())])];
+        assert!(ast_shape_compatible(&old, &new_same));
+    }
+
+    #[test]
+    fn identical_elements_are_compatible() {
+        let old = vec![Node::Element(Element {
+            tag: "div".to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        let new = vec![Node::Element(Element {
+            tag: "div".to_string(),
+            id: None,
+            classes: vec!["foo".to_string()],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+}
