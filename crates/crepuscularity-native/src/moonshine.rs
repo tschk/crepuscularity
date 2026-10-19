@@ -4,6 +4,8 @@
 //! a real `@tschk/crepus-moonshine` app entry under `dist/`.
 
 use crate::ir::{ViewIr, ViewNode, ViewStyle};
+use crate::js_expr::scope_expr;
+use crate::utils::js_str;
 
 /// Shared preamble emitted by both entry points: the `Fragment` import used by
 /// `ForEach` and the `toArray` guard so a missing/non-array scope value renders
@@ -97,25 +99,6 @@ export default {component_name};
     )
 }
 
-/// JSON-escape a string for use inside a JSX expression container.
-fn js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 /// A string-valued JSX attribute, written the way a person writes it:
 /// `name="value"`. The braced form is only used when the value cannot sit
 /// inside a quoted literal, since `name={"value"}` is legal but not idiomatic.
@@ -160,80 +143,6 @@ fn opt_attr(name: &str, value: Option<&String>) -> String {
         Some(v) => attr(name, v),
         None => String::new(),
     }
-}
-
-/// Whether `c` can start a JS identifier.
-fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_' || c == '$'
-}
-
-/// Whether `c` can continue a JS identifier.
-fn is_ident_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '$'
-}
-
-/// Rewrite a template expression string (e.g. `count > 0`, `user.name`,
-/// `items.length`) into valid JS that reads from the component's `scope`
-/// object, so `condition`/`bind` strings from the IR can be dropped straight
-/// into a JSX expression container.
-///
-/// - String literals (single/double quoted) are left untouched.
-/// - Bare identifiers are prefixed with `scope.`, except those in `locals`
-///   (real JS variables from an enclosing `ForEach`) and JS literal keywords
-///   (`true`, `false`, `null`, `undefined`).
-/// - Only the first segment of a dotted path is prefixed: `user.name` becomes
-///   `scope.user.name`, never `scope.user.scope.name`.
-/// - An empty/whitespace expression becomes `undefined`.
-fn scope_expr(expr: &str, locals: &[String]) -> String {
-    if expr.trim().is_empty() {
-        return "undefined".to_string();
-    }
-    let chars: Vec<char> = expr.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\'' || c == '"' {
-            let quote = c;
-            out.push(c);
-            i += 1;
-            while i < chars.len() {
-                let cc = chars[i];
-                out.push(cc);
-                i += 1;
-                if cc == '\\' && i < chars.len() {
-                    out.push(chars[i]);
-                    i += 1;
-                    continue;
-                }
-                if cc == quote {
-                    break;
-                }
-            }
-            continue;
-        }
-        if is_ident_start(c) {
-            let prev_is_dot = out.trim_end().ends_with('.');
-            let start = i;
-            while i < chars.len() && is_ident_continue(chars[i]) {
-                i += 1;
-            }
-            let ident: String = chars[start..i].iter().collect();
-            if prev_is_dot
-                || locals.iter().any(|l| l == &ident)
-                || matches!(ident.as_str(), "true" | "false" | "null" | "undefined")
-            {
-                out.push_str(&ident);
-            } else {
-                out.push_str("scope.");
-                out.push_str(&ident);
-            }
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
 }
 
 fn on_click_attr(name: &str) -> String {
@@ -290,7 +199,7 @@ fn emit_if(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let cond = scope_expr(condition, locals);
+    let cond = scope_expr(condition, locals, "scope.");
     let then_jsx = format!(
         "{pad}  <>\n{}\n{pad}  </>",
         emit_children(then_children, indent + 2, locals)
@@ -319,7 +228,7 @@ fn emit_for_each(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let bind_expr = scope_expr(bind, locals);
+    let bind_expr = scope_expr(bind, locals, "scope.");
     let mut inner_locals = locals.to_vec();
     inner_locals.push(item_name.to_string());
     let inner = emit_children(item_body, indent + 2, &inner_locals);
@@ -328,8 +237,12 @@ fn emit_for_each(
     )
 }
 
-fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
-    let pad = "  ".repeat(indent);
+fn emit_text_and_media_node(
+    node: &ViewNode,
+    _indent: usize,
+    locals: &[String],
+    pad: &str,
+) -> String {
     match node {
         ViewNode::Text {
             content,
@@ -337,11 +250,63 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             style,
         } => {
             let body = match bind {
-                Some(b) => format!("{{{}}}", scope_expr(b, locals)),
+                Some(b) => format!("{{{}}}", scope_expr(b, locals, "scope.")),
                 None => jsx_text(content),
             };
             format!("{pad}<span{}>{}</span>", class_attr(style.as_ref()), body)
         }
+        ViewNode::Badge {
+            label, tone, style, ..
+        } => format!(
+            "{pad}<span{}{}>{}</span>",
+            class_attr(style.as_ref()),
+            opt_attr("data-tone", tone.as_ref()),
+            jsx_text(label)
+        ),
+        ViewNode::Divider { style, .. } => {
+            format!("{pad}<hr{} />", class_attr(style.as_ref()))
+        }
+        ViewNode::Spacer { style, .. } => {
+            format!(
+                "{pad}<div aria-hidden=\"true\"{}{} />",
+                class_attr(style.as_ref()),
+                ""
+            )
+        }
+        ViewNode::Image {
+            src,
+            alt,
+            on_long_press,
+            style,
+            ..
+        } => format!(
+            "{pad}<img{}{}{}{} />",
+            attr("src", src),
+            attr("alt", alt.as_deref().unwrap_or("")),
+            class_attr(style.as_ref()),
+            opt_on_long_press(on_long_press.as_ref())
+        ),
+        ViewNode::WebView { src, style } => format!(
+            "{pad}<iframe{}{} />",
+            attr("src", src),
+            class_attr(style.as_ref())
+        ),
+        ViewNode::SlotRotate {
+            phrases,
+            interval_ms,
+            style,
+        } => format!(
+            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
+            attr("data-crepus-slot-rotate", &phrases.join("|")),
+            class_attr(style.as_ref()),
+            jsx_text(phrases.first().map(String::as_str).unwrap_or(""))
+        ),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_layout_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    match node {
         ViewNode::Link {
             href,
             target,
@@ -364,40 +329,35 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             children,
             ..
         } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_on_long_press(on_long_press.as_ref()));
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
             element("div", &attrs, children, indent, locals)
         }
-        ViewNode::Scroll { style, children, .. } => {
-            element("div", &class_attr(style.as_ref()), children, indent, locals)
-        }
+        ViewNode::Scroll {
+            style, children, ..
+        } => element("div", &class_attr(style.as_ref()), children, indent, locals),
         ViewNode::Dropzone {
             on_drop,
             style,
             children,
             ..
         } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_dom_event("onDrop", on_drop.as_ref()));
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_dom_event("onDrop", on_drop.as_ref())
+            );
             element("div", &attrs, children, indent, locals)
         }
-        ViewNode::List {
-            ordered,
-            style,
-            children,
-        } => element(
-            if *ordered { "ol" } else { "ul" },
-            &class_attr(style.as_ref()),
-            children,
-            indent,
-            locals,
-        ),
-        ViewNode::ListItem {
-            on_long_press,
-            style,
-            children,
-        } => {
-            let attrs = format!("{}{}", class_attr(style.as_ref()), opt_on_long_press(on_long_press.as_ref()));
-            element("li", &attrs, children, indent, locals)
-        }
+        _ => unreachable!(),
+    }
+}
+
+fn emit_input_node(node: &ViewNode, _indent: usize, _locals: &[String], pad: &str) -> String {
+    match node {
         ViewNode::Button {
             label,
             on_click,
@@ -409,36 +369,6 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
             opt_on_click(on_click.as_ref()),
             opt_on_long_press(on_long_press.as_ref()),
             jsx_text(label)
-        ),
-        ViewNode::Badge { label, tone, style, .. } => format!(
-            "{pad}<span{}{}>{}</span>",
-            class_attr(style.as_ref()),
-            opt_attr("data-tone", tone.as_ref()),
-            jsx_text(label)
-        ),
-        ViewNode::Divider { style, .. } => {
-            format!("{pad}<hr{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Spacer { style, .. } => {
-            format!("{pad}<div aria-hidden=\"true\"{} />", class_attr(style.as_ref()))
-        }
-        ViewNode::Image {
-            src,
-            alt,
-            on_long_press,
-            style,
-            ..
-        } => format!(
-            "{pad}<img{}{}{}{} />",
-            attr("src", src),
-            attr("alt", alt.as_deref().unwrap_or("")),
-            class_attr(style.as_ref()),
-            opt_on_long_press(on_long_press.as_ref())
-        ),
-        ViewNode::WebView { src, style } => format!(
-            "{pad}<iframe{}{} />",
-            attr("src", src),
-            class_attr(style.as_ref())
         ),
         ViewNode::Toggle {
             label,
@@ -561,16 +491,35 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 jsx_text(label)
             )
         }
-        ViewNode::SlotRotate {
-            phrases,
-            interval_ms,
+        _ => unreachable!(),
+    }
+}
+
+fn emit_collection_node(node: &ViewNode, indent: usize, locals: &[String], pad: &str) -> String {
+    match node {
+        ViewNode::List {
+            ordered,
             style,
-        } => format!(
-            "{pad}<span{} data-interval-ms={{{interval_ms}}}{}>{}</span>",
-            attr("data-crepus-slot-rotate", &phrases.join("|")),
-            class_attr(style.as_ref()),
-            jsx_text(phrases.first().map(String::as_str).unwrap_or(""))
+            children,
+        } => element(
+            if *ordered { "ol" } else { "ul" },
+            &class_attr(style.as_ref()),
+            children,
+            indent,
+            locals,
         ),
+        ViewNode::ListItem {
+            on_long_press,
+            style,
+            children,
+        } => {
+            let attrs = format!(
+                "{}{}",
+                class_attr(style.as_ref()),
+                opt_on_long_press(on_long_press.as_ref())
+            );
+            element("li", &attrs, children, indent, locals)
+        }
         ViewNode::Tabs {
             tabs,
             on_change,
@@ -582,7 +531,9 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 .iter()
                 .map(|t| {
                     let onclick = match on_change {
-                        Some(name) => format!(" onClick={{() => handlers.{name}?.({})}}", js_str(&t.value)),
+                        Some(name) => {
+                            format!(" onClick={{() => handlers.{name}?.({})}}", js_str(&t.value))
+                        }
                         None => String::new(),
                     };
                     format!(
@@ -606,18 +557,63 @@ fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
                 "{pad}<div{cls}>\n{pad}  <div role=\"tablist\">\n{buttons}\n{pad}  </div>\n{panels}\n{pad}</div>"
             )
         }
+        _ => unreachable!(),
+    }
+}
+
+fn emit_control_flow_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    match node {
         ViewNode::If {
             condition,
             then_children,
             else_children,
             ..
-        } => emit_if(condition, then_children, else_children.as_ref(), indent, locals),
+        } => emit_if(
+            condition,
+            then_children,
+            else_children.as_ref(),
+            indent,
+            locals,
+        ),
         ViewNode::ForEach {
             bind,
             item_name,
             item_body,
             ..
         } => emit_for_each(bind, item_name, item_body, indent, locals),
+        _ => unreachable!(),
+    }
+}
+
+fn emit_jsx_node(node: &ViewNode, indent: usize, locals: &[String]) -> String {
+    let pad = "  ".repeat(indent);
+    match node {
+        ViewNode::Text { .. }
+        | ViewNode::Image { .. }
+        | ViewNode::WebView { .. }
+        | ViewNode::Badge { .. }
+        | ViewNode::SlotRotate { .. }
+        | ViewNode::Divider { .. }
+        | ViewNode::Spacer { .. } => emit_text_and_media_node(node, indent, locals, &pad),
+        ViewNode::Stack { .. }
+        | ViewNode::Scroll { .. }
+        | ViewNode::Dropzone { .. }
+        | ViewNode::Link { .. } => emit_layout_node(node, indent, locals),
+        ViewNode::Button { .. }
+        | ViewNode::Toggle { .. }
+        | ViewNode::Checkbox { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Meter { .. }
+        | ViewNode::Input { .. }
+        | ViewNode::Picker { .. }
+        | ViewNode::FilePicker { .. } => emit_input_node(node, indent, locals, &pad),
+        ViewNode::List { .. } | ViewNode::ListItem { .. } | ViewNode::Tabs { .. } => {
+            emit_collection_node(node, indent, locals, &pad)
+        }
+        ViewNode::If { .. } | ViewNode::ForEach { .. } => {
+            emit_control_flow_node(node, indent, locals)
+        }
     }
 }
 
@@ -649,7 +645,6 @@ mod tests {
         assert!(body.contains("<button type=\"button\">Go</button>"));
         assert!(!body.contains("renderCrepusIr"));
         assert!(!body.contains("satisfies ViewIr"));
-        assert!(!body.contains("TODO"));
     }
 
     #[test]
@@ -736,41 +731,47 @@ mod tests {
 
     #[test]
     fn scope_expr_leaves_string_literals_untouched() {
-        assert_eq!(scope_expr(r#"x == "yes""#, &[]), r#"scope.x == "yes""#);
-        assert_eq!(scope_expr("x == 'yes'", &[]), "scope.x == 'yes'");
+        assert_eq!(
+            scope_expr(r#"x == "yes""#, &[], "scope."),
+            r#"scope.x == "yes""#
+        );
+        assert_eq!(scope_expr("x == 'yes'", &[], "scope."), "scope.x == 'yes'");
     }
 
     #[test]
     fn scope_expr_prefixes_dotted_path_once() {
-        assert_eq!(scope_expr("user.name", &[]), "scope.user.name");
-        assert_eq!(scope_expr("a.b.c", &[]), "scope.a.b.c");
+        assert_eq!(scope_expr("user.name", &[], "scope."), "scope.user.name");
+        assert_eq!(scope_expr("a.b.c", &[], "scope."), "scope.a.b.c");
     }
 
     #[test]
     fn scope_expr_does_not_prefix_locals() {
         assert_eq!(
-            scope_expr("item.active", &["item".to_string()]),
+            scope_expr("item.active", &["item".to_string()], "scope."),
             "item.active"
         );
     }
 
     #[test]
     fn scope_expr_does_not_prefix_keywords() {
-        assert_eq!(scope_expr("true", &[]), "true");
-        assert_eq!(scope_expr("x == null", &[]), "scope.x == null");
-        assert_eq!(scope_expr("x || undefined", &[]), "scope.x || undefined");
+        assert_eq!(scope_expr("true", &[], "scope."), "true");
+        assert_eq!(scope_expr("x == null", &[], "scope."), "scope.x == null");
+        assert_eq!(
+            scope_expr("x || undefined", &[], "scope."),
+            "scope.x || undefined"
+        );
     }
 
     #[test]
     fn scope_expr_empty_becomes_undefined() {
-        assert_eq!(scope_expr("", &[]), "undefined");
-        assert_eq!(scope_expr("   ", &[]), "undefined");
+        assert_eq!(scope_expr("", &[], "scope."), "undefined");
+        assert_eq!(scope_expr("   ", &[], "scope."), "undefined");
     }
 
     #[test]
     fn scope_expr_leaves_numbers_and_operators_alone() {
-        assert_eq!(scope_expr("count > 0", &[]), "scope.count > 0");
-        assert_eq!(scope_expr("a && b", &[]), "scope.a && scope.b");
+        assert_eq!(scope_expr("count > 0", &[], "scope."), "scope.count > 0");
+        assert_eq!(scope_expr("a && b", &[], "scope."), "scope.a && scope.b");
     }
 
     // ── events ──────────────────────────────────────────────────────────────

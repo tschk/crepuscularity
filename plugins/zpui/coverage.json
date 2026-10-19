@@ -1,0 +1,359 @@
+{
+  "goal": "Complete View IR v7 coverage with tested behavior, without placeholder rendering or silent drops",
+  "sourceRevision": "8485f22a03a86d3be5a9ad162bfb230f4762ac91",
+  "upstreamRevision": "cca22983e7e8124bb8e650616e3803f217e52b95",
+  "irVersion": 7,
+  "completion": {
+    "nodes": 25,
+    "styles": 71,
+    "events": [
+      "click",
+      "change",
+      "longPress",
+      "drop",
+      "pick"
+    ],
+    "runtime": [
+      "scopedConditions",
+      "scopedCollections",
+      "retainedInput",
+      "timedText",
+      "nativeWebView"
+    ],
+    "validation": [
+      "decoder",
+      "headlessNative",
+      "backendIntegration",
+      "independentReview"
+    ]
+  },
+  "nodes": {
+    "text": {
+      "status": "implemented"
+    },
+    "if": {
+      "status": "implemented"
+    },
+    "forEach": {
+      "status": "implemented"
+    },
+    "stack": {
+      "status": "implemented"
+    },
+    "button": {
+      "status": "implemented"
+    },
+    "toggle": {
+      "status": "implemented"
+    },
+    "checkbox": {
+      "status": "implemented"
+    },
+    "slider": {
+      "status": "implemented"
+    },
+    "progress": {
+      "status": "implemented"
+    },
+    "meter": {
+      "status": "implemented"
+    },
+    "badge": {
+      "status": "implemented"
+    },
+    "divider": {
+      "status": "implemented"
+    },
+    "spacer": {
+      "status": "implemented"
+    },
+    "dropzone": {
+      "status": "implemented"
+    },
+    "filePicker": {
+      "status": "implemented"
+    },
+    "image": {
+      "status": "implemented"
+    },
+    "link": {
+      "status": "implemented"
+    },
+    "webView": {
+      "status": "partial",
+      "evidence": "mac_desktop.zig: real WKWebView navigation/title, 200x100 pixel snapshot and allocator teardown passed on macOS",
+      "remaining": "Windows/Linux browser references and platform acceptance; headless platforms require factories"
+    },
+    "scroll": {
+      "status": "implemented"
+    },
+    "list": {
+      "status": "implemented"
+    },
+    "listItem": {
+      "status": "implemented"
+    },
+    "slotRotate": {
+      "status": "implemented"
+    },
+    "input": {
+      "status": "implemented",
+      "evidence": "editor_native.zig: Unicode editing, UTF-16 IME, clipboard, secure/multiline, controlled updates"
+    },
+    "picker": {
+      "status": "implemented"
+    },
+    "tabs": {
+      "status": "implemented"
+    }
+  },
+  "styles": {
+    "id": {
+      "status": "implemented"
+    },
+    "classes": {
+      "status": "implemented"
+    },
+    "padding": {
+      "status": "implemented"
+    },
+    "paddingHorizontal": {
+      "status": "implemented"
+    },
+    "paddingVertical": {
+      "status": "implemented"
+    },
+    "paddingTop": {
+      "status": "implemented"
+    },
+    "paddingBottom": {
+      "status": "implemented"
+    },
+    "paddingLeft": {
+      "status": "implemented"
+    },
+    "paddingRight": {
+      "status": "implemented"
+    },
+    "margin": {
+      "status": "implemented"
+    },
+    "marginHorizontal": {
+      "status": "implemented"
+    },
+    "marginVertical": {
+      "status": "implemented"
+    },
+    "marginTop": {
+      "status": "implemented"
+    },
+    "marginBottom": {
+      "status": "implemented"
+    },
+    "marginLeft": {
+      "status": "implemented"
+    },
+    "marginRight": {
+      "status": "implemented"
+    },
+    "width": {
+      "status": "implemented"
+    },
+    "height": {
+      "status": "implemented"
+    },
+    "minWidth": {
+      "status": "implemented"
+    },
+    "minHeight": {
+      "status": "implemented"
+    },
+    "maxWidth": {
+      "status": "implemented"
+    },
+    "maxHeight": {
+      "status": "implemented"
+    },
+    "aspectRatio": {
+      "status": "implemented"
+    },
+    "fontSize": {
+      "status": "implemented"
+    },
+    "fontWeight": {
+      "status": "implemented"
+    },
+    "textAlign": {
+      "status": "implemented"
+    },
+    "lineHeight": {
+      "status": "implemented"
+    },
+    "letterSpacing": {
+      "status": "pending"
+    },
+    "textTransform": {
+      "status": "partial",
+      "evidence": "Unicode upper/lower casing, inheritance/reset and unchanged option values tested",
+      "remaining": "capitalize and transformed input display/caret mapping"
+    },
+    "fontFamily": {
+      "status": "implemented"
+    },
+    "italic": {
+      "status": "implemented"
+    },
+    "underline": {
+      "status": "implemented"
+    },
+    "strikethrough": {
+      "status": "implemented"
+    },
+    "foregroundColor": {
+      "status": "implemented"
+    },
+    "backgroundColor": {
+      "status": "implemented"
+    },
+    "cornerRadius": {
+      "status": "implemented"
+    },
+    "borderWidth": {
+      "status": "implemented"
+    },
+    "borderColor": {
+      "status": "implemented"
+    },
+    "opacity": {
+      "status": "implemented"
+    },
+    "hidden": {
+      "status": "implemented"
+    },
+    "overflowHidden": {
+      "status": "implemented"
+    },
+    "flexGrow": {
+      "status": "implemented"
+    },
+    "flexShrink": {
+      "status": "implemented"
+    },
+    "alignSelf": {
+      "status": "implemented"
+    },
+    "flexWrap": {
+      "status": "implemented"
+    },
+    "flexDirection": {
+      "status": "implemented"
+    },
+    "position": {
+      "status": "partial"
+    },
+    "zIndex": {
+      "status": "pending"
+    },
+    "top": {
+      "status": "implemented"
+    },
+    "right": {
+      "status": "implemented"
+    },
+    "bottom": {
+      "status": "implemented"
+    },
+    "left": {
+      "status": "implemented"
+    },
+    "translateX": {
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
+    },
+    "translateY": {
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
+    },
+    "scaleX": {
+      "status": "pending"
+    },
+    "scaleY": {
+      "status": "pending"
+    },
+    "rotate": {
+      "status": "pending"
+    },
+    "shadowColor": {
+      "status": "implemented"
+    },
+    "shadowRadius": {
+      "status": "implemented"
+    },
+    "shadowOffsetX": {
+      "status": "implemented"
+    },
+    "shadowOffsetY": {
+      "status": "implemented"
+    },
+    "textOverflow": {
+      "status": "implemented"
+    },
+    "whiteSpace": {
+      "status": "implemented"
+    },
+    "lineClamp": {
+      "status": "implemented"
+    },
+    "cursor": {
+      "status": "partial"
+    },
+    "userSelect": {
+      "status": "pending"
+    },
+    "backgroundGradientDirection": {
+      "status": "implemented"
+    },
+    "backgroundGradientFrom": {
+      "status": "implemented"
+    },
+    "backgroundGradientTo": {
+      "status": "implemented"
+    },
+    "objectFit": {
+      "status": "implemented"
+    },
+    "objectPosition": {
+      "status": "implemented",
+      "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
+    }
+  },
+  "events": {
+    "click": "implemented",
+    "change": "implemented",
+    "longPress": "implemented",
+    "drop": "implemented",
+    "pick": "implemented"
+  },
+  "status": "in_progress",
+  "runtime": {
+    "scopedConditions": "implemented",
+    "scopedCollections": "implemented",
+    "retainedInput": "implemented",
+    "timedText": "implemented",
+    "nativeWebView": "partial"
+  },
+  "validation": {
+    "decoder": "implemented",
+    "headlessNative": "implemented",
+    "backendIntegration": "partial",
+    "independentReview": "pending_for_final_completion"
+  },
+  "remaining": [
+    "letterSpacing, zIndex, scaleX, scaleY, rotate, userSelect",
+    "Capitalize and transformed input display/caret mapping",
+    "Fixed positioning, wait cursor",
+    "Browser platform matrix and native OS/GPU acceptance beyond macOS",
+    "Immutable final review and CI",
+    "Apply audited CLI version/lock proposal in coordinated source and pass full CLI validation before publication"
+  ]
+}

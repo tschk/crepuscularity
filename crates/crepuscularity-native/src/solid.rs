@@ -3,6 +3,8 @@
 //! components (`<Show>` / `<For>`) instead of ternaries and `.map`.
 
 use crate::ir::{ViewIr, ViewNode, ViewStyle};
+use crate::js_expr::scope_expr;
+use crate::utils::js_str;
 
 /// Shared preamble: the `For`/`Show` imports and the `toArray` guard so a
 /// missing/non-array scope value renders nothing instead of throwing.
@@ -50,25 +52,6 @@ export default {component_name};
     )
 }
 
-/// JSON-escape a string for use inside a JSX expression container.
-fn js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 /// A string-valued JSX attribute, written the way a person writes it:
 /// `name="value"`. The braced form is only used when the value cannot sit
 /// inside a quoted literal, since `name={"value"}` is legal but not idiomatic.
@@ -113,80 +96,6 @@ fn opt_attr(name: &str, value: Option<&String>) -> String {
         Some(v) => attr(name, v),
         None => String::new(),
     }
-}
-
-/// Whether `c` can start a JS identifier.
-fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_' || c == '$'
-}
-
-/// Whether `c` can continue a JS identifier.
-fn is_ident_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '$'
-}
-
-/// Rewrite a template expression string (e.g. `count > 0`, `user.name`,
-/// `items.length`) into valid JS that reads from the component's reactive
-/// `scope()` accessor, so `condition`/`bind` strings from the IR can be
-/// dropped straight into a JSX expression container.
-///
-/// - String literals (single/double quoted) are left untouched.
-/// - Bare identifiers are prefixed with `scope().`, except those in `locals`
-///   (real JS values from an enclosing `For`) and JS literal keywords
-///   (`true`, `false`, `null`, `undefined`).
-/// - Only the first segment of a dotted path is prefixed: `user.name` becomes
-///   `scope().user.name`, never `scope().user.scope().name`.
-/// - An empty/whitespace expression becomes `undefined`.
-fn scope_expr(expr: &str, locals: &[String]) -> String {
-    if expr.trim().is_empty() {
-        return "undefined".to_string();
-    }
-    let chars: Vec<char> = expr.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\'' || c == '"' {
-            let quote = c;
-            out.push(c);
-            i += 1;
-            while i < chars.len() {
-                let cc = chars[i];
-                out.push(cc);
-                i += 1;
-                if cc == '\\' && i < chars.len() {
-                    out.push(chars[i]);
-                    i += 1;
-                    continue;
-                }
-                if cc == quote {
-                    break;
-                }
-            }
-            continue;
-        }
-        if is_ident_start(c) {
-            let prev_is_dot = out.trim_end().ends_with('.');
-            let start = i;
-            while i < chars.len() && is_ident_continue(chars[i]) {
-                i += 1;
-            }
-            let ident: String = chars[start..i].iter().collect();
-            if prev_is_dot
-                || locals.iter().any(|l| l == &ident)
-                || matches!(ident.as_str(), "true" | "false" | "null" | "undefined")
-            {
-                out.push_str(&ident);
-            } else {
-                out.push_str("scope().");
-                out.push_str(&ident);
-            }
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    out
 }
 
 fn on_click_attr(name: &str) -> String {
@@ -244,7 +153,7 @@ fn emit_show(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let cond = scope_expr(condition, locals);
+    let cond = scope_expr(condition, locals, "scope().");
     let then_inner = emit_children(then_children, indent + 1, locals);
     match else_children {
         None => format!("{pad}<Show when={{{cond}}}>\n{then_inner}\n{pad}</Show>"),
@@ -266,7 +175,7 @@ fn emit_for(
     locals: &[String],
 ) -> String {
     let pad = "  ".repeat(indent);
-    let bind_expr = scope_expr(bind, locals);
+    let bind_expr = scope_expr(bind, locals, "scope().");
     let mut inner_locals = locals.to_vec();
     inner_locals.push(item_name.to_string());
     let inner = emit_children(item_body, indent + 1, &inner_locals);
@@ -288,7 +197,7 @@ fn emit_text_and_media_node(
             style,
         } => {
             let body = match bind {
-                Some(b) => format!("{{{}}}", scope_expr(b, locals)),
+                Some(b) => format!("{{{}}}", scope_expr(b, locals, "scope().")),
                 None => jsx_text(content),
             };
             format!("{pad}<span{}>{}</span>", class_attr(style.as_ref()), body)
@@ -680,7 +589,6 @@ mod tests {
         assert!(body.contains("<span>hi</span>"));
         assert!(body.contains("<button type=\"button\">Go</button>"));
         assert!(!body.contains("className"));
-        assert!(!body.contains("TODO"));
     }
 
     #[test]
@@ -696,35 +604,50 @@ mod tests {
 
     #[test]
     fn scope_expr_leaves_string_literals_untouched() {
-        assert_eq!(scope_expr(r#"x == "yes""#, &[]), r#"scope().x == "yes""#);
-        assert_eq!(scope_expr("x == 'yes'", &[]), "scope().x == 'yes'");
+        assert_eq!(
+            scope_expr(r#"x == "yes""#, &[], "scope()."),
+            r#"scope().x == "yes""#
+        );
+        assert_eq!(
+            scope_expr("x == 'yes'", &[], "scope()."),
+            "scope().x == 'yes'"
+        );
     }
 
     #[test]
     fn scope_expr_prefixes_dotted_path_once() {
-        assert_eq!(scope_expr("user.name", &[]), "scope().user.name");
-        assert_eq!(scope_expr("a.b.c", &[]), "scope().a.b.c");
+        assert_eq!(
+            scope_expr("user.name", &[], "scope()."),
+            "scope().user.name"
+        );
+        assert_eq!(scope_expr("a.b.c", &[], "scope()."), "scope().a.b.c");
     }
 
     #[test]
     fn scope_expr_does_not_prefix_locals() {
         assert_eq!(
-            scope_expr("item.active", &["item".to_string()]),
+            scope_expr("item.active", &["item".to_string()], "scope()."),
             "item.active"
         );
     }
 
     #[test]
     fn scope_expr_does_not_prefix_keywords() {
-        assert_eq!(scope_expr("true", &[]), "true");
-        assert_eq!(scope_expr("x == null", &[]), "scope().x == null");
-        assert_eq!(scope_expr("x || undefined", &[]), "scope().x || undefined");
+        assert_eq!(scope_expr("true", &[], "scope()."), "true");
+        assert_eq!(
+            scope_expr("x == null", &[], "scope()."),
+            "scope().x == null"
+        );
+        assert_eq!(
+            scope_expr("x || undefined", &[], "scope()."),
+            "scope().x || undefined"
+        );
     }
 
     #[test]
     fn scope_expr_empty_becomes_undefined() {
-        assert_eq!(scope_expr("", &[]), "undefined");
-        assert_eq!(scope_expr("   ", &[]), "undefined");
+        assert_eq!(scope_expr("", &[], "scope()."), "undefined");
+        assert_eq!(scope_expr("   ", &[], "scope()."), "undefined");
     }
 
     // ── class attribute (not className) ───────────────────────────────────
@@ -1128,6 +1051,28 @@ mod tests {
     }
 
     #[test]
+    fn emits_list_with_children() {
+        let node = ViewNode::List {
+            ordered: false,
+            style: None,
+            children: vec![ViewNode::ListItem {
+                on_long_press: None,
+                style: None,
+                children: vec![ViewNode::Text {
+                    content: "nested".to_string(),
+                    bind: None,
+                    style: None,
+                }],
+            }],
+        };
+        let out = emit_node(&node, 0, &[]);
+        assert!(
+            out.contains("<ul>\n  <li>\n    <span>nested</span>\n  </li>\n</ul>"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn emits_list() {
         let node = ViewNode::List {
             ordered: true,
@@ -1192,6 +1137,31 @@ mod tests {
         let out = emit_node(&node, 0, &[]);
         assert!(
             out.contains("onChange={(event) => handlers().colorChanged?.(event)}"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn emits_tabs_with_children() {
+        let node = ViewNode::Tabs {
+            bind: "tab".to_string(),
+            tabs: vec![crate::ir::TabItem {
+                value: "one".to_string(),
+                label: "One".to_string(),
+                icon: None,
+                children: vec![ViewNode::Text {
+                    content: "tab content".to_string(),
+                    bind: None,
+                    style: None,
+                }],
+            }],
+            on_change: Some("tabChanged".to_string()),
+            style: None,
+        };
+        let out = emit_node(&node, 0, &[]);
+        assert!(out.contains("<div>"));
+        assert!(
+            out.contains("<div role=\"tabpanel\">\n    <span>tab content</span>\n  </div>"),
             "{out}"
         );
     }

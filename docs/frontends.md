@@ -2,7 +2,7 @@
 
 **Also:** [Documentation home](README.md) · [DSL reference](dsl.md) · [View IR contract](view-ir-contract.md) · [Polyglot plugins](polyglot.md)
 
-The core parser has **four frontends**. They accept four different syntaxes and
+The core parser has **six frontends**. They accept six different syntaxes and
 produce **one shared AST** (`crepuscularity_core::ast::Node`, `crates/crepuscularity-core/src/ast.rs`).
 Lowering that AST is a separate step: `render_nodes_to_ir`
 (`crates/crepuscularity-native/src/render.rs`) turns it into the single
@@ -11,8 +11,8 @@ Moonshine TSX emit, the C ABI, Tauri, embedded, and the polyglot plugins consume
 The GPUI, TUI, LVGL, and web renderers walk the shared AST directly instead.
 
 None of this depends on the frameworks whose syntax it accepts. There is no
-`svelte`, `vue`, or JSX toolchain in any `Cargo.toml` — all four frontends are
-hand-written Rust.
+`svelte`, `vue`, `astro`, `@angular`, or JSX toolchain in any `Cargo.toml` — all
+six frontends are hand-written Rust.
 
 ## Selection
 
@@ -23,16 +23,18 @@ extension (`crates/crepuscularity-core/src/parser/mod.rs`), in this order:
 | ----------------------------- | -------- | -------------------- |
 | `.vue`                        | Vue SFC  | `parser/vue/`        |
 | `.svelte`                     | Svelte   | `parser/svelte/`     |
+| `.astro`                      | Astro    | `parser/astro/`      |
+| `.component.html`, `.ng.html`, `.ng` | Angular | `parser/angular/` |
 | `.csx`, `.jsx`, `.tsx`        | JSX      | `parser/jsx/`        |
 | anything else (`.crepus`, …)  | indent   | `parser/indent/`     |
 
 With no path, the JSX frontend still activates when the first non-blank,
 non-`#`, non-`$:` line starts with `<`; otherwise the indent frontend runs. The
-`.svelte` and `.vue` frontends are **path-driven only** — there is no content
-heuristic for them.
+`.svelte`, `.vue`, `.astro`, and Angular frontends are **path-driven only** —
+there is no content heuristic for them.
 
 From JavaScript, `parseTemplate(source, filename)` in
-`@tschk/crepuscularity-wasm` is the one entry point for all four; the filename
+`@tschk/crepuscularity-wasm` is the one entry point for all six; the filename
 is what selects the frontend.
 
 ```ts
@@ -42,15 +44,18 @@ parseTemplate(indentSource, "App.crepus");
 parseTemplate(jsxSource, "App.tsx");
 parseTemplate(svelteSource, "Counter.svelte");
 parseTemplate(vueSource, "Counter.vue");
+parseTemplate(astroSource, "Card.astro");
+parseTemplate(angularSource, "hero.component.html");
 ```
 
-All four return the same `ViewIr` shape.
+All six return the same `ViewIr` shape.
 
-## What the Svelte and Vue frontends actually compile
+## What the Svelte, Vue, Astro, and Angular frontends actually compile
 
-**The template only.** `<script>` and `<style>` blocks are extracted verbatim
-and never parsed or executed. Everything that gives Svelte and Vue their
-component semantics lives in `<script>`, so none of it runs:
+**The template only.** `<script>` and `<style>` blocks, Astro's `---`
+frontmatter fence, and Angular component classes are extracted verbatim and
+never parsed or executed. Everything that gives these frameworks their
+component semantics lives there, so none of it runs:
 
 - **Svelte:** runes (`$state`, `$derived`, `$effect`, `$props`), `$:` reactive
   statements, stores and `$store` access, imports, lifecycle (`onMount`,
@@ -58,6 +63,14 @@ component semantics lives in `<script>`, so none of it runs:
 - **Vue:** the Composition API (`ref`, `reactive`, `computed`, `watch`,
   `defineProps`, `defineEmits`), the Options API, lifecycle hooks, provide /
   inject.
+- **Astro:** frontmatter imports, `Astro.props`, top-level `await`, and
+  component resolution. The `---` fence is blanked before parsing, so markup is
+  read with the JSX scanning machinery and expressions are evaluated by the
+  shared crepuscularity evaluator.
+- **Angular:** `@Input`/`@Output`, pipes, dependency injection, and template
+  reference variables. Structural directives (`*ngIf`, `*ngFor`, `@if`, `@for`,
+  `@switch`, `@defer`) lower the way `v-if` / `v-for` do, and `{{ … }}` reuses
+  the Vue text scanner.
 
 Expressions in the markup are evaluated by the crepuscularity template
 evaluator against the crepuscularity template context, not by a JavaScript
@@ -122,5 +135,6 @@ module resolution happens, custom components render as unknown elements.
 
 ## Limits
 
-All three tag-based frontends cap nesting depth at 256 and error beyond it.
-Errors carry a message and a byte offset (`RawParseError`).
+The tag-based frontends (JSX, Svelte, Vue, Astro, Angular) cap nesting depth at
+256 and error beyond it. Errors carry a message and a byte offset
+(`RawParseError`).

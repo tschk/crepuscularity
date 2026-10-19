@@ -75,6 +75,14 @@ mod tests {
     }
 
     #[test]
+    fn content_sanitize_html_drops_style_and_event_attrs() {
+        assert!(CONTENT_JS.contains("function sanitizeHTML(html)"));
+        assert!(CONTENT_JS
+            .contains("name.startsWith(\"on\") || name === \"style\" || name === \"srcdoc\""));
+        assert!(!CONTENT_JS.contains("innerHTML="));
+    }
+
+    #[test]
     fn content_host_scans_and_replaces_code_blocks() {
         assert!(CONTENT_JS.contains("extract_widgets"));
         assert!(CONTENT_JS.contains("enhanceCodeBlock"));

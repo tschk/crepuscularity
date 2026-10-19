@@ -14,6 +14,8 @@ div min-h-screen overflow-x-hidden antialiased crepus-twilight-page text-sm lead
 					"Docs"
 				a href="./docs/cli.html" nav-link
 					"CLI"
+				a href="./docs/changelog.html" nav-link
+					"Changelog"
 				a href="./docs/lite.html" nav-link
 					"Lite"
 				a href="https://crates.io/crates/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
