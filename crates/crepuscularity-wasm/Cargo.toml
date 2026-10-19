@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-wasm"
-version = "0.1.2"
+version = "0.1.1"
 edition = "2021"
 license = "ISC"
 description = "WASM bindings for the crepuscularity .crepus parser and View IR (UNSTABLE)."
@@ -11,7 +11,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
-crepuscularity-native = { path = "../crepuscularity-native", version = "0.7.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }

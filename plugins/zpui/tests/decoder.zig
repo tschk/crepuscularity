@@ -175,3 +175,19 @@ test "all image positions and supported text transforms decode typed values" {
         \\{"version":7,"root":[{"kind":"text","content":"X","style":{"textTransform":"capitalize"}}]}
     ));
 }
+
+test "HTML display contents metadata is validated and ignored by native layout" {
+    inline for (.{ "true", "false", "null" }) |hint| {
+        var document = try ir.Document.parse(testing.allocator, "{\"version\":7,\"root\":[{\"kind\":\"stack\",\"axis\":\"row\",\"style\":{\"htmlDisplayContents\":" ++ hint ++ ",\"padding\":6},\"children\":[{\"kind\":\"text\",\"content\":\"Child\"}]}]}");
+        defer document.deinit();
+        try testing.expectEqual(ir.styles.Axis.row, document.root[0].axis);
+        try testing.expectEqual(@as(f32, 6), document.root[0].style.padding.?);
+        try testing.expectEqualStrings("Child", document.root[0].children[0].text);
+    }
+    try testing.expectError(error.InvalidBoolean, ir.Document.parse(testing.allocator,
+        \\{"version":7,"root":[{"kind":"stack","axis":"column","style":{"htmlDisplayContents":"true"},"children":[]}]}
+    ));
+    try testing.expectError(error.UnsupportedStyle, ir.Document.parse(testing.allocator,
+        \\{"version":7,"root":[{"kind":"stack","axis":"column","style":{"htmlDisplayContent":true},"children":[]}]}
+    ));
+}

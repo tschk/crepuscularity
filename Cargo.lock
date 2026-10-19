@@ -1152,6 +1152,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caseless"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b6fd507454086c8edfd769ca6ada439193cdb209c7681712ef6275cccbfe5d8"
+dependencies = [
+ "unicode-normalization",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1813,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity"
-version = "0.5.0"
+version = "0.4.12"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-lvgl",
@@ -1826,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-abi"
-version = "0.1.14"
+version = "0.1.13"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-native",
@@ -1836,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-cli"
-version = "0.16.5"
+version = "0.16.4"
 dependencies = [
  "ammonia",
  "clap",
@@ -1869,8 +1878,13 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "unicode-ident",
  "walkdir",
 ]
+
+[[package]]
+name = "crepuscularity-colors"
+version = "0.1.0"
 
 [[package]]
 name = "crepuscularity-components"
@@ -1882,21 +1896,26 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.6.0"
+version = "0.5.0"
 dependencies = [
+ "caseless",
+ "crepuscularity-colors",
  "notify 8.2.0",
  "serde_json",
  "sha2 0.11.0",
+ "stacker",
  "tempfile",
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]
 name = "crepuscularity-embedded"
-version = "0.2.0"
+version = "0.1.23"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "crepuscularity_macros",
  "display-interface",
@@ -1916,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-gpui"
-version = "0.6.0"
+version = "0.5.10"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-runtime",
@@ -1937,13 +1956,14 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-lite"
-version = "0.4.16"
+version = "0.4.15"
 dependencies = [
  "arboard",
  "clap",
  "crepuscularity-core",
  "crossterm 0.28.1",
  "dirs 6.0.0",
+ "futures-channel",
  "gpui-ce",
  "gpui_ce_platform",
  "icu_calendar",
@@ -1972,39 +1992,53 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-lsp"
-version = "0.3.0"
+version = "0.2.9"
 dependencies = [
  "crepuscularity-core",
  "tokio",
+ "tower 0.4.13",
  "tower-lsp",
 ]
 
 [[package]]
 name = "crepuscularity-lvgl"
-version = "0.2.0"
+version = "0.1.11"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "tempfile",
 ]
 
 [[package]]
 name = "crepuscularity-native"
-version = "0.7.0"
+version = "0.6.5"
 dependencies = [
  "crepuscularity-core",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_codegen",
+ "oxc_parser",
+ "oxc_semantic",
+ "oxc_span",
+ "oxc_syntax",
+ "oxc_transformer",
+ "raffia",
  "schemars",
  "serde",
  "serde_json",
+ "stacker",
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]
 name = "crepuscularity-plugin-bindgen"
-version = "0.1.7"
+version = "0.1.6"
 dependencies = [
  "equilibrium-ffi",
  "serde",
+ "syn 2.0.118",
  "tempfile",
  "toml 0.8.23",
 ]
@@ -2024,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-runtime"
-version = "0.5.0"
+version = "0.4.20"
 dependencies = [
  "crepuscularity-core",
  "gpui-ce",
@@ -2035,11 +2069,12 @@ dependencies = [
  "stacker",
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
+ "unicode-segmentation",
 ]
 
 [[package]]
 name = "crepuscularity-tauri"
-version = "0.2.0"
+version = "0.1.14"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-native",
@@ -2057,6 +2092,7 @@ dependencies = [
 name = "crepuscularity-tauri-macros"
 version = "0.1.8"
 dependencies = [
+ "heck 0.5.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -2065,11 +2101,11 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-tui"
-version = "0.5.0"
+version = "0.4.24"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity_macros",
- "criterion",
+ "criterion 0.8.2",
  "crossterm 0.29.0",
  "notify 8.2.0",
  "ratatui",
@@ -2079,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-wasm"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-native",
@@ -2089,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-web"
-version = "0.6.0"
+version = "0.5.2"
 dependencies = [
  "ammonia",
  "axum",
@@ -2112,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-webext"
-version = "0.4.0"
+version = "0.3.6"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-web",
@@ -2130,12 +2166,38 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity_macros"
-version = "0.5.13"
+version = "0.5.12"
 dependencies = [
  "crepuscularity-core",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "criterion"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "criterion-plot 0.5.0",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
 ]
 
 [[package]]
@@ -2149,7 +2211,7 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot",
+ "criterion-plot 0.8.2",
  "itertools 0.13.0",
  "num-traits",
  "oorandom",
@@ -2161,6 +2223,16 @@ dependencies = [
  "serde_json",
  "tinytemplate",
  "walkdir",
+]
+
+[[package]]
+name = "criterion-plot"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
+dependencies = [
+ "cast",
+ "itertools 0.10.5",
 ]
 
 [[package]]
@@ -2178,6 +2250,15 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
 
 [[package]]
 name = "crossbeam-deque"
@@ -3829,6 +3910,7 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "core-video",
+ "criterion 0.5.1",
  "ctor",
  "derive_more",
  "embed-resource",
@@ -3845,6 +3927,7 @@ dependencies = [
  "gpui_ce_shared_string",
  "gpui_ce_sum_tree",
  "gpui_ce_util",
+ "hdrhistogram",
  "heapless 0.9.3",
  "http",
  "image",
@@ -4819,6 +4902,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_collections",
  "gpui_ce_util",
+ "gpui_ce_wgpu",
  "image",
  "itertools 0.14.0",
  "log",
@@ -4967,7 +5051,11 @@ version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f49d1053f4708f0af3cf9fc5bffc7e68a914a3c45becb231c80068c9c3f78bea"
 dependencies = [
+ "base64 0.22.1",
  "byteorder",
+ "crossbeam-channel",
+ "flate2",
+ "nom 8.0.0",
  "num-traits",
 ]
 
@@ -5590,6 +5678,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-terminal"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+dependencies = [
+ "hermit-abi",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "is-wsl"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5604,6 +5703,15 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -8239,6 +8347,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "raffia"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a83eb5987650fcfc3f2e912d3a718f19b8e87c0d980e12e36edf79fa0221d93"
+dependencies = [
+ "raffia_macro",
+ "smallvec",
+]
+
+[[package]]
+name = "raffia_macro"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ac21f5e4bc6b29ea5d5e691a9aa08b2b9fd8891f48a99157b9f02d8a48e1318"
+dependencies = [
+ "heck 0.5.0",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "rand"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10138,7 +10267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -11212,6 +11341,15 @@ name = "unicode-linebreak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-properties"

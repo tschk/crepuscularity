@@ -7,11 +7,11 @@
 use crepuscularity_core::context::TemplateContext;
 
 use crepuscularity_core::tailwind::{
-    parse_font_size_named, parse_size_pt, parse_spacing_pt, resolve_arbitrary_css_color,
-    resolve_css_color, SIZE_FIT,
+    parse_font_size_named, parse_opacity_percentage, parse_size_pt, parse_spacing_pt,
+    resolve_arbitrary_css_color, resolve_css_color, SIZE_FIT,
 };
 
-use crate::ViewStyle;
+use crate::{StackAxis, ViewStyle};
 
 // ── Public re-exports ────────────────────────────────────────────────────────
 
@@ -35,25 +35,26 @@ pub(crate) fn extract_stack_hints(
 }
 
 pub(crate) fn extract_text_style(classes: Vec<String>, ctx: Option<&TemplateContext>) -> ViewStyle {
-    let mut s = ViewStyle::default();
-    for c in &classes {
-        apply_presentation_class(&mut s, c, ctx);
-    }
-    s.classes = classes;
-    s
+    extract_stack_hints(classes, ctx).style
 }
 
-pub(crate) fn is_scroll_container(classes: &[String]) -> bool {
-    classes.iter().any(|c| {
-        matches!(
-            c.as_str(),
-            "overflow-scroll"
-                | "overflow-y-scroll"
-                | "overflow-y-auto"
-                | "overflow-x-scroll"
-                | "overflow-x-auto"
-        )
-    })
+pub(crate) fn scroll_axis(classes: &[String], layout_axis: StackAxis) -> Option<StackAxis> {
+    let horizontal = classes
+        .iter()
+        .any(|class| matches!(class.as_str(), "overflow-x-scroll" | "overflow-x-auto"));
+    let vertical = classes
+        .iter()
+        .any(|class| matches!(class.as_str(), "overflow-y-scroll" | "overflow-y-auto"));
+    let generic = classes
+        .iter()
+        .any(|class| matches!(class.as_str(), "overflow-scroll" | "overflow-auto"));
+    match (horizontal, vertical, generic) {
+        (true, false, _) => Some(StackAxis::Row),
+        (false, true, _) => Some(StackAxis::Column),
+        (false, false, false) => None,
+        // shortcut: View IR has one scroll axis; add a second axis when dual-axis native scrolling is supported.
+        _ => Some(layout_axis),
+    }
 }
 
 // ── Scale + colour parsing (canonical implementations live in core) ──────────
@@ -101,7 +102,16 @@ fn apply_layout_class(hints: &mut StackLayoutHints, class: &str, ctx: Option<&Te
         ("mr-", |s, v| s.margin_right = Some(v)),
     ];
     for (prefix, set) in SPACING {
-        if let Some(v) = parse_prefix_spacing(class, prefix) {
+        let spacing_class = if prefix.starts_with('m') {
+            class.strip_prefix('-').unwrap_or(class)
+        } else {
+            class
+        };
+        if let Some(v) = parse_prefix_spacing(spacing_class, prefix) {
+            let v = if spacing_class != class { -v } else { v };
+            if prefix.starts_with('p') && v < 0.0 {
+                return;
+            }
             set(s, v);
             return;
         }
@@ -299,14 +309,6 @@ fn apply_layout_class(hints: &mut StackLayoutHints, class: &str, ctx: Option<&Te
         _ => {}
     }
 
-    // Opacity
-    if let Some(rest) = class.strip_prefix("opacity-") {
-        if let Ok(n) = rest.parse::<u8>() {
-            s.opacity = Some(n as f32 / 100.0);
-            return;
-        }
-    }
-
     // Overflow / visibility
     match class {
         "overflow-hidden" => {
@@ -354,6 +356,15 @@ fn apply_layout_class(hints: &mut StackLayoutHints, class: &str, ctx: Option<&Te
     }
     // border-[N]
     if let Some(rest) = class.strip_prefix("border-") {
+        let width = if rest.starts_with('[') {
+            parse_spacing_pt(rest)
+        } else {
+            rest.parse::<f32>().ok()
+        };
+        if let Some(width) = width.filter(|width| width.is_finite() && *width >= 0.0) {
+            s.border_width = Some(width);
+            return;
+        }
         // Try as color
         if let Some(hex) = resolve_css_color(rest).or_else(|| resolve_arbitrary_css_color(rest)) {
             s.border_color = Some(hex);
@@ -408,6 +419,13 @@ fn apply_layout_class(hints: &mut StackLayoutHints, class: &str, ctx: Option<&Te
 /// Class families that apply to any element. Both entry points route through
 /// here so a family added for one cannot silently go missing from the other.
 fn apply_presentation_class(s: &mut ViewStyle, class: &str, ctx: Option<&TemplateContext>) {
+    if let Some(opacity) = class
+        .strip_prefix("opacity-")
+        .and_then(parse_opacity_percentage)
+    {
+        s.opacity = Some(opacity);
+        return;
+    }
     apply_text_class(s, class, ctx);
     apply_position_class(s, class);
     apply_transform_class(s, class);
@@ -428,7 +446,13 @@ fn apply_text_class(s: &mut ViewStyle, class: &str, ctx: Option<&TemplateContext
         if apply_text_color(s, rest, ctx) {
             return;
         }
-        if let Some(size) = parse_font_size_named(rest) {
+        let size = parse_font_size_named(rest).or_else(|| {
+            rest.starts_with('[')
+                .then(|| parse_spacing_pt(rest))
+                .flatten()
+                .filter(|size| size.is_finite() && *size > 0.0)
+        });
+        if let Some(size) = size {
             s.font_size = Some(size);
             return;
         }
@@ -546,9 +570,12 @@ fn parse_line_height(rest: &str) -> Option<f32> {
         _ => {
             if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
                 let stripped = inner.strip_suffix("px").unwrap_or(inner);
-                stripped.parse::<f32>().ok()
+                stripped
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|value| value.is_finite())
             } else {
-                rest.parse::<f32>().ok().map(|n| n * 4.0)
+                parse_spacing_pt(rest)
             }
         }
     }
@@ -566,7 +593,10 @@ fn parse_letter_spacing(rest: &str) -> Option<f32> {
         _ => {
             if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
                 let stripped = inner.strip_suffix("px").unwrap_or(inner);
-                stripped.parse::<f32>().ok()
+                stripped
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|value| value.is_finite())
             } else {
                 None
             }
@@ -633,7 +663,10 @@ fn parse_border_radius(class: &str) -> Option<f32> {
                 .and_then(|s| s.strip_suffix(']'))
             {
                 let stripped = inner.strip_suffix("px").unwrap_or(inner);
-                stripped.parse::<f32>().ok()
+                stripped
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|value| value.is_finite())
             } else {
                 None
             }
@@ -710,7 +743,7 @@ fn apply_transform_class(s: &mut ViewStyle, class: &str) {
         }
     }
     if let Some(rest) = class.strip_prefix("scale-") {
-        if let Ok(v) = rest.parse::<f32>() {
+        if let Some(v) = rest.parse::<f32>().ok().filter(|value| value.is_finite()) {
             let value = if v > 10.0 { v / 100.0 } else { v };
             s.scale_x = Some(value);
             s.scale_y = Some(value);
@@ -718,19 +751,19 @@ fn apply_transform_class(s: &mut ViewStyle, class: &str) {
         }
     }
     if let Some(rest) = class.strip_prefix("scale-x-") {
-        if let Ok(v) = rest.parse::<f32>() {
+        if let Some(v) = rest.parse::<f32>().ok().filter(|value| value.is_finite()) {
             s.scale_x = Some(if v > 10.0 { v / 100.0 } else { v });
             return;
         }
     }
     if let Some(rest) = class.strip_prefix("scale-y-") {
-        if let Ok(v) = rest.parse::<f32>() {
+        if let Some(v) = rest.parse::<f32>().ok().filter(|value| value.is_finite()) {
             s.scale_y = Some(if v > 10.0 { v / 100.0 } else { v });
             return;
         }
     }
     if let Some(rest) = class.strip_prefix("rotate-") {
-        if let Ok(v) = rest.parse::<f32>() {
+        if let Some(v) = rest.parse::<f32>().ok().filter(|value| value.is_finite()) {
             s.rotate = Some(v);
         }
     }
@@ -818,7 +851,7 @@ fn apply_text_layout_class(s: &mut ViewStyle, class: &str) {
         _ => {}
     }
     if let Some(rest) = class.strip_prefix("line-clamp-") {
-        if let Ok(n) = rest.parse::<i32>() {
+        if let Some(n) = rest.parse::<i32>().ok().filter(|n| *n > 0) {
             s.line_clamp = Some(n);
         }
     }
@@ -941,6 +974,32 @@ mod tests {
     }
 
     #[test]
+    fn scroll_direction_is_independent_of_layout_and_generic_overflow_keeps_the_fallback() {
+        for fallback in [StackAxis::Row, StackAxis::Column] {
+            for (classes, expected) in [
+                ("overflow-x-auto", Some(StackAxis::Row)),
+                ("overflow-x-scroll", Some(StackAxis::Row)),
+                ("overflow-y-auto", Some(StackAxis::Column)),
+                ("overflow-y-scroll", Some(StackAxis::Column)),
+                ("overflow-auto", Some(fallback)),
+                ("overflow-scroll", Some(fallback)),
+                ("overflow-x-auto overflow-y-auto", Some(fallback)),
+                ("overflow-auto overflow-y-scroll", Some(StackAxis::Column)),
+                ("overflow-hidden", None),
+                ("overflow-visible", None),
+                ("md:overflow-auto", None),
+                ("", None),
+            ] {
+                let classes = classes
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                assert_eq!(scroll_axis(&classes, fallback), expected, "{classes:?}");
+            }
+        }
+    }
+
+    #[test]
     fn spacing_table_covers_every_padding_and_margin_arm() {
         assert_eq!(layout("p-4").padding, Some(16.0));
         assert_eq!(layout("px-2").padding_horizontal, Some(8.0));
@@ -1002,7 +1061,7 @@ mod tests {
         );
         assert_eq!(
             layout("bg-red-500/50").background_color.as_deref(),
-            Some("#fb2c36%80")
+            Some("#fb2c3680")
         );
         assert_eq!(
             layout("bg-[#123456]").background_color.as_deref(),
@@ -1018,10 +1077,61 @@ mod tests {
     fn font_size_ramp_stays_strict() {
         assert_eq!(layout("text-xs").font_size, Some(12.0));
         assert_eq!(layout("text-9xl").font_size, Some(128.0));
-        // Bare numbers and arbitrary values are not font sizes here.
+        // Bare scale numbers are not font sizes; bracketed pixels are explicit.
         assert_eq!(layout("text-4").font_size, None);
-        assert_eq!(layout("text-[22px]").font_size, None);
+        assert_eq!(layout("text-[22px]").font_size, Some(22.0));
         // text-left/center/right must not be swallowed by the size ramp.
         assert_eq!(layout("text-center").text_align.as_deref(), Some("center"));
+    }
+}
+
+#[cfg(test)]
+mod opacity_parity_tests {
+    use super::*;
+    #[test]
+    fn text_and_stack_opacity_share_finite_clamped_percentage_semantics() {
+        for (token, expected) in [
+            ("opacity-12.5", Some(0.125)),
+            ("opacity--20", Some(0.0)),
+            ("opacity-120", Some(1.0)),
+            ("opacity-NaN", None),
+            ("opacity-inf", None),
+        ] {
+            let classes = vec![token.to_owned()];
+            assert_eq!(extract_text_style(classes.clone(), None).opacity, expected);
+            assert_eq!(extract_stack_hints(classes, None).style.opacity, expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_box_style_tests {
+    use super::*;
+    #[test]
+    fn text_preserves_common_box_styles_and_class_order() {
+        let classes = [
+            "p-1.5",
+            "px-2",
+            "bg-red-500",
+            "bg-blue-500",
+            "border-2",
+            "border-red-500",
+            "rounded-lg",
+            "opacity-25",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        let text = extract_text_style(classes.clone(), None);
+        let stack = extract_stack_hints(classes.clone(), None).style;
+        assert_eq!(text.padding, Some(6.0));
+        assert_eq!(text.padding_horizontal, Some(8.0));
+        assert_eq!(text.background_color, stack.background_color);
+        assert_eq!(text.background_color, resolve_css_color("blue-500"));
+        assert_eq!(text.border_width, Some(2.0));
+        assert_eq!(text.border_color, resolve_css_color("red-500"));
+        assert_eq!(text.corner_radius, stack.corner_radius);
+        assert_eq!(text.opacity, Some(0.25));
+        assert_eq!(text.classes, classes);
     }
 }

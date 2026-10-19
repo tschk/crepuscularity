@@ -15,6 +15,20 @@ cd my-gpui-app
 SDKROOT=$(xcrun --show-sdk-path) cargo run
 ```
 
+Runtime utility classes support embedded expressions such as `w-{columns + 1}`,
+`h-[{height + 2}px]` and `p-{gap}`, including matching `hover:`, `focus:` and
+`active:` variants. Context updates are read on the next render. Existing dynamic
+hex colors and opacity retain their specialized handling. Resolved class values
+are applied once; braces inside a resolved value are not evaluated recursively.
+Missing or malformed expressions retain the runtime styler's existing no-op
+fallback. Unsupported utilities remain unsupported after interpolation.
+Dynamic state ring/shadow utilities preserve the other base shadow kind, including
+whole expressions (`hover:{variant}`) and embedded expressions. Resolved utilities
+apply in order; an explicit empty shadow reset is not seeded again.
+Generated views preserve base shadows for state utilities with nested
+`gpui:`/`gui:` target prefixes in static classes, conditional classes and evaluated
+class lists. Foreign target utilities are skipped in each position.
+
 ## macOS Xcode Environment
 
 GPUI's macOS build compiles Metal shaders during Cargo builds. Cargo does not invent Xcode settings; it passes through the shell environment to GPUI's build script.
@@ -109,7 +123,9 @@ impl Render for MyComponent {
 }
 ```
 
-Inline `view!` templates do not need a build script because Cargo already tracks the Rust source file. If a GPUI app also keeps reusable `.crepus` files on disk and loads them from Rust, use the same one-line build helper for Cargo rebuild tracking and early syntax validation:
+Inline `view!` templates do not need a build script because Cargo already tracks the Rust source file. Compile-time `view_file!("src/views/card.crepus")` templates track their entry and included files automatically. File includes in this macro expand as text: explicit include props, selected named-component defaults, and authored include slot children produce compilation errors because the macro does not provide component-local prop scopes. Prop-free expressions keep their existing Rust caller scope. Retargeting a symlink alone requires a forced rebuild because Cargo tracks its previous canonical target.
+
+For templates loaded at runtime, use the one-line build helper for Cargo rebuild tracking and early syntax validation:
 
 ```rust
 fn main() {
@@ -225,7 +241,7 @@ GPUI supports advanced text styling when using the vendored GPUI build:
 
 ```toml
 [dependencies]
-crepuscularity-gpui = { version = "0.6.0", features = ["gpui-text-extras"] }
+crepuscularity-gpui = { version = "0.4.1", features = ["gpui-text-extras"] }
 ```
 
 ```text
@@ -296,14 +312,31 @@ crepus dev
 
 This watches `.crepus` files and recompiles them automatically when changed.
 
+For runtime previews, `HotReloadState` reads and parses the entry file on GPUI's
+background executor by default. Its initial snapshot is empty until that load
+completes. `reload()` queues work and retains the last completed snapshot while
+loading; it no longer performs a synchronous read. Only one load runs at a time,
+edits received during a load are coalesced, and obsolete results are discarded.
+
 ## Performance
 
-GPUI is designed for high-performance applications:
+GPUI element construction, layout, event callbacks and view updates run on the UI
+thread. Heavy application work must use `cx.background_executor().spawn(...)`,
+then publish its completed result through an entity update and `cx.notify()`.
+An `async` callback by itself does not move CPU work onto a worker.
 
-- **GPU-accelerated rendering** - All drawing happens on the GPU
-- **Minimal allocations** - Efficient memory usage
-- **Async operations** - Non-blocking UI updates
-- **Compiled templates** - `view!` macro compiles to optimized GPUI calls
+The `view!` macro parses templates at build time. Runtime preview entry-file
+loading, parsing and include preparation use workers. `HotReloadView` publishes
+a shared include snapshot and renders it without filesystem reads or parsing;
+file changes or explicit reloads refresh that snapshot. Expression evaluation,
+props, defaults and slots still run on the UI thread for each occurrence.
+Direct public runtime renders instead share include parse snapshots for that
+call, then recheck sources on the next call through the existing file AST cache.
+Separate virtual bundles stay isolated. Runtime traversal borrows complete target
+contexts and unchanged sibling scopes. Loop rows reuse a scratch context and
+restore overwritten values; declarations still clone their local scope when
+needed. Large lists, costly callbacks or excessive updates can therefore still
+cause missed frames; there is no lag-free guarantee.
 
 ## Examples
 

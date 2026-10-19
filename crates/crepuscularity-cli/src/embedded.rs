@@ -82,9 +82,7 @@ fn run_snapshot_parsed(parsed: SnapshotArgs) -> Result<(), String> {
         ctx.set(key, parse_var_value(&raw));
     }
 
-    let content = fs::read_to_string(&parsed.path)
-        .map_err(|e| format!("read {}: {e}", parsed.path.display()))?;
-    let mut ui = Ui::new(parsed.width, parsed.height, &content);
+    let mut ui = Ui::from_path(parsed.width, parsed.height, &parsed.path)?;
     if let Some(name) = parsed.component {
         ui.set_component(name);
     }

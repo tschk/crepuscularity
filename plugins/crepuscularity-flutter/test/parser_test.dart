@@ -3,6 +3,153 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('viewIrFromSource', () {
+    test('alignment and justification preserve recognized class order', () {
+      for (final (classes, align, justify) in [
+        ('items-center items-end justify-center justify-start', 'end', 'start'),
+        (
+          'items-end items-center justify-start justify-center',
+          'center',
+          'center',
+        ),
+        ('items-stretch ignored justify-between unknown', 'stretch', 'between'),
+      ]) {
+        final node =
+            viewIrFromSource('stack row $classes').root.single as StackNode;
+        expect(node.alignItems, align);
+        expect(node.justifyContent, justify);
+      }
+    });
+
+    test('source opacity uses finite clamped percentages in class order', () {
+      for (final (token, expected) in [
+        ('opacity-25', 0.25),
+        ('opacity-12.5', 0.125),
+        ('opacity--20', 0.0),
+        ('opacity-120', 1.0),
+      ]) {
+        final node =
+            viewIrFromSource('text $token "Opacity"').root.single as TextNode;
+        expect(node.style!.opacity, expected);
+      }
+      final node =
+          viewIrFromSource(
+                'text opacity-25 opacity-50 opacity-NaN opacity-Infinity "Opacity"',
+              ).root.single
+              as TextNode;
+      expect(node.style!.opacity, 0.5);
+    });
+
+    test('border widths and colors stay distinct and preserve class order', () {
+      final node =
+          viewIrFromSource(
+                'text border border-2 border-[3.5px] border-red-500 "Border"',
+              ).root.single
+              as TextNode;
+      expect(node.style!.borderWidth, 3.5);
+      expect(node.style!.borderColor, '#fb2c36');
+      final invalid =
+          viewIrFromSource('text border-NaN border-[-2px] "Border"').root.single
+              as TextNode;
+      expect(invalid.style?.borderWidth, isNull);
+    });
+
+    test('arbitrary font sizes stay distinct from text colors', () {
+      final node =
+          viewIrFromSource('text text-[18.5px] text-[#f00] "Font"').root.single
+              as TextNode;
+      expect(node.style!.fontSize, 18.5);
+      expect(node.style!.foregroundColor, '#ff0000');
+      for (final value in ['NaNpx', '-2px', 'Infinitypx']) {
+        final invalid =
+            viewIrFromSource('text text-[$value] "Font"').root.single
+                as TextNode;
+        expect(invalid.style?.fontSize, isNull);
+      }
+    });
+
+    test('arbitrary pixel radii retain the legacy invalid-class fallback', () {
+      for (final (token, expected) in [
+        ('rounded-[6px]', 6.0),
+        ('rounded-[2.5]', 2.5),
+        ('rounded-[NaNpx]', 8.0),
+        ('rounded-[-6px]', 8.0),
+      ]) {
+        final node =
+            viewIrFromSource('text $token "Radius"').root.single as TextNode;
+        expect(node.style!.cornerRadius, expected);
+      }
+    });
+
+    test(
+      'arbitrary CSS hex colors preserve alpha and reject malformed tokens',
+      () {
+        final text =
+            viewIrFromSource(
+                  'text text-[#ff000080] bg-[#123456] "Hex"',
+                ).root.single
+                as TextNode;
+        expect(text.style!.foregroundColor, '#ff000080');
+        expect(text.style!.backgroundColor, '#123456');
+        for (final color in [
+          '[#nope00]',
+          '[#12345]',
+          '[#1234567]',
+          '[#123456789]',
+        ]) {
+          final node =
+              viewIrFromSource('text text-$color "Hex"').root.single
+                  as TextNode;
+          expect(node.style?.foregroundColor, isNull);
+        }
+      },
+    );
+
+    test('arbitrary pixel spacing avoids the numeric scale', () {
+      final stack =
+          viewIrFromSource(
+                'stack col gap-[2.5px] p-[6px] px-[10]\n  text "A"',
+              ).root.single
+              as StackNode;
+      expect(stack.spacing, 2.5);
+      expect(stack.style!.padding, 6);
+      expect(stack.style!.paddingHorizontal, 10);
+      for (final value in ['[Infinitypx]', '[NaN]', '[1e309px]', '[6rem]']) {
+        final invalid =
+            viewIrFromSource(
+                  'stack col gap-$value p-$value\n  text "A"',
+                ).root.single
+                as StackNode;
+        expect(invalid.spacing, isNull);
+        expect(invalid.style?.padding, isNull);
+      }
+    });
+
+    test('fractional spacing uses the shared finite scale', () {
+      final ir = viewIrFromSource('stack col gap-0.5 p-1.5 px-2.5\n  text "A"');
+      final stack = ir.root.single as StackNode;
+      expect(stack.spacing, 2);
+      expect(stack.style!.padding, 6);
+      expect(stack.style!.paddingHorizontal, 10);
+      final invalid =
+          viewIrFromSource(
+                'stack col gap-Infinity p-NaN\n  text "A"',
+              ).root.single
+              as StackNode;
+      expect(invalid.spacing, isNull);
+      expect(invalid.style?.padding, isNull);
+    });
+
+    test('quoted braces and nested action payloads remain whole tokens', () {
+      for (final payload in [
+        'prompt:"literal } with spaces"',
+        'prompt:{"label":"a } b"}',
+        "prompt:'literal } with spaces'",
+      ]) {
+        final ir = viewIrFromSource('button "Go" onclick={$payload}');
+        expect((ir.root.single as ButtonNode).onClick, payload);
+      }
+    });
+
     test('nests children by indentation', () {
       final ir = viewIrFromSource('''
 stack col gap-2

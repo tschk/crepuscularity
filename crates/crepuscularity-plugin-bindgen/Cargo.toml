@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-plugin-bindgen"
-version = "0.1.7"
+version = "0.1.6"
 edition = "2021"
 repository = "https://github.com/tschk/crepuscularity"
 license = "ISC"
@@ -11,6 +11,7 @@ publish = true
 equilibrium-ffi = "0.3"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+syn = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

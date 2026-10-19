@@ -96,14 +96,20 @@ public final class CrepusStateStore: ObservableObject {
         reader: (UnsafePointer<CChar>, UInt, UnsafePointer<CChar>?, UInt, UnsafePointer<CChar>?, UInt, UnsafeMutablePointer<CChar>, UInt) -> UInt
     ) -> String {
         expr.withCString { exprPointer in
-            let capacity = 4096
-            let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
-            defer { output.deallocate() }
-            let written = callOptionalArgs(scopeName, scopeJson) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
-                reader(exprPointer, UInt(strlen(exprPointer)), scopeNamePointer, scopeNameLength, scopePointer, scopeLength, output, UInt(capacity))
+            var capacity = 4096
+            while true {
+                let output = UnsafeMutablePointer<CChar>.allocate(capacity: capacity)
+                defer { output.deallocate() }
+                let written = callOptionalArgs(scopeName, scopeJson) { scopeNamePointer, scopeNameLength, scopePointer, scopeLength in
+                    reader(exprPointer, UInt(expr.utf8.count), scopeNamePointer, scopeNameLength, scopePointer, scopeLength, output, UInt(capacity))
+                }
+                if written < UInt(capacity) {
+                    return String(decoding: UnsafeRawBufferPointer(start: output, count: Int(written)), as: UTF8.self)
+                }
+                // Read-only evaluators report the full length even when the buffer is too small.
+                guard written < UInt(Int.max) else { return "" }
+                capacity = Int(written) + 1
             }
-            if written >= capacity { return "" }
-            return String(cString: output)
         }
     }
 

@@ -8,6 +8,7 @@ exclude = [
     "plugins/crepuscularity-components/packages/gpui",
 ]
 members = [
+    "crates/crepuscularity-colors",
     "crates/crepuscularity",
     "crates/crepuscularity-core",
     "crates/crepuscularity-lsp",
@@ -101,7 +102,7 @@ notify = "8"
 rayon = "1"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }

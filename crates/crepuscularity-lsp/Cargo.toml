@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-lsp"
-version = "0.3.0"
+version = "0.2.9"
 edition = "2021"
 authors = ["Max Carter <max@undivisible.dev>"]
 license = "ISC"
@@ -17,8 +17,9 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync"] }
 tower-lsp = { version = "0.20", features = ["runtime-tokio"] }
+tower = { version = "0.4", features = ["util"], default-features = false }
 
 [dev-dependencies]

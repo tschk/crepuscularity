@@ -4,9 +4,28 @@ use crate::ast::*;
 
 use super::super::RawParseError;
 use super::attrs::{jsx_parse_attrs, JsxAttr, JsxAttrValue};
-use super::builders::{jsx_build_element, jsx_build_embed, jsx_build_include, jsx_build_let};
+use super::builders::{
+    jsx_build_element, jsx_build_embed, jsx_build_include, jsx_build_let, jsx_validate_source_attrs,
+};
 use super::template::parse_jsx_nodes;
-use super::text::{jsx_close, jsx_err};
+use super::text::{jsx_close, jsx_err, jsx_open_tag_tail};
+
+// Keep JSX-only admission consistent across ordinary tags and branch parsers.
+// The shared scanner also serves frontends that support attribute shorthand.
+fn parse_attrs<'a>(
+    norm_root: &'a str,
+    src: &'a str,
+) -> Result<(Vec<JsxAttr>, &'a str, bool), RawParseError> {
+    let (attrs, rest, self_closing) = jsx_parse_attrs(norm_root, src)?;
+    if attrs.iter().any(|attribute| attribute.key.starts_with('{')) {
+        return Err(jsx_err(
+            norm_root,
+            src,
+            "JSX attribute shorthand is not supported; use a named attribute binding",
+        ));
+    }
+    Ok((attrs, rest, self_closing))
+}
 
 pub(crate) fn parse_jsx_tag<'a>(
     norm_root: &'a str,
@@ -20,10 +39,78 @@ pub(crate) fn parse_jsx_tag<'a>(
     let tag = &after_lt[..name_end];
     let rest = after_lt[name_end..].trim_start();
 
-    let (attrs, after_gt, self_closing) = jsx_parse_attrs(norm_root, rest)?;
+    let (attrs, after_gt, self_closing) = parse_attrs(norm_root, rest)?;
 
+    if self_closing && matches!(tag, "if" | "for" | "match") {
+        return Err(jsx_err(
+            norm_root,
+            src,
+            format!("<{tag}> cannot be self-closing; use a matching closing tag"),
+        ));
+    }
+
+    if matches!(tag, "include" | "island" | "crepus-island") {
+        jsx_validate_source_attrs(tag, &attrs)
+            .map_err(|message| jsx_err(norm_root, src, message))?;
+    }
+    if matches!(tag, "island" | "crepus-island") {
+        if !self_closing {
+            return Err(jsx_err(
+                norm_root,
+                src,
+                "islands must be self-closing; child content is unsupported",
+            ));
+        }
+        if let Some(adapter) = attrs.iter().find(|attribute| attribute.key == "adapter") {
+            if adapter.as_str().is_none_or(|value| value.trim().is_empty()) {
+                return Err(jsx_err(
+                    norm_root,
+                    src,
+                    "island adapter must be a nonempty literal",
+                ));
+            }
+        }
+    }
+    if matches!(tag, "let" | "let-default") {
+        if !self_closing {
+            return Err(jsx_err(
+                norm_root,
+                src,
+                "declarations must be self-closing; child content is unsupported",
+            ));
+        }
+        let mut names = attrs.iter().filter(|attribute| attribute.key == "name");
+        let name = names.next().and_then(|attribute| attribute.as_str());
+        if names.next().is_some() || name.is_none_or(|value| value.trim().is_empty()) {
+            return Err(jsx_err(
+                norm_root,
+                src,
+                "declaration requires exactly one nonempty literal variable name",
+            ));
+        }
+        if !name.is_some_and(crate::eval::is_variable_name) {
+            return Err(jsx_err(
+                norm_root,
+                src,
+                "declaration requires a supported variable name",
+            ));
+        }
+        let mut values = attrs.iter().filter(|attribute| attribute.key == "value");
+        let value = values.next().and_then(|attribute| attribute.as_expr());
+        if values.next().is_some()
+            || value
+                .as_ref()
+                .is_none_or(|expression| expression.trim().is_empty())
+        {
+            return Err(jsx_err(
+                norm_root,
+                src,
+                "declaration requires exactly one nonempty value expression",
+            ));
+        }
+    }
     match tag {
-        "if" => parse_jsx_if(norm_root, attrs, after_gt),
+        "if" => parse_jsx_if(norm_root, attrs, after_gt, "if", 0),
         "else" | "else-if" => Err(jsx_err(
             norm_root,
             src,
@@ -41,13 +128,22 @@ pub(crate) fn parse_jsx_tag<'a>(
         "let" => Ok((Node::LetDecl(jsx_build_let(attrs, false)), after_gt)),
         "let-default" => Ok((Node::LetDecl(jsx_build_let(attrs, true)), after_gt)),
         _ if self_closing => Ok((
-            Node::Element(jsx_build_element(tag, attrs, vec![])),
+            Node::Element(
+                jsx_build_element(tag, attrs, vec![])
+                    .map_err(|message| jsx_err(norm_root, after_gt, message))?,
+            ),
             after_gt,
         )),
         _ => {
             let (children, rest) = parse_jsx_nodes(norm_root, after_gt)?;
             let rest = jsx_close(norm_root, rest, tag)?;
-            Ok((Node::Element(jsx_build_element(tag, attrs, children)), rest))
+            Ok((
+                Node::Element(
+                    jsx_build_element(tag, attrs, children)
+                        .map_err(|message| jsx_err(norm_root, after_gt, message))?,
+                ),
+                rest,
+            ))
         }
     }
 }
@@ -56,24 +152,67 @@ fn parse_jsx_if<'a>(
     norm_root: &'a str,
     attrs: Vec<JsxAttr>,
     children_src: &'a str,
+    closing_tag: &str,
+    branch_depth: usize,
 ) -> Result<(Node, &'a str), RawParseError> {
-    let condition = attrs
+    if branch_depth >= super::MAX_JSX_DEPTH {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            format!(
+                "maximum JSX else-if chain depth ({}) exceeded",
+                super::MAX_JSX_DEPTH
+            ),
+        ));
+    }
+    let mut conditions = attrs
         .iter()
-        .find(|a| matches!(a.key.as_str(), "condition" | "test" | "cond"))
-        .and_then(|a| a.as_expr())
-        .unwrap_or_default();
+        .filter(|attribute| matches!(attribute.key.as_str(), "condition" | "test" | "cond"));
+    let condition = conditions.next().and_then(|attribute| attribute.as_expr());
+    if conditions.next().is_some()
+        || condition
+            .as_ref()
+            .is_none_or(|expression| expression.trim().is_empty())
+    {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            "conditional tag requires exactly one nonempty condition expression",
+        ));
+    }
+    let condition = condition.expect("condition validated above");
 
     let (then_children, rest) = parse_jsx_nodes(norm_root, children_src)?;
+    let rest = if closing_tag == "else-if" {
+        jsx_close(norm_root, rest, closing_tag)?
+    } else {
+        rest
+    };
     let rest = rest.trim_start();
 
-    let (else_children, rest) = if rest.starts_with("<else-if") {
-        let after_name = rest.strip_prefix("<else-if").unwrap_or("").trim_start();
-        let (ei_attrs, ei_body, _) = jsx_parse_attrs(norm_root, after_name)?;
-        let (nested, next) = parse_jsx_if(norm_root, ei_attrs, ei_body)?;
+    let (else_children, rest) = if let Some(after_name) = jsx_open_tag_tail(rest, "else-if") {
+        let after_name = after_name.trim_start();
+        let (ei_attrs, ei_body, self_closing) = parse_attrs(norm_root, after_name)?;
+        if self_closing {
+            return Err(jsx_err(
+                norm_root,
+                rest,
+                "<else-if> cannot be self-closing; use a matching closing tag",
+            ));
+        }
+        let (nested, next) =
+            parse_jsx_if(norm_root, ei_attrs, ei_body, "else-if", branch_depth + 1)?;
         (Some(vec![nested]), next)
-    } else if rest.starts_with("<else") {
-        let after_name = rest.strip_prefix("<else").unwrap_or("").trim_start();
-        let (_, else_body, self_closing) = jsx_parse_attrs(norm_root, after_name)?;
+    } else if let Some(after_name) = jsx_open_tag_tail(rest, "else") {
+        let after_name = after_name.trim_start();
+        let (else_attrs, else_body, self_closing) = parse_attrs(norm_root, after_name)?;
+        if !else_attrs.is_empty() {
+            return Err(jsx_err(
+                norm_root,
+                after_name,
+                "else branches do not accept attributes",
+            ));
+        }
         if self_closing {
             (Some(vec![]), else_body)
         } else {
@@ -85,7 +224,11 @@ fn parse_jsx_if<'a>(
         (None, rest)
     };
 
-    let rest = jsx_close(norm_root, rest, "if")?;
+    let rest = if closing_tag == "if" {
+        jsx_close(norm_root, rest, closing_tag)?
+    } else {
+        rest
+    };
     Ok((
         Node::If(IfBlock {
             condition,
@@ -101,17 +244,39 @@ fn parse_jsx_for<'a>(
     attrs: Vec<JsxAttr>,
     children_src: &'a str,
 ) -> Result<(Node, &'a str), RawParseError> {
-    let pattern = attrs
+    let mut patterns = attrs
         .iter()
-        .find(|a| matches!(a.key.as_str(), "let" | "var"))
-        .and_then(|a| a.as_str())
-        .unwrap_or("")
-        .to_string();
-    let iterator = attrs
-        .iter()
-        .find(|a| a.key == "in")
-        .and_then(|a| a.as_expr())
-        .unwrap_or_default();
+        .filter(|attribute| matches!(attribute.key.as_str(), "let" | "var"));
+    let pattern = patterns.next().and_then(|attribute| attribute.as_str());
+    if patterns.next().is_some() || pattern.is_none_or(|pattern| pattern.trim().is_empty()) {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            "for tag requires exactly one nonempty literal loop variable (let or var)",
+        ));
+    }
+    let pattern = pattern.expect("loop variable validated above").to_string();
+    if !crate::eval::is_variable_name(&pattern) {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            "loop requires a supported item variable name",
+        ));
+    }
+    let mut iterators = attrs.iter().filter(|attribute| attribute.key == "in");
+    let iterator = iterators.next().and_then(|attribute| attribute.as_expr());
+    if iterators.next().is_some()
+        || iterator
+            .as_ref()
+            .is_none_or(|expression| expression.trim().is_empty())
+    {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            "for tag requires exactly one nonempty iterator expression (in)",
+        ));
+    }
+    let iterator = iterator.expect("iterator validated above");
 
     let (body, rest) = parse_jsx_nodes(norm_root, children_src)?;
     let rest = jsx_close(norm_root, rest, "for")?;
@@ -130,27 +295,50 @@ fn parse_jsx_match<'a>(
     attrs: Vec<JsxAttr>,
     children_src: &'a str,
 ) -> Result<(Node, &'a str), RawParseError> {
-    let expr = attrs
+    let mut expressions = attrs
         .iter()
-        .find(|a| matches!(a.key.as_str(), "on" | "value"))
-        .and_then(|a| a.as_expr())
-        .unwrap_or_default();
+        .filter(|attribute| matches!(attribute.key.as_str(), "on" | "value"));
+    let expr = expressions.next().and_then(|attribute| attribute.as_expr());
+    if expressions.next().is_some()
+        || expr
+            .as_ref()
+            .is_none_or(|expression| expression.trim().is_empty())
+    {
+        return Err(jsx_err(
+            norm_root,
+            children_src,
+            "match tag requires exactly one nonempty subject expression",
+        ));
+    }
+    let expr = expr.expect("match subject validated above");
 
     let mut arms = Vec::new();
     let mut rest = children_src.trim_start();
 
-    while rest.starts_with("<case") {
-        let after_name = &rest["<case".len()..].trim_start();
-        let (case_attrs, case_body, self_closing) = jsx_parse_attrs(norm_root, after_name)?;
-        let pattern = case_attrs
+    while let Some(after_name) = jsx_open_tag_tail(rest, "case") {
+        let after_name = after_name.trim_start();
+        let (case_attrs, case_body, self_closing) = parse_attrs(norm_root, after_name)?;
+        let mut patterns = case_attrs
             .iter()
-            .find(|a| matches!(a.key.as_str(), "pattern" | "match" | "when"))
-            .and_then(|a| match &a.value {
-                JsxAttrValue::Str(s) => Some(s.clone()),
-                JsxAttrValue::Expr(e) => Some(e.clone()),
-                JsxAttrValue::Bool(_) => None,
-            })
-            .unwrap_or_else(|| "_".to_string());
+            .filter(|attribute| matches!(attribute.key.as_str(), "pattern" | "match" | "when"));
+        let pattern_attribute = patterns.next();
+        let pattern = match pattern_attribute.map(|attribute| &attribute.value) {
+            None => Some("_".to_string()),
+            Some(JsxAttrValue::Str(pattern) | JsxAttrValue::Expr(pattern)) => Some(pattern.clone()),
+            Some(JsxAttrValue::Bool(_)) => None,
+        };
+        if patterns.next().is_some()
+            || pattern
+                .as_ref()
+                .is_none_or(|pattern| pattern.trim().is_empty())
+        {
+            return Err(jsx_err(
+                norm_root,
+                after_name,
+                "case requires at most one nonempty literal or braced pattern",
+            ));
+        }
+        let pattern = pattern.expect("case pattern validated above");
         let (body, after_body): (Vec<Node>, &str) = if self_closing {
             (vec![], case_body)
         } else {

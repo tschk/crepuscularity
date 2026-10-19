@@ -79,7 +79,15 @@ pub(crate) fn generate_docs(
         } else {
             stem.clone()
         };
-        page_map.insert(out_stem.clone(), title.clone());
+        if page_map.insert(out_stem.clone(), title.clone()).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "multiple documentation sources map to {out_stem}.html (including {})",
+                    path.display()
+                ),
+            ));
+        }
         bodies.push((out_stem, title, body_html));
     }
 
@@ -383,6 +391,58 @@ fn esc(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_page_outputs_leave_existing_docs_unchanged() {
+        for names in [["README.md", "index.md"], ["Readme.md", "index.md"]] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            let output = root.path().join("output");
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::create_dir_all(&output).unwrap();
+            for name in names {
+                std::fs::write(source.join(name), format!("# {name}\ncontent")).unwrap();
+            }
+            std::fs::write(source.join("cli.md"), "# CLI\nextra").unwrap();
+            std::fs::write(output.join("index.html"), "keep page").unwrap();
+            std::fs::write(output.join("docs-search-index.json"), "keep search").unwrap();
+            let error = generate_docs(&source, &output, &ThemeCss::default(), "Test").unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert!(error.to_string().contains("index.html"));
+            assert_eq!(
+                std::fs::read_to_string(output.join("index.html")).unwrap(),
+                "keep page"
+            );
+            assert_eq!(
+                std::fs::read_to_string(output.join("docs-search-index.json")).unwrap(),
+                "keep search"
+            );
+            assert!(!output.join("cli.html").exists());
+        }
+    }
+
+    #[test]
+    fn unique_docs_keep_readme_index_and_named_pages() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let output = root.path().join("output");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("README.md"), "# Guide\nWelcome").unwrap();
+        std::fs::write(source.join("cli.md"), "# CLI\nCommands").unwrap();
+        generate_docs(&source, &output, &ThemeCss::default(), "Test").unwrap();
+        assert!(std::fs::read_to_string(output.join("index.html"))
+            .unwrap()
+            .contains("Welcome"));
+        assert!(std::fs::read_to_string(output.join("cli.html"))
+            .unwrap()
+            .contains("Commands"));
+        let index: Vec<serde_json::Value> = serde_json::from_str(
+            &std::fs::read_to_string(output.join("docs-search-index.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(index.len(), 2);
+    }
+
     use crate::web::ThemeCss;
 
     #[test]

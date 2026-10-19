@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::bridge::{BridgeError, Capability, NativePlugin};
@@ -199,7 +200,10 @@ impl NativePlugin for FsPlugin {
             "readText" => self.handle_read_text(path()?),
             "writeText" => self.handle_write_text(path()?, payload),
             "list" => {
-                let rel = payload.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let rel = match payload {
+                    Value::Object(fields) if !fields.contains_key("path") => "",
+                    _ => path()?,
+                };
                 self.handle_list(rel)
             }
             "mkdir" => self.handle_mkdir(path()?),
@@ -412,14 +416,14 @@ impl NativePlugin for HostPlugin {
     fn invoke(&self, method: &str, payload: &Value) -> Result<Value, BridgeError> {
         match method {
             "renderTree" => {
-                let tree_value = payload.get("tree").cloned().ok_or_else(|| {
+                let tree_value = payload.get("tree").ok_or_else(|| {
                     BridgeError::with_details(
                         "invalid_payload",
                         "renderTree requires object field \"tree\"",
                         payload.clone(),
                     )
                 })?;
-                let tree: HostNode = serde_json::from_value(tree_value).map_err(|err| {
+                let tree = HostNode::deserialize(tree_value).map_err(|err| {
                     BridgeError::new("invalid_payload", format!("invalid host tree: {err}"))
                 })?;
                 Ok(json!(self.state.render_tree(tree)))
@@ -533,17 +537,19 @@ impl NativePlugin for WindowPlugin {
                 let w = payload
                     .get("width")
                     .and_then(|v| v.as_f64())
-                    .filter(|x| *x > 0.0);
+                    .map(|x| x as f32)
+                    .filter(|x| x.is_finite() && *x > 0.0);
                 let h = payload
                     .get("height")
                     .and_then(|v| v.as_f64())
-                    .filter(|x| *x > 0.0);
+                    .map(|x| x as f32)
+                    .filter(|x| x.is_finite() && *x > 0.0);
                 let (width, height) = match (w, h) {
-                    (Some(width), Some(height)) => (width as f32, height as f32),
+                    (Some(width), Some(height)) => (width, height),
                     _ => {
                         return Err(BridgeError::with_details(
                             "invalid_payload",
-                            "setContentSize requires positive numeric \"width\" and \"height\" (logical px)",
+                            "setContentSize requires positive finite \"width\" and \"height\" representable as f32 (logical px)",
                             payload.clone(),
                         ));
                     }
@@ -591,10 +597,18 @@ impl NativePlugin for WindowPlugin {
                 Ok(json!({ "scheduled": "refresh" }))
             }
             "requestDecorations" => {
-                let style = payload
-                    .get("style")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("server");
+                let style = match payload.get("style") {
+                    None => "server",
+                    Some(Value::String(style)) if matches!(style.as_str(), "client" | "server") => {
+                        style
+                    }
+                    _ => {
+                        return Err(BridgeError::new(
+                            "invalid_payload",
+                            "requestDecorations style must be \"client\" or \"server\"",
+                        ))
+                    }
+                };
                 let dec = match style {
                     "client" => DeferredWindowDecorations::Client,
                     _ => DeferredWindowDecorations::Server,
@@ -606,6 +620,155 @@ impl NativePlugin for WindowPlugin {
                 "internal",
                 "method routed but not handled",
             )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod host_payload_tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_lists_reject_invalid_paths_without_defaulting_to_root() {
+        let root = std::env::temp_dir().join(format!(
+            "crepus-list-payload-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let plugin = FsPlugin { root: root.clone() };
+        let results: Vec<_> = [
+            json!({"path": null}),
+            json!({"path": false}),
+            json!({"path": 5}),
+            json!({"path": []}),
+            Value::Null,
+            json!([]),
+            json!(5),
+        ]
+        .iter()
+        .map(|payload| plugin.invoke("list", payload))
+        .collect();
+        let omitted = plugin.invoke("list", &json!({})).unwrap();
+        let explicit = plugin.invoke("list", &json!({"path": ""})).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+        for result in results {
+            assert_eq!(result.unwrap_err().code, "invalid_payload");
+        }
+        assert_eq!(omitted, explicit);
+        assert_eq!(omitted["entries"], json!([]));
+    }
+
+    #[test]
+    fn decoration_requests_validate_styles_before_queueing() {
+        let queue = HostCommandQueue::new();
+        let plugin = WindowPlugin::new(queue.clone());
+        for style in [
+            json!("unknown"),
+            json!(""),
+            json!(false),
+            Value::Null,
+            json!(5),
+        ] {
+            assert_eq!(
+                plugin
+                    .invoke("requestDecorations", &json!({"style": style}))
+                    .unwrap_err()
+                    .code,
+                "invalid_payload"
+            );
+            assert!(queue.drain().is_empty());
+        }
+        for (payload, expected) in [
+            (json!({}), DeferredWindowDecorations::Server),
+            (
+                json!({"style": "server"}),
+                DeferredWindowDecorations::Server,
+            ),
+            (
+                json!({"style": "client"}),
+                DeferredWindowDecorations::Client,
+            ),
+        ] {
+            let result = plugin.invoke("requestDecorations", &payload).unwrap();
+            assert_eq!(
+                result["style"],
+                if expected == DeferredWindowDecorations::Client {
+                    "client"
+                } else {
+                    "server"
+                }
+            );
+            assert!(
+                matches!(queue.drain().as_slice(), [HostDeferred::RequestDecorations(actual)] if *actual == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn window_sizes_must_remain_positive_and_finite_in_gpui() {
+        let queue = HostCommandQueue::new();
+        let plugin = WindowPlugin::new(queue.clone());
+        for invalid in [1e100, 1e-100, 0.0, -1.0] {
+            for payload in [
+                json!({"width": invalid, "height": 480}),
+                json!({"width": 640, "height": invalid}),
+            ] {
+                assert_eq!(
+                    plugin.invoke("setContentSize", &payload).unwrap_err().code,
+                    "invalid_payload"
+                );
+                assert!(queue.drain().is_empty());
+            }
+        }
+        let result = plugin
+            .invoke("setContentSize", &json!({"width": 640.5, "height": 480.25}))
+            .unwrap();
+        assert_eq!(result["width"], 640.5);
+        assert_eq!(result["height"], 480.25);
+        assert!(
+            matches!(queue.drain().as_slice(), [HostDeferred::SetContentSize { width, height }] if *width == 640.5 && *height == 480.25)
+        );
+    }
+
+    #[test]
+    fn render_requests_preserve_the_borrowed_payload() {
+        let state = HostState::shared();
+        let plugin = HostPlugin::new(state.clone());
+        let payload = json!({"tree": {"type": "View", "props": {"nested": [1, {"label": "child"}]}, "children": [{"type": "Text", "text": "Hello"}]}});
+        let before = payload.clone();
+        let result = plugin.invoke("renderTree", &payload).unwrap();
+        assert_eq!(payload, before);
+        assert_eq!(result["tree"]["props"], payload["tree"]["props"]);
+        assert_eq!(result["tree"]["children"][0]["text"], "Hello");
+        assert_eq!(state.snapshot().render_count, 1);
+    }
+
+    #[test]
+    fn invalid_render_requests_preserve_the_current_tree_and_render_count() {
+        let state = crate::host::HostState::shared();
+        let plugin = HostPlugin::new(state.clone());
+        plugin
+            .invoke(
+                "renderTree",
+                &json!({"tree": {"type": "Text", "text": "Keep", "className": "text-[18.5px]"}}),
+            )
+            .unwrap();
+        let before = state.snapshot();
+        for payload in [
+            json!({}),
+            json!({"tree": null}),
+            json!({"tree": []}),
+            json!({"tree": {"type": 5}}),
+            json!({"tree": {"type": "View", "children": "invalid"}}),
+            json!({"tree": {"type": "Text", "style": {"fontSize": "invalid"}}}),
+        ] {
+            let error = plugin.invoke("renderTree", &payload).unwrap_err();
+            assert_eq!(error.code, "invalid_payload");
+            assert_eq!(state.snapshot(), before);
         }
     }
 }

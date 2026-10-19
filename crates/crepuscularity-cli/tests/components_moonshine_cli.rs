@@ -114,7 +114,7 @@ fn moonshine_dep_prints_packages() {
 fn moonshine_new_scaffolds_app() {
     let tmp = tempfile::tempdir().expect("tempdir");
     // Isolate from the developer's ~/projects/moonshine so the scaffold uses
-    // placeholder file: paths (still valid package.json content).
+    // published npm packages without requiring a sibling checkout.
     let status = crepus()
         .current_dir(tmp.path())
         .env_remove("MOONSHINE_PATH")
@@ -145,7 +145,13 @@ fn moonshine_new_scaffolds_app() {
     // This test runs with an isolated HOME, so no local checkout is resolvable
     // and the scaffold must fall back to dependencies that install anywhere.
     assert!(!pkg.contains("file:"), "{pkg}");
-    assert!(pkg.contains("\"@tschk/moonshine\": \"^0.3.4\""), "{pkg}");
+    for name in [
+        "@tschk/moonshine",
+        "@tschk/crepus-moonshine",
+        "@tschk/moonshine-components",
+    ] {
+        assert!(pkg.contains(&format!("\"{name}\": \"^0.4.49\"")), "{pkg}");
+    }
     assert!(!pkg.contains("#path:packages/"));
 
     let main = std::fs::read_to_string(app.join("src/main.tsx")).expect("main.tsx");
@@ -261,5 +267,219 @@ fn web_build_emits_svelte_vue_and_solid() {
             !body.contains("data-crepus-if"),
             "{target} should emit real control flow: {body}"
         );
+    }
+}
+
+#[test]
+fn unknown_component_lists_embedded_and_disk_catalog_ids() {
+    let root = tempfile::tempdir().unwrap();
+    let catalog = root
+        .path()
+        .join("plugins/crepuscularity-components/catalog/components.json");
+    std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+    std::fs::write(
+        &catalog,
+        r#"{"components":[{"id":"custom-component","platforms":["moonshine"]}]}"#,
+    )
+    .unwrap();
+    let output = crepus()
+        .env("CREPUS_REPO_ROOT", root.path())
+        .args(["components", "add", "does-not-exist"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("custom-component"), "{stderr}");
+    assert!(stderr.contains("button"), "{stderr}");
+}
+
+#[test]
+fn custom_component_blank_metadata_uses_name_and_package_fallbacks() {
+    let root = tempfile::tempdir().unwrap();
+    let catalog = root
+        .path()
+        .join("plugins/crepuscularity-components/catalog/components.json");
+    std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+    std::fs::write(&catalog, r#"{"components":[{"id":"custom-component","title":" ","name":"Custom Component","platforms":["moonshine"],"targets":{"moonshine":" "}}]}"#).unwrap();
+    let output = crepus()
+        .env("CREPUS_REPO_ROOT", root.path())
+        .args([
+            "components",
+            "add",
+            "custom-component",
+            "--target",
+            "moonshine",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("name:      Custom Component"), "{stdout}");
+    assert!(stdout.contains("@tschk/moonshine-components"), "{stdout}");
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "default desktop crepus.exe does not spawn reliably on Windows CI"
+)]
+fn moonshine_emit_resolves_bundled_includes_from_the_entry_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let site = directory.path().join("site");
+    std::fs::create_dir_all(site.join("components")).unwrap();
+    std::fs::create_dir_all(site.join("pages/components")).unwrap();
+    std::fs::write(
+        site.join("index.crepus"),
+        "include components/card.crepus title=\"Root title\"\n  span \"Caller slot\"",
+    )
+    .unwrap();
+    std::fs::write(
+        site.join("components/card.crepus"),
+        "div\n  span \"{title}\"\n  slot",
+    )
+    .unwrap();
+    std::fs::write(
+        site.join("pages/main.crepus"),
+        "include components/card.crepus",
+    )
+    .unwrap();
+    std::fs::write(
+        site.join("pages/components/card.crepus"),
+        "span \"Nested title\"",
+    )
+    .unwrap();
+    for (entry, expected) in [
+        ("index.crepus", "Root title"),
+        ("pages/main.crepus", "Nested title"),
+    ] {
+        let out = directory.path().join("dist");
+        let output = crepus()
+            .args(["web", "build", "--emit", "moonshine", "--site"])
+            .arg(&site)
+            .arg("--out-dir")
+            .arg(&out)
+            .args(["--entry", entry])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{entry}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ir = std::fs::read_to_string(out.join("crepus-view-ir.json")).unwrap();
+        let tsx = std::fs::read_to_string(out.join("crepus-emit.moonshine.tsx")).unwrap();
+        assert!(ir.contains(expected), "{ir}");
+        if entry == "index.crepus" {
+            assert!(ir.contains("Caller slot"), "{ir}");
+            assert!(tsx.contains("Caller slot"), "{tsx}");
+        } else {
+            assert!(tsx.contains(expected), "{tsx}");
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "default desktop crepus.exe does not spawn reliably on Windows CI"
+)]
+fn framework_emit_normalizes_relative_entry_paths() {
+    let site = tempfile::tempdir().unwrap();
+    std::fs::write(
+        site.path().join("index.crepus"),
+        "span \"Normalized entry\"",
+    )
+    .unwrap();
+    std::fs::write(
+        site.path().join("cards.crepus"),
+        "--- Card\nspan \"Named entry\"",
+    )
+    .unwrap();
+    for (entry, expected) in [
+        ("./index.crepus", "Normalized entry"),
+        ("pages/../index.crepus", "Normalized entry"),
+        ("./cards.crepus#Card", "Named entry"),
+    ] {
+        let out = site.path().join("dist");
+        let output = crepus()
+            .args(["web", "build", "--emit", "moonshine", "--site"])
+            .arg(site.path())
+            .args(["--entry", entry])
+            .arg("--out-dir")
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{entry}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let body = std::fs::read_to_string(out.join("crepus-emit.moonshine.tsx")).unwrap();
+        assert!(body.contains(expected), "{body}");
+    }
+    let output = crepus()
+        .args(["web", "build", "--emit", "moonshine", "--site"])
+        .arg(site.path())
+        .args(["--entry", "../index.crepus"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("file not found"));
+}
+
+#[test]
+#[cfg(unix)]
+fn moonshine_local_paths_roundtrip_in_scaffold_and_dependency_snippet() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("moonshine-\"quoted\\雪-{{slug}}");
+    for directory in ["packages/core", "packages/crepus-moonshine", "components"] {
+        let package = root.join(directory);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+    }
+    let output = crepus()
+        .current_dir(tmp.path())
+        .env("MOONSHINE_PATH", &root)
+        .args(["moonshine", "new", "Path App", "--js"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let package: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(tmp.path().join("path-app/package.json")).unwrap(),
+    )
+    .expect("scaffold must be valid JSON");
+    let output = crepus()
+        .current_dir(tmp.path())
+        .env("MOONSHINE_PATH", &root)
+        .args(["moonshine", "dep"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let printed = String::from_utf8(output.stdout).unwrap();
+    let start = printed.find("{\n").expect("dependency snippet");
+    let snippet = serde_json::Deserializer::from_str(&printed[start..])
+        .into_iter::<serde_json::Value>()
+        .next()
+        .unwrap()
+        .expect("snippet must be valid JSON");
+    for (name, directory) in [
+        ("@tschk/moonshine", "packages/core"),
+        ("@tschk/crepus-moonshine", "packages/crepus-moonshine"),
+        ("@tschk/moonshine-components", "components"),
+    ] {
+        let expected = format!(
+            "file:{}",
+            root.join(directory).canonicalize().unwrap().display()
+        );
+        assert_eq!(package["dependencies"][name], expected);
+        assert_eq!(snippet["dependencies"][name], expected);
     }
 }

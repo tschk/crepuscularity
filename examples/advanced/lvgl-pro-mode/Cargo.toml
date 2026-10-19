@@ -6,4 +6,4 @@ license = "ISC"
 publish = false
 
 [dependencies]
-crepuscularity = { path = "../../../crates/crepuscularity", version = "0.5.0" }
+crepuscularity = { path = "../../../crates/crepuscularity", version = "0.4.6" }

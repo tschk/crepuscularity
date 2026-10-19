@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-gpui"
-version = "0.6.0"
+version = "0.5.10"
 edition = "2021"
 license = "ISC"
 description = "GPUI backend for Crepuscularity (view! macro re-exports) — UNSTABLE; in active development."
@@ -29,7 +29,13 @@ inspector = ["gpui/inspector"]
 leak-detection = ["gpui/leak-detection"]
 screen-capture = ["gpui_platform/screen-capture"]
 runtime-shaders = ["gpui_platform/runtime_shaders"]
-test-support = ["gpui_platform/test-support"]
+test-support = ["gpui_platform/test-support", "crepuscularity-runtime/test-support"]
+input-latency-histogram = ["gpui/input-latency-histogram"]
+profiler = ["gpui/profiler"]
+bench = ["gpui/bench"]
+windows-manifest = ["gpui/windows-manifest"]
+# Pinned platform release routes this to the Windows WGPU backend.
+wgpu = ["gpui_platform/wgpu"]
 gpui-text-extras = [
     "crepuscularity_macros/gpui_text_run_styles",
     "crepuscularity-runtime/gpui_text_run_styles",
@@ -40,8 +46,12 @@ gpui-text-extras = [
 [dependencies]
 gpui = { package = "gpui-ce", version = "0.2.2", default-features = false }
 gpui_platform = { package = "gpui_ce_platform", version = "0.1.0" }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.13" }
-crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.5.0", default-features = false }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", default-features = false }
 # gpui-symbols = { version = "0.6", optional = true } # incompatible with gpui-ce
 pollster = "0.4"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support"] }

@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 
-use super::super::{match_delimiter, RawParseError};
+use super::super::{match_delimiter, scan_top_level, RawParseError};
 use super::{angular_err, block_starter_at, parse_angular_nodes};
 
 pub(crate) fn parse_angular_block<'a>(
@@ -84,7 +84,7 @@ fn read_body<'a>(
             rest,
             format!(
                 "expected `}}` closing the `@{keyword}` block, found: {}",
-                &rest[..rest.len().min(40)]
+                super::super::diagnostic_prefix(rest, 40)
             ),
         ));
     };
@@ -98,7 +98,16 @@ fn parse_if<'a>(
     depth: usize,
 ) -> Result<(IfBlock, &'a str), RawParseError> {
     let (condition, rest) = read_head(root, src, at, "if")?;
-    if condition.contains(" as ") {
+    if scan_top_level(condition, |index, character| {
+        character == ';'
+            || (character == 'a'
+                && condition[..index].ends_with(char::is_whitespace)
+                && condition[index..]
+                    .strip_prefix("as")
+                    .is_some_and(|rest| rest.starts_with(char::is_whitespace)))
+    })
+    .is_some()
+    {
         return Err(angular_err(
             root,
             at,
@@ -112,7 +121,7 @@ fn parse_if<'a>(
     if let Some(after_else) = tail.strip_prefix("@else") {
         let after_else_trimmed = after_else.trim_start();
         if let Some(after_if) = after_else_trimmed.strip_prefix("if") {
-            let (nested, next) = parse_if(root, after_if, tail, depth)?;
+            let (nested, next) = parse_if(root, after_if, tail, depth + 1)?;
             return Ok((
                 IfBlock {
                     condition: condition.to_string(),

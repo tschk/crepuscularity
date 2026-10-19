@@ -34,6 +34,8 @@ pub struct ConditionalClass {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventHandler {
+    /// Native Vue ordering between a model assignment and its matching update listener.
+    pub model_before_listener: Option<bool>,
     pub event: String,
     pub modifiers: Vec<String>,
     pub handler: String,

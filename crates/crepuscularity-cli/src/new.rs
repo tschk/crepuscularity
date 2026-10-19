@@ -7,11 +7,14 @@ use crate::ui;
 
 pub fn run(name: &str) {
     let t0 = Instant::now();
+    crate::scaffold::validate_project_name(name).unwrap_or_else(|e| ui::error(e));
     let dir = Path::new(name);
 
     if dir.exists() {
         ui::error(&format!("'{}' already exists", name));
     }
+
+    crate::scaffold::create_project_dir(dir).unwrap_or_else(|e| ui::error(&e));
 
     fs::create_dir_all(dir.join("src")).unwrap_or_else(|e| {
         ui::error(&format!("could not create directories: {e}"));
@@ -50,7 +53,7 @@ path = "src/main.rs"
 [dependencies]
 gpui = {{ package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }}
 gpui_platform = {{ package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"] }}
-crepuscularity-gpui = {{ version = "0.6.0" }}
+crepuscularity-gpui = {{ version = "0.5.10" }}
 "#
     )
 }
@@ -77,7 +80,7 @@ impl {pascal}View {{
 }}
 
 impl Render for {pascal}View {{
-    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut Context<Self>) -> impl IntoElement {{
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {{
         let count = self.count;
         view! {{r#"
             div w-full h-full bg-zinc-950 text-white flex flex-col items-center justify-center gap-6
@@ -106,7 +109,8 @@ fn main() {{
 }
 
 pub(crate) fn to_pascal_case(s: &str) -> String {
-    s.split(&['-', '_', ' '][..])
+    let mut name: String = s
+        .split(&['-', '_', ' '][..])
         .filter(|p| !p.is_empty())
         .map(|p| {
             let mut c = p.chars();
@@ -115,5 +119,50 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
             }
         })
-        .collect()
+        .collect();
+    if name
+        .chars()
+        .next()
+        .is_some_and(|c| !unicode_ident::is_xid_start(c))
+    {
+        name.insert(0, '_');
+    }
+    name
+}
+
+#[cfg(test)]
+mod scaffold_dependency_tests {
+    use super::*;
+    #[test]
+    fn generated_gpui_source_matches_backend_registry_dependencies() {
+        let generated: toml::Value = toml::from_str(&cargo_toml("fixture")).unwrap();
+        let backend: toml::Value =
+            toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
+        for dependency in ["gpui", "gpui_platform"] {
+            let emitted = &generated["dependencies"][dependency];
+            let shipped = &backend["dependencies"][dependency];
+            for field in ["package", "version"] {
+                assert_eq!(emitted[field], shipped[field], "{dependency}.{field}");
+            }
+            for field in ["git", "rev", "path"] {
+                assert!(emitted.get(field).is_none(), "{dependency}.{field}");
+            }
+        }
+        assert_eq!(
+            generated["dependencies"]["gpui"]["default-features"],
+            backend["dependencies"]["gpui"]["default-features"]
+        );
+        assert!(generated["dependencies"]["gpui_platform"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature.as_str() == Some("font-kit")));
+        for feature in ["gpui/font-kit", "gpui_platform/font-kit"] {
+            assert!(backend["features"]["font-kit"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.as_str() == Some(feature)));
+        }
+    }
 }

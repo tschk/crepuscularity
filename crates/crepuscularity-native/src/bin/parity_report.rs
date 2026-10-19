@@ -91,7 +91,7 @@ fn main() {
             native_literals.extend(extract_quoted_tailwind_tokens(body));
         }
     }
-    if let Some(body) = extract_fn_until_next_fn(&style_src, "is_scroll_container") {
+    if let Some(body) = extract_fn_until_next_fn(&style_src, "scroll_axis") {
         native_literals.extend(extract_quoted_tailwind_tokens(body));
     }
     for name in ["stack_axis", "parse_gap_spacing"] {

@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity"
-version = "0.5.0"
+version = "0.4.12"
 edition = "2021"
 license = "ISC"
 description = "Crepuscularity UI framework: .crepus templates for GPUI and web (UNSTABLE; in active development)."
@@ -12,10 +12,10 @@ readme = "../../README.md"
 path = "src/lib.rs"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
-crepuscularity-web = { path = "../crepuscularity-web", version = "0.6.0" }
-crepuscularity-native = { path = "../crepuscularity-native", version = "0.7.0" }
-crepuscularity-lvgl = { path = "../crepuscularity-lvgl", version = "0.2.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0" }
+crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
+crepuscularity-lvgl = { path = "../crepuscularity-lvgl", version = "0.1.11" }
 serde = { workspace = true }
 toml = { workspace = true }
 

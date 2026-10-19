@@ -1,6 +1,6 @@
 use crate::{PanelConfig, ScreenSize};
 
-/// Common SPI TFT modules — maps to [`PanelConfig`] and size for [`crate::Ui`].
+/// Common SPI TFT modules — maps to [`PanelConfig`] and size for host `Ui` and firmware framebuffers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPreset {
     Ili9341_240x320,

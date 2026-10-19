@@ -14,10 +14,12 @@ pub mod diagnostics;
 pub mod error;
 pub mod eval;
 pub mod include_paths;
+pub mod output_paths;
 pub mod parser;
 pub mod preprocess;
 pub mod render_entry;
 pub mod tailwind;
+pub mod text_binding;
 pub mod virtual_files;
 pub mod watch;
 
@@ -25,7 +27,10 @@ pub use analysis::{analyze_template, classify_node, BindingMap, Fingerprint, Reg
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::DriverCache;
 pub use context::{TemplateContext, TemplateValue};
-pub use diagnostics::{diagnose_crepus_source, is_multi_component_file, CrepusDiagnostic};
+pub use diagnostics::{
+    diagnose_crepus_source, diagnose_crepus_source_with_path, is_multi_component_file,
+    CrepusDiagnostic,
+};
 pub use error::CrepusError;
 pub use include_paths::resolve_include_path;
 pub use parser::{

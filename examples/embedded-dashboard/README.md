@@ -124,7 +124,7 @@ Same SPI pattern as ILI9341; set `Ui::new(240, 135, …)` to match the Pack reso
 
 ```toml
 [dependencies]
-crepuscularity-embedded = { version = "0.2.0", features = ["std"] }  # parse on device
+crepuscularity-embedded = { version = "0.1.9", features = ["std"] }  # parse on device
 # plus your HAL / display crates, e.g.:
 # mipidsi, display-interface-spi, embedded-graphics, embassy-stm32, esp-idf-svc, ...
 ```

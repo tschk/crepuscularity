@@ -49,7 +49,7 @@ pub(crate) fn parse_angular_template(src: &str) -> Result<Vec<Node>, RawParseErr
             rest,
             format!(
                 "unexpected trailing markup in Angular template: {}",
-                &rest[..rest.len().min(40)]
+                super::diagnostic_prefix(rest, 40)
             ),
         ));
     }
@@ -87,6 +87,17 @@ pub(crate) fn parse_angular_nodes<'a>(
     depth: usize,
     in_block: bool,
 ) -> Result<(Vec<Node>, &'a str), RawParseError> {
+    stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+        parse_angular_nodes_inner(root, src, depth, in_block)
+    })
+}
+
+fn parse_angular_nodes_inner<'a>(
+    root: &'a str,
+    src: &'a str,
+    depth: usize,
+    in_block: bool,
+) -> Result<(Vec<Node>, &'a str), RawParseError> {
     if depth > MAX_ANGULAR_DEPTH {
         return Err(angular_err(
             root,
@@ -100,7 +111,20 @@ pub(crate) fn parse_angular_nodes<'a>(
 
     loop {
         let t = rest.trim_start();
-        rest = t;
+        if t.is_empty()
+            || t.starts_with('<')
+            || (in_block && t.starts_with('}'))
+            || block_starter_at(t).is_some()
+            || block_terminator_at(t).is_some()
+        {
+            // Curly block edges are syntax padding; inline body siblings still
+            // retain their horizontal separators, as ordinary markup does.
+            let keep_prefix = depth > 0 && !(in_block && (nodes.is_empty() || t.starts_with('}')));
+            if let Some(space) = super::markup_space_prefix(rest, keep_prefix) {
+                nodes.push(space);
+            }
+            rest = t;
+        }
 
         if t.is_empty() || t.starts_with("</") {
             break;
@@ -112,7 +136,7 @@ pub(crate) fn parse_angular_nodes<'a>(
         if let Some(after) = t.strip_prefix("<!--") {
             rest = match after.find("-->") {
                 Some(end) => &after[end + 3..],
-                None => "",
+                None => return Err(angular_err(root, t, "unclosed markup comment")),
             };
             continue;
         }
@@ -131,13 +155,18 @@ pub(crate) fn parse_angular_nodes<'a>(
             continue;
         }
 
-        let (node_opt, next) = angular_text_node(t, in_block);
+        let text_src = if depth > 0 { rest } else { t };
+        let (node_opt, next) = angular_text_node(text_src, in_block, depth > 0)?;
         if let Some(node) = node_opt {
             nodes.push(node);
         }
-        if next.len() == t.len() {
-            let skip = t.char_indices().nth(1).map(|(i, _)| i).unwrap_or(t.len());
-            rest = &t[skip..];
+        if next.len() == text_src.len() {
+            let skip = text_src
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| i)
+                .unwrap_or(text_src.len());
+            rest = &text_src[skip..];
         } else {
             rest = next;
         }
@@ -149,7 +178,11 @@ pub(crate) fn parse_angular_nodes<'a>(
 /// Consume a text run, stopping at the next tag, at a control-flow block and —
 /// inside a block body — at the closing brace. `{{ … }}` groups are consumed
 /// whole so their contents never look like a block terminator.
-fn angular_text_node(src: &str, in_block: bool) -> (Option<Node>, &str) {
+fn angular_text_node(
+    src: &str,
+    in_block: bool,
+    nested: bool,
+) -> Result<(Option<Node>, &str), RawParseError> {
     let bytes = src.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -157,16 +190,12 @@ fn angular_text_node(src: &str, in_block: bool) -> (Option<Node>, &str) {
             break;
         }
         if src[i..].starts_with("{{") {
-            match src[i + 2..].find("}}") {
-                Some(end) => {
-                    i += 2 + end + 2;
-                    continue;
-                }
-                None => {
-                    i = bytes.len();
-                    break;
-                }
-            }
+            let end = super::match_delimiter(&src[i..], '{', '}').ok_or_else(|| RawParseError {
+                message: "unclosed moustache interpolation".to_owned(),
+                byte_offset: None,
+            })?;
+            i += end + 1;
+            continue;
         }
         if in_block && bytes[i] == b'}' {
             break;
@@ -176,17 +205,98 @@ fn angular_text_node(src: &str, in_block: bool) -> (Option<Node>, &str) {
         {
             break;
         }
-        i += 1;
+        i += src[i..].chars().next().unwrap().len_utf8();
     }
 
-    let trimmed = src[..i].trim();
+    let trimmed = super::markup_text_region(&src[..i], nested);
     if trimmed.is_empty() {
-        return (None, &src[i..]);
+        return Ok((None, &src[i..]));
     }
-    let parts = super::vue::template::parse_vue_text(trimmed);
+    let mut parts = super::vue::template::parse_vue_text(trimmed)?;
+    // Interpolation is recognized in source, never in decoded literal braces.
+    for part in &mut parts {
+        if let crate::ast::TextPart::Literal(value) = part {
+            *value = super::svelte_entities::decode_html_entities(value, false);
+        }
+    }
     if parts.is_empty() {
-        (None, &src[i..])
+        Ok((None, &src[i..]))
     } else {
-        (Some(Node::Text(parts)), &src[i..])
+        Ok((Some(Node::Text(parts)), &src[i..]))
+    }
+}
+
+#[cfg(test)]
+mod markup_whitespace_tests {
+    use super::*;
+    use crate::ast::TextPart;
+
+    fn literal(node: &Node) -> String {
+        let Node::Text(parts) = node else {
+            panic!("text: {node:?}");
+        };
+        parts
+            .iter()
+            .map(|part| match part {
+                TextPart::Literal(value) => value.as_str(),
+                _ => panic!("literal"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inline_regions_and_structural_prefixes_keep_horizontal_spaces_once() {
+        let root_text = parse_angular_template(" Hello ").unwrap();
+        assert_eq!(literal(&root_text[0]), "Hello");
+        let nodes = parse_angular_template(" \t<p>Hello <b>World</b> !</p> \t").unwrap();
+        assert_eq!(nodes.len(), 1);
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element");
+        };
+        assert_eq!(literal(&element.children[0]), "Hello ");
+        assert_eq!(literal(&element.children[2]), " !");
+        let nodes = parse_angular_template("<div> <span /> <!--comment--> </div>").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element");
+        };
+        assert_eq!(element.children.len(), 4);
+        for index in [0, 2, 3] {
+            assert_eq!(literal(&element.children[index]), " ");
+        }
+    }
+
+    #[test]
+    fn block_prefixes_survive_without_changing_else_or_indentation() {
+        let nodes = parse_angular_template(
+            "<div> @if (visible) {<span>x</span>} @else {<span>y</span>} </div>",
+        )
+        .unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element");
+        };
+        assert_eq!(literal(&element.children[0]), " ");
+        assert!(matches!(&element.children[1], Node::If(block) if block.else_children.is_some()));
+        assert_eq!(literal(&element.children[2]), " ");
+        let nodes = parse_angular_template("<div>\n  <span>x</span>\n</div>").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element");
+        };
+        assert!(matches!(&element.children[..], [Node::Element(_)]));
+    }
+    #[test]
+    fn curly_block_edges_ignore_padding_but_keep_inline_sibling_separators() {
+        let nodes =
+            parse_angular_template("<div>@if (visible) { <b>a</b> <i>b</i> }</div>").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element");
+        };
+        let Node::If(block) = &element.children[0] else {
+            panic!("if");
+        };
+        assert!(matches!(
+            &block.then_children[..],
+            [Node::Element(_), Node::Text(_), Node::Element(_)]
+        ));
+        assert_eq!(literal(&block.then_children[1]), " ");
     }
 }

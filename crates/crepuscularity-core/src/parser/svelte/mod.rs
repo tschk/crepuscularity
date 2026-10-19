@@ -12,6 +12,12 @@
 //! evaluated by the shared crepuscularity evaluator against the template
 //! context, exactly as `{name}` is in the indentation frontend.
 
+mod authored;
+pub mod entities;
+pub use authored::{
+    parse_svelte_module, parse_svelte_module_with_boundary,
+    parse_svelte_module_with_styles_and_boundary, SvelteModule, SvelteSnippet,
+};
 mod blocks;
 mod tags;
 #[cfg(test)]
@@ -47,9 +53,16 @@ pub(crate) fn parse_svelte_template(src: &str) -> Result<Vec<Node>, RawParseErro
 }
 
 pub(crate) fn parse_svelte_component_raw(src: &str) -> Result<SvelteComponent, RawParseError> {
-    let extracted = extract_top_level_blocks(src);
+    let extracted = extract_top_level_blocks(src)?;
     let body = extracted.blanked;
-    let (nodes, _) = parse_svelte_nodes(&body, &body, 0)?;
+    let (nodes, rest) = parse_svelte_nodes(&body, &body, 0)?;
+    if !rest.trim().is_empty() {
+        return Err(svelte_err(
+            &body,
+            rest,
+            "unexpected trailing markup in Svelte template",
+        ));
+    }
     Ok(SvelteComponent {
         nodes,
         style: extracted.style,
@@ -59,70 +72,240 @@ pub(crate) fn parse_svelte_component_raw(src: &str) -> Result<SvelteComponent, R
 }
 
 struct Extracted {
+    style_attributes: Vec<super::jsx::attrs::JsxAttr>,
     blanked: String,
     style: Option<String>,
     script: Option<String>,
     module_script: Option<String>,
+    script_is_typescript: bool,
+    module_script_is_typescript: bool,
 }
 
 /// Replace `<script>` / `<style>` regions with spaces (newlines preserved) so
 /// byte offsets into the blanked body still map onto the original source.
-fn extract_top_level_blocks(src: &str) -> Extracted {
+fn extract_top_level_blocks(src: &str) -> Result<Extracted, RawParseError> {
+    extract_top_level_blocks_mode(src, false)
+}
+
+fn extract_top_level_blocks_mode(src: &str, authored: bool) -> Result<Extracted, RawParseError> {
+    extract_top_level_blocks_with_boundary(src, authored, None)
+}
+
+fn parse_block_attrs<'a>(
+    src: &'a str,
+    tail: &'a str,
+    boundary: Option<fn(&str) -> Option<usize>>,
+) -> Result<(Vec<super::jsx::attrs::JsxAttr>, &'a str, bool), RawParseError> {
+    match boundary {
+        Some(read) => super::jsx::attrs::jsx_parse_attrs_with_boundary(src, tail, read),
+        None => super::jsx::jsx_parse_attrs(src, tail),
+    }
+}
+
+fn extract_top_level_blocks_with_boundary(
+    src: &str,
+    authored: bool,
+    boundary: Option<fn(&str) -> Option<usize>>,
+) -> Result<Extracted, RawParseError> {
     let mut blanked = src.to_string();
+    let mut style_attributes = Vec::new();
     let mut style = None;
     let mut script = None;
     let mut module_script = None;
+    let mut script_is_typescript = false;
+    let mut module_script_is_typescript = false;
 
     let lower = src.to_ascii_lowercase();
     let mut i = 0usize;
+    let mut nesting = 0usize;
+    let mut blocks = 0usize;
     while i < lower.len() {
-        let Some(rel) = lower[i..].find('<') else {
+        let Some(rel) = lower[i..].find(['<', '{']) else {
             break;
         };
         let at = i + rel;
-        let name = if lower[at..].starts_with("<script") {
+        if lower.as_bytes()[at] == b'{' {
+            let end = boundary
+                .map_or_else(
+                    || super::match_delimiter(&src[at..], '{', '}'),
+                    |read| read(&src[at..]),
+                )
+                .ok_or_else(|| svelte_err(src, &src[at..], "unclosed Svelte expression"))?;
+            let expression = src[at + 1..at + end].trim();
+            if expression.starts_with('#') {
+                blocks += 1;
+            }
+            if expression.starts_with('/') {
+                blocks = blocks.saturating_sub(1);
+            }
+            i = at + end + 1;
+            continue;
+        }
+        if lower[at..].starts_with("<!--") {
+            i = lower[at + 4..]
+                .find("-->")
+                .map_or(lower.len(), |end| at + 4 + end + 3);
+            continue;
+        }
+        let name = if super::jsx::text::jsx_open_tag_tail(&lower[at..], "script").is_some() {
             "script"
-        } else if lower[at..].starts_with("<style") {
+        } else if super::jsx::text::jsx_open_tag_tail(&lower[at..], "style").is_some() {
             "style"
         } else {
-            i = at + 1;
+            let tail = &src[at + 1..];
+            if tail.starts_with('/') {
+                let end = tail
+                    .find('>')
+                    .ok_or_else(|| svelte_err(src, &src[at..], "unclosed closing tag"))?;
+                nesting = nesting.saturating_sub(1);
+                i = at + 1 + end + 1;
+            } else {
+                let name_end = tail
+                    .find(|ch: char| ch.is_whitespace() || ch == '>' || ch == '/')
+                    .unwrap_or(tail.len());
+                let tag = &tail[..name_end];
+                let (remaining, self_closing) = if let Some(read) = boundary {
+                    let (_, remaining, self_closing) =
+                        super::jsx::attrs::jsx_parse_authored_attrs(src, &tail[name_end..], read)?;
+                    (remaining, self_closing)
+                } else {
+                    let (_, remaining, self_closing) =
+                        parse_block_attrs(src, &tail[name_end..], boundary)?;
+                    (remaining, self_closing)
+                };
+                if authored && tag == "textarea" && !self_closing {
+                    let mut body = src.len() - remaining.len();
+                    loop {
+                        let offset = src[body..]
+                            .find(['<', '{'])
+                            .ok_or_else(|| svelte_err(src, &src[at..], "unclosed textarea"))?;
+                        body += offset;
+                        if let Some(end) = authored::textarea_close(&src[body..]) {
+                            i = body + end;
+                            break;
+                        }
+                        if src.as_bytes()[body] == b'{' {
+                            let end = boundary
+                                .map_or_else(
+                                    || super::match_delimiter(&src[body..], '{', '}'),
+                                    |read| read(&src[body..]),
+                                )
+                                .ok_or_else(|| {
+                                    svelte_err(src, &src[body..], "unclosed Svelte expression")
+                                })?;
+                            body += end + 1;
+                        } else {
+                            body += 1;
+                        }
+                    }
+                    continue;
+                }
+                if !self_closing && !tags::VOID_TAGS.contains(&tag) {
+                    nesting += 1;
+                }
+                i = src.len() - remaining.len();
+            }
             continue;
         };
+        if nesting != 0 || blocks != 0 {
+            return Err(svelte_err(
+                src,
+                &src[at..],
+                format!("nested {name} blocks are not supported"),
+            ));
+        }
 
-        let Some(open_end_rel) = lower[at..].find('>') else {
-            break;
-        };
-        let open_end = at + open_end_rel + 1;
-        let open_tag = &src[at..open_end];
+        let (attributes, tail, _) = parse_block_attrs(src, &src[at + name.len() + 1..], boundary)?;
+        if authored && name == "script" {
+            authored::validate_script_attributes(src, at, &attributes)?;
+        }
+        let open_end = src.len() - tail.len();
+        let is_module = attributes.iter().any(|attribute| {
+            attribute.key == "module"
+                || (attribute.key == "context" && attribute.as_str() == Some("module"))
+        });
         let close = format!("</{name}");
-        let (content_end, block_end) = match lower[open_end..].find(&close) {
-            Some(rel) => {
-                let c = open_end + rel;
-                let e = lower[c..].find('>').map(|g| c + g + 1).unwrap_or(src.len());
-                (c, e)
-            }
-            None => (src.len(), src.len()),
-        };
+        let rel = lower[open_end..]
+            .match_indices(&close)
+            .find(|(offset, _)| {
+                let tail = &lower[open_end + offset + close.len()..];
+                tail.starts_with(|ch: char| ch.is_whitespace() || ch == '>')
+            })
+            .map(|(offset, _)| offset)
+            .ok_or_else(|| svelte_err(src, &src[at..], format!("unclosed {name} block")))?;
+        let content_end = open_end + rel;
+        let close_end = lower[content_end..]
+            .find('>')
+            .map(|offset| content_end + offset)
+            .ok_or_else(|| {
+                svelte_err(
+                    src,
+                    &src[content_end..],
+                    format!("unclosed {name} closing tag"),
+                )
+            })?;
+        if !lower[content_end + close.len()..close_end]
+            .trim()
+            .is_empty()
+        {
+            return Err(svelte_err(
+                src,
+                &src[content_end..],
+                format!("invalid {name} closing tag"),
+            ));
+        }
+        let block_end = close_end + 1;
 
+        if name == "script" {
+            let is_typescript = attributes
+                .iter()
+                .any(|attribute| attribute.key == "lang" && attribute.as_str() == Some("ts"));
+            if is_module {
+                module_script_is_typescript = is_typescript;
+            } else {
+                script_is_typescript = is_typescript;
+            }
+        }
         let content = src[open_end..content_end].to_string();
         if name == "style" {
-            style.get_or_insert(content);
-        } else if open_tag.contains("module") {
-            module_script.get_or_insert(content);
-        } else {
-            script.get_or_insert(content);
+            style_attributes = attributes;
         }
+        let slot = if name == "style" {
+            &mut style
+        } else if is_module {
+            &mut module_script
+        } else {
+            &mut script
+        };
+        if slot.is_some() {
+            return Err(svelte_err(
+                src,
+                &src[at..],
+                format!(
+                    "duplicate {}{name} block",
+                    if is_module && name == "script" {
+                        "module "
+                    } else {
+                        ""
+                    }
+                ),
+            ));
+        }
+        *slot = Some(content);
 
         blank_range(&mut blanked, at, block_end);
         i = block_end;
     }
 
-    Extracted {
+    Ok(Extracted {
+        style_attributes,
         blanked,
         style,
         script,
         module_script,
-    }
+        script_is_typescript,
+        module_script_is_typescript,
+    })
 }
 
 fn blank_range(buf: &mut String, start: usize, end: usize) {
@@ -151,6 +334,16 @@ pub(crate) fn parse_svelte_nodes<'a>(
     src: &'a str,
     depth: usize,
 ) -> Result<(Vec<Node>, &'a str), RawParseError> {
+    stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+        parse_svelte_nodes_inner(root, src, depth)
+    })
+}
+
+fn parse_svelte_nodes_inner<'a>(
+    root: &'a str,
+    src: &'a str,
+    depth: usize,
+) -> Result<(Vec<Node>, &'a str), RawParseError> {
     if depth > MAX_SVELTE_DEPTH {
         return Err(svelte_err(
             root,
@@ -164,7 +357,18 @@ pub(crate) fn parse_svelte_nodes<'a>(
 
     loop {
         let t = rest.trim_start();
-        rest = t;
+        if t.is_empty()
+            || t.starts_with('<')
+            || t.starts_with("{:")
+            || t.starts_with("{/")
+            || t.starts_with("{#")
+            || t.starts_with("{@")
+        {
+            if let Some(space) = super::markup_space_prefix(rest, depth > 0) {
+                nodes.push(space);
+            }
+            rest = t;
+        }
 
         if t.is_empty() || t.starts_with("</") || t.starts_with("{:") || t.starts_with("{/") {
             break;
@@ -173,7 +377,7 @@ pub(crate) fn parse_svelte_nodes<'a>(
         if let Some(after) = t.strip_prefix("<!--") {
             rest = match after.find("-->") {
                 Some(end) => &after[end + 3..],
-                None => "",
+                None => return Err(svelte_err(root, t, "unclosed markup comment")),
             };
             continue;
         }
@@ -199,13 +403,17 @@ pub(crate) fn parse_svelte_nodes<'a>(
             continue;
         }
 
-        let (node_opt, next) = svelte_text_node(t);
+        let (node_opt, next) = svelte_text_node(rest, depth > 0)?;
         if let Some(node) = node_opt {
             nodes.push(node);
         }
-        if next.len() == t.len() {
-            let skip = t.char_indices().nth(1).map(|(i, _)| i).unwrap_or(t.len());
-            rest = &t[skip..];
+        if next.len() == rest.len() {
+            let skip = rest
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| i)
+                .unwrap_or(rest.len());
+            rest = &rest[skip..];
         } else {
             rest = next;
         }
@@ -234,7 +442,7 @@ fn parse_at_tag<'a>(root: &'a str, src: &'a str) -> Result<(Node, &'a str), RawP
 
 /// Consume a text run, stopping at the next tag or block/`{@…}` tag.
 /// `{expr}` interpolations are consumed into the run and become `TextPart::Expr`.
-fn svelte_text_node(src: &str) -> (Option<Node>, &str) {
+fn svelte_text_node(src: &str, nested: bool) -> Result<(Option<Node>, &str), RawParseError> {
     let bytes = src.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -245,36 +453,61 @@ fn svelte_text_node(src: &str) -> (Option<Node>, &str) {
                 if matches!(next, Some(b'#') | Some(b':') | Some(b'/') | Some(b'@')) {
                     break;
                 }
-                let mut depth = 0usize;
-                let mut j = i;
-                while j < bytes.len() {
-                    match bytes[j] {
-                        b'{' => depth += 1,
-                        b'}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                    j += 1;
-                }
-                if j >= bytes.len() {
-                    i = bytes.len();
-                } else {
-                    i = j + 1;
-                }
+                let end =
+                    super::match_delimiter(&src[i..], '{', '}').ok_or_else(|| RawParseError {
+                        message: "unclosed text interpolation".to_owned(),
+                        byte_offset: None,
+                    })?;
+                i += end + 1;
             }
             _ => i += 1,
         }
     }
 
     let text = &src[..i];
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return (None, &src[i..]);
+    let region = super::markup_text_region(text, nested);
+    if region.is_empty() {
+        return Ok((None, &src[i..]));
     }
-    let parts = super::indent::parse_text_template(trimmed);
-    (Some(Node::Text(parts)), &src[i..])
+    let parts = super::indent::parse_text_template(region)?;
+    Ok((Some(Node::Text(parts)), &src[i..]))
+}
+
+#[cfg(test)]
+mod whitespace_tests {
+    use super::*;
+    use crate::ast::TextPart;
+
+    #[test]
+    fn root_text_does_not_render_extracted_block_padding() {
+        for source in [
+            "   Hello   ",
+            "<script>let x=1</script>Hello<style>p{}</style>",
+        ] {
+            let nodes = parse_svelte_template(source).unwrap();
+            assert!(
+                matches!(&nodes[..], [Node::Text(parts)] if parts == &vec![TextPart::Literal("Hello".into())]),
+                "{nodes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_spaces_survive_but_formatting_indentation_does_not() {
+        let nodes = parse_svelte_template("<p> a <span>b</span> c </p>").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element")
+        };
+        assert!(
+            matches!(&element.children[0], Node::Text(parts) if parts == &vec![TextPart::Literal(" a ".into())])
+        );
+        assert!(
+            matches!(&element.children[2], Node::Text(parts) if parts == &vec![TextPart::Literal(" c ".into())])
+        );
+        let nodes = parse_svelte_template("<p>\n  <span>b</span>\n</p>").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element")
+        };
+        assert_eq!(element.children.len(), 1);
+    }
 }

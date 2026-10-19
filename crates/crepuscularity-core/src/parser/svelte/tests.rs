@@ -113,13 +113,14 @@ fn on_directive_events_lower_to_event_handlers() {
 }
 
 #[test]
-fn on_directive_modifiers_are_preserved() {
-    let nodes = parse("<form on:submit|preventDefault={save}></form>");
+fn on_directive_modifiers_lower_to_shared_semantics() {
+    let nodes =
+        parse("<form on:submit|preventDefault|stopPropagation|self|once|capture={save}></form>");
     let e = el(&nodes[0]);
     assert_eq!(e.event_handlers[0].event, "submit");
     assert_eq!(
         e.event_handlers[0].modifiers,
-        vec!["preventDefault".to_string()]
+        vec!["prevent", "stop", "self", "once", "capture"]
     );
 }
 
@@ -152,11 +153,36 @@ fn bind_directive_lowers_to_bindings() {
 }
 
 #[test]
-fn non_form_bind_directive_keeps_its_property_name() {
-    let nodes = parse("<div bind:clientWidth={w}></div>");
-    let e = el(&nodes[0]);
-    assert_eq!(e.bindings[0].prop, "clientWidth");
-    assert_eq!(e.bindings[0].value, "w");
+fn unsupported_bind_directives_fail_instead_of_becoming_attributes() {
+    for name in ["this", "clientWidth", "currentTime", "custom"] {
+        for attribute in [format!("bind:{name}={{target}}"), format!("bind:{name}")] {
+            let error = parse_err(&format!("<div {attribute}></div>"));
+            assert!(
+                error.contains("unsupported Svelte binding"),
+                "{attribute}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn supported_form_bindings_and_ordinary_attributes_keep_their_ast() {
+    for name in ["value", "checked", "group", "files"] {
+        for (attribute, target) in [
+            (format!("bind:{name}={{target}}"), "target"),
+            (format!("bind:{name}"), name),
+        ] {
+            let nodes = parse(&format!("<input {attribute}/>"));
+            let element = el(&nodes[0]);
+            assert_eq!(element.bindings.len(), 1);
+            assert_eq!(element.bindings[0].prop, "bind", "{attribute}");
+            assert_eq!(element.bindings[0].value, target, "{attribute}");
+        }
+    }
+    let nodes = parse("<div clientWidth={width}></div>");
+    let element = el(&nodes[0]);
+    assert_eq!(element.bindings[0].prop, "clientWidth");
+    assert_eq!(element.bindings[0].value, "width");
 }
 
 #[test]
@@ -345,4 +371,86 @@ fn slots_components_and_special_elements_are_reported_unsupported() {
 #[test]
 fn unclosed_element_is_an_error() {
     assert!(parse_err("<div><span>hi</div>").contains("</span>"));
+}
+
+#[test]
+fn keyed_each_cannot_omit_the_item_binding() {
+    for source in [
+        "{#each items as (item.id)}<span />{/each}",
+        "{#each items as   (item.id)}<span />{/each}",
+    ] {
+        let error = parse_err(source);
+        assert!(error.contains("nonempty item binding"), "{error}");
+    }
+    let nodes = parse("{#each items as item (item.id)}<span>{item}</span>{/each}");
+    let Node::For(block) = &nodes[0] else {
+        panic!("expected loop")
+    };
+    assert_eq!(block.pattern, "item");
+    assert_eq!(block.iterator, "items");
+}
+
+#[test]
+fn class_and_bind_directives_require_names_and_nonempty_braced_values() {
+    for attribute in ["class:", "bind:", "class:={active}", "bind:={value}"] {
+        let error = parse_err(&format!("<input {attribute} />"));
+        assert!(error.contains("directives require a name"), "{error}");
+    }
+    for attribute in ["class:active={}", "bind:value={   }"] {
+        let error = parse_err(&format!("<input {attribute} />"));
+        assert!(error.contains("nonempty expression"), "{error}");
+    }
+    for attribute in [
+        "class:active",
+        "bind:value",
+        "class:active={false}",
+        "bind:value={''}",
+    ] {
+        parse(&format!("<input {attribute} />"));
+    }
+}
+
+#[test]
+fn event_directives_cannot_omit_event_names() {
+    for attribute in ["on:", "on:={save}", "on:|once={save}"] {
+        let error = parse_err(&format!("<button {attribute} />"));
+        assert!(error.contains("require an event name"), "{error}");
+    }
+    assert!(parse_err("<button on:click />").contains("event forwarding is not supported"));
+    for attribute in ["on:click={save}", "on:click|once={save}"] {
+        let nodes = parse(&format!("<button {attribute} />"));
+        assert_eq!(el(&nodes[0]).event_handlers[0].event, "click");
+    }
+}
+
+#[test]
+fn unsupported_runtime_event_modifiers_fail_parsing() {
+    for modifier in [
+        "passive",
+        "nonpassive",
+        "madeUp",
+        "prevent",
+        "stop",
+        "immediate",
+        "",
+    ] {
+        let error = parse_err(&format!("<button on:click|{modifier}={{save}} />"));
+        assert!(
+            error.contains("unsupported Svelte event modifier"),
+            "{error}"
+        );
+        assert!(error.contains(modifier), "{error}");
+    }
+}
+
+#[test]
+fn immediate_stop_event_modifier_lowers_to_shared_semantics() {
+    let nodes = parse("<button on:click|stopImmediatePropagation={save} />");
+    assert_eq!(el(&nodes[0]).event_handlers[0].modifiers, ["immediate"]);
+}
+
+#[test]
+fn trusted_event_modifier_is_preserved() {
+    let nodes = parse("<button on:click|trusted={save} />");
+    assert_eq!(el(&nodes[0]).event_handlers[0].modifiers, ["trusted"]);
 }

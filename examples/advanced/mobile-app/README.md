@@ -18,6 +18,10 @@ main.crepus  ──→  crepus native codegen  ──→  SwiftUI / Compose view
 
 ## Developer workflow
 
+The checked-in adapters in this example use an older bridge. Before regenerating
+with the current CLI, migrate their state-store and queued-change helpers to the
+[current native host contract](../../../docs/native.md#template-to-ir-conversion).
+
 ```bash
 # 1. Edit the template
 vim views/main.crepus

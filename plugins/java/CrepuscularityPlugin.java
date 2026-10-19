@@ -1,13 +1,16 @@
 package dev.crepuscularity.plugin;
 
-import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.concurrent.FutureTask;
 
 public final class CrepuscularityPlugin {
     public record ViewIr(int version, String json) {}
@@ -84,21 +87,16 @@ public final class CrepuscularityPlugin {
     }
 
     public static ViewIr renderIr(String path, Map<String, Object> context) throws Exception {
-        String bin = System.getenv().getOrDefault("CREPUS_BIN", "crepus");
-        Process process = new ProcessBuilder(List.of(bin, "native", "ir", "--stdin-json"))
-            .redirectErrorStream(true)
-            .start();
-        try (OutputStreamWriter stdin = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-            stdin.write(toJson(Map.of("template", Files.readString(Path.of(path)), "context", context)));
+        Path templatePath = Path.of(path).toAbsolutePath();
+        String template = Files.readString(templatePath);
+        String json = runCli(List.of("native", "ir", "--stdin-json"),
+            toJson(Map.of("template", template, "context", context, "filename", path,
+                "baseDir", templatePath.getParent().toString())));
+        var versionMatch = Pattern.compile("\"version\"\\s*:\\s*(\\d+)").matcher(json);
+        if (!versionMatch.find()) {
+            throw new IllegalStateException("IR version missing or invalid");
         }
-        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-        process.getInputStream().transferTo(stdout);
-        int code = process.waitFor();
-        String json = stdout.toString(StandardCharsets.UTF_8);
-        if (code != 0) {
-            throw new IllegalStateException(json);
-        }
-        int version = json.contains("\"version\":5") || json.contains("\"version\": 5") ? 5 : -1;
+        int version = Integer.parseInt(versionMatch.group(1));
         return new ViewIr(version, json);
     }
 
@@ -107,21 +105,49 @@ public final class CrepuscularityPlugin {
     }
 
     public static String renderHtml(String path, Map<String, Object> context) throws Exception {
-        String json = renderIr(path, context).json();
-        String text = extract(json, "\"content\":\"", "\"");
-        return "<div data-crepus-kind=\"stack\" data-axis=\"column\">" + escapeHtml(text) + "</div>";
+        Path contextFile = Files.createTempFile("crepus-java-context-", ".json");
+        try {
+            Files.writeString(contextFile, toJson(context), StandardCharsets.UTF_8);
+            return runCli(List.of("render", Path.of(path).toAbsolutePath().toString(),
+                "--ctx", contextFile.toString()), "");
+        } finally {
+            Files.deleteIfExists(contextFile);
+        }
     }
 
-    private static String extract(String src, String start, String end) {
-        int s = src.indexOf(start);
-        if (s < 0) return "";
-        s += start.length();
-        int e = src.indexOf(end, s);
-        return e < 0 ? "" : src.substring(s, e);
-    }
-
-    private static String escapeHtml(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    private static String runCli(List<String> arguments, String input) throws Exception {
+        String bin = System.getenv().getOrDefault("CREPUS_BIN", "crepus");
+        var command = new java.util.ArrayList<String>();
+        command.add(bin);
+        command.addAll(arguments);
+        Process process = new ProcessBuilder(command).start();
+        var stderr = new FutureTask<>(() -> process.getErrorStream().readAllBytes());
+        Thread reader = new Thread(stderr, "crepus-java-stderr");
+        reader.setDaemon(true);
+        reader.start();
+        // Start draining stdout before writing a potentially large request.
+        var stdout = new FutureTask<>(() -> process.getInputStream().readAllBytes());
+        Thread outputReader = new Thread(stdout, "crepus-java-stdout");
+        outputReader.setDaemon(true);
+        outputReader.start();
+        try {
+            IOException writeError = null;
+            try (OutputStreamWriter stdin = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
+                stdin.write(input);
+            } catch (IOException error) {
+                writeError = error;
+            }
+            byte[] output = stdout.get();
+            int code = process.waitFor();
+            String diagnostic = new String(stderr.get(), StandardCharsets.UTF_8);
+            if (code != 0) {
+                throw new IllegalStateException(diagnostic);
+            }
+            if (writeError != null) throw writeError;
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(output)).toString();
+        } finally {
+            process.destroy();
+        }
     }
 
     private static String toJson(Object value) {
@@ -163,7 +189,7 @@ public final class CrepuscularityPlugin {
                 case '\n' -> out.append("\\n");
                 case '\r' -> out.append("\\r");
                 case '\t' -> out.append("\\t");
-                default -> out.append(ch < 0x20 ? String.format("\\u%04x", (int) ch) : ch);
+                default -> out.append(ch < 0x20 || Character.isSurrogate(ch) ? String.format("\\u%04x", (int) ch) : ch);
             }
         }
         return out.append('"').toString();

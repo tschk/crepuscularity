@@ -115,6 +115,57 @@ Output:
 
 `crepus webext build --browser chromium` writes `dist/chromium/`; `--browser firefox` writes `dist/firefox/`; `--browser safari` writes `dist/safari/` then generates the configured Xcode project. Without `--browser`, `browsers` builds each configured target; omit `browsers` to retain `dist/unpacked/` for the existing Chromium load flow. Safari packaging requires macOS with Xcode and a `bundle_identifier`; `platforms` accepts `["macos"]`, `["ios"]`, or `["macos", "ios"]`.
 
+Web-accessible resource URL matches apply to origins, not individual page paths.
+Supported URL resource matches use `/*` and deduplicate matches for the same origin,
+including when derived from narrower host permissions or content-script matches.
+Those original host and content-script patterns keep their authored paths.
+Explicit resource `matches` follow the same origin-only rule; they cannot restrict
+resource access to a page path. See the [Chrome manifest contract](https://developer.chrome.com/docs/extensions/reference/manifest/web-accessible-resources).
+
+Each browser output directory is generated from a fresh staging directory and
+replaced only after generation, WASM compilation and manifest asset checks succeed.
+Deleted or renamed pages and copied assets disappear on the next successful build;
+`.css.crepus` output does not accumulate across builds. Store authored files under
+`src/`, `pages/`, `views/`, `icons/` and `resources/`; files added directly to the
+generated browser directory are replaced. Other browser outputs and the Safari
+project directory are preserved. Symlinked output parents or browser directories
+are rejected.
+
+Pages may include UTF-8 templates from the shared Vue, Svelte, Astro, Angular and
+JSX frontends under `pages/`, using their normal template-only parser contracts.
+These dependencies do not become generated pages or clients. Unreferenced static
+HTML and script assets retain their copied contents, including legacy encodings;
+non-UTF-8 templates cannot be included.
+The authored `views/popup.crepus` also resolves nested template includes under
+`views/` for each of its three prerendered states. Popup titles display extension
+names as literal text.
+
+Generated `.crepus` page clients live under `src/__crepus_pages/`, separate from
+the background and content-script hosts; generated page HTML references them.
+Only the final `.crepus` extension is replaced: `options.v2.crepus` becomes
+`options.v2.html`, and `repeat.crepus.crepus` becomes `repeat.crepus.html`.
+Generated script URLs encode filename characters while keeping the on-disk names;
+page titles display extension names and page labels as literal text.
+
+Explicit local manifest references must resolve to files in the staged output.
+Page URL query/fragment suffixes and percent-encoded filenames are supported;
+web-accessible resource wildcard patterns may match no files. Invalid authored
+pages or `views/popup.crepus` fail the build and leave the previous browser output
+in place. Safari packaging still runs after browser-directory publication.
+
+Dev mode observes source deletion, directory recreation and atomic `crepus.toml`
+saves, while excluding generated output and Cargo build directories. A failed
+rebuild reports the error and keeps watching; the reload marker advances after a
+successful publication. Publication uses directory renames with rollback and can
+briefly make the browser directory unavailable. Abrupt process termination can
+leave hidden staging directories under `dist/`.
+
+The default popup and background host use `enabled: true` and `autoRender: false`
+as read fallbacks. The host does not write missing defaults at startup or
+installation. A `settings:set` message updates only supplied values and returns
+the latest settings. Custom runtime `settings_seed` hooks still run on installation
+and sync-storage changes.
+
 ## Positioning
 
 Crepuscularity is not trying to be only an extension framework. Treat webext as the browser-extension target inside a broader `.crepus` systems UI pipeline: the same source language can also target GPUI, Ratatui, web output, View IR for native shells, embedded framebuffers, and LVGL Pro.
@@ -161,13 +212,19 @@ div popup flex flex-col gap-4 p-4
 The `crepuscularity-webext` scanner detects API usage in templates and suggests capabilities:
 
 ```rust
-use crepuscularity_webext::{scan_crepus_for_capabilities, CapabilityUsage};
+use std::path::Path;
+use crepuscularity_webext::scan_crepus_for_capabilities;
 
-let usage = scan_crepus_for_capabilities("views/popup.crepus")?;
-for cap in usage.suggested {
-    println!("Suggest adding: {}", cap);
+let usages = scan_crepus_for_capabilities(Path::new("views/popup.crepus"))?;
+for usage in usages {
+    println!("Suggest adding: {:?}", usage.capability);
 }
 ```
+
+The public `CapabilityWatcher` rescans capabilities when templates change or a
+populated directory is created or moved into the watched project. Directory events
+can report `MissingCapabilities` without a `FileChanged` event for each nested
+file. The CLI uses its own watcher and build-time capability scan.
 
 ## API Reference
 
@@ -211,6 +268,10 @@ storage::session().set_key("draft", &serde_json::json!({"open": true})).await?;
 storage::remove("settings").await?;
 ```
 
+Callback-based browser API calls release their Rust callback after invocation or
+when the JavaScript call throws synchronously. Accepted calls that never invoke
+the callback still retain it; there is no timeout or cancellation API.
+
 ### BrowserProgram
 
 Fluent builder for generating extension JavaScript:
@@ -237,3 +298,16 @@ use crepuscularity_webext::ExtensionManifest;
 let manifest: ExtensionManifest = toml::from_str(source)?;
 println!("{}", manifest.to_manifest_v3_json());
 ```
+
+## Callback ownership regression probe
+
+The probe copies the current WASM bridge and adds a captured Rust drop counter.
+It checks synchronous/asynchronous callbacks, synchronous throws, `lastError`,
+late callbacks and repeated invocation without relying on JavaScript GC.
+
+```bash
+python3 crates/crepuscularity-webext/tests/prepare-callback-ownership-wasm.py --out /tmp/crepus-callback-probe
+```
+
+Run the three printed commands with the installed Rust WASM target,
+matching `wasm-bindgen` CLI, and Bun.
