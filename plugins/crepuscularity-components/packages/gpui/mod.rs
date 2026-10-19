@@ -30,8 +30,6 @@
 //! 4. Call [`sparkline::sparkline_alphas`] to get Bayer cell coverage, then
 //!    paint with `gpui::Canvas` / `PaintQuad` (deferred — not in this stub).
 
-#![allow(dead_code)]
-
 pub mod palette;
 pub mod sparkline;
 

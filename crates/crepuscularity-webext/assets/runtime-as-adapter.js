@@ -68,7 +68,7 @@ function jsonIn(value) {
 // ------------------------------------------------------------------
 
 export function runtime_version() {
-  return wasm.runtime_version ? __getString(wasm.runtime_version()) : "unknown";
+  return (wasm && wasm.runtime_version) ? __getString(wasm.runtime_version()) : "unknown";
 }
 
 export function browser_program() {

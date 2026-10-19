@@ -10,7 +10,7 @@ readme = "../../README.md"
 
 [features]
 default = []
-# Text-run style APIs require the GPUI revision pinned by this workspace.
+# Enables text-run style APIs when supported by the selected GPUI dependency.
 gpui_text_run_styles = []
 
 [lib]

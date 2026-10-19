@@ -15,6 +15,7 @@ fn renamed_arguments_cannot_share_a_wire_key() {
         let output = Command::new("cargo")
             .args(["check", "--quiet", "--offline"])
             .current_dir(root.path())
+            .env("CARGO_TARGET_DIR", root.path().join("target"))
             .output()
             .unwrap();
         assert!(

@@ -8,6 +8,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | [Input frontends](frontends.md) | `.crepus`, JSX/TSX, `.svelte`, `.vue` → one AST; what Svelte/Vue do not support |
 | [Components](components.md) | `include`, slots, defaults, multi-component files |
 | [CLI](cli.md) | `crepus` commands for apps, web, and extensions |
+| [Changelog](changelog.md) | Security and crate releases |
 | [Production readiness](production.md) | build gates, security boundaries, and performance checks |
 | [Observability](observability.md) | timing, tracing, and flamegraph workflow |
 | [Timing profile](timing-profile.md) | SSR request breakdown, flamegraph recipes |
@@ -15,6 +16,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | [Browser extensions](webext.md) | Manifest V3 apps with `crepus webext` |
 | [Extension policy (MV3)](webext-policy.md) | CSP safety, store submission, permissions checklist |
 | [GPUI integration](gpui.md) | Desktop apps with GPUI |
+| [ZPUI integration](zpui.md) | Experimental Zig adapter over View IR v7 |
 | [Lite shell](lite.md) | GPUI + V8 desktop shell and Rust plugin bridge |
 | [Native shells](native.md) | iOS/Android apps via native UI frameworks |
 | [Tauri native compatibility](tauri-compatibility.md) | Tauri replacement contract and audit matrix |

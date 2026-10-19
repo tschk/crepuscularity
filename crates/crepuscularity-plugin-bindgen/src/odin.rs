@@ -11,8 +11,14 @@ or_return or_break or_continue asm matrix";
 
 pub(super) fn generate(header: &Path) -> Result<String, String> {
     let declarations = super::header::typed_declarations(header)?;
-    let mut code = String::from(
-        "package abi_generated\nimport c \"core:c\"\nforeign import crepus \"system:crepuscularity_abi\"\n\n\
+    let library = header
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && !name.chars().any(char::is_control))
+        .ok_or("Odin ABI header requires a nonempty UTF-8 library name without controls")?;
+    let library = library.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut code = format!(
+        "package abi_generated\nimport c \"core:c\"\nforeign import crepus \"system:{library}\"\n\n\
 // Returned strings are owned; release them with crepus_string_free.\n\
 // Callback strings are borrowed/read-only until the next dispatch; never free them.\n\
 // Synchronize shared sessions; callbacks must not reenter their own session.\n\n",

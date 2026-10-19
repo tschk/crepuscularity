@@ -463,4 +463,27 @@ mod tests {
             assert_eq!(super::meter_values(value, min, max), expected);
         }
     }
+    #[test]
+    fn kotlin_strings_keep_interpolation_markers_literal() {
+        for (input, expected) in [
+            ("Hello Ada", "Hello Ada"),
+            ("$name", "\\$name"),
+            ("${run { 7 }}", "\\${run { 7 }}"),
+            ("$$name", "\\$\\$name"),
+            ("$Δ", "\\$Δ"),
+            (r"\$name", r"\\\$name"),
+            (r"\u0024name", r"\\u0024name"),
+            ("\"quote\"\\", "\\\"quote\\\"\\\\"),
+        ] {
+            assert_eq!(KOTLIN.escape(input), expected);
+        }
+    }
+
+    #[test]
+    fn swift_strings_preserve_dollars_and_existing_escaping() {
+        assert_eq!(
+            SWIFT.escape(r#"$name ${value} \"quoted\""#),
+            r#"$name ${value} \\\"quoted\\\""#
+        );
+    }
 }

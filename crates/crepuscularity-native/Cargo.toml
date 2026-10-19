@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-native"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 license = "ISC"
 description = "View intermediate representation (JSON) for native SwiftUI / Compose shells (UNSTABLE)."

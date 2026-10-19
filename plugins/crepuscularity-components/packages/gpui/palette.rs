@@ -1,8 +1,6 @@
 //! Seed RGB constants for future crepuscularity-gpui dither charts.
 //! Values mirror catalog/themes/dither-kit.json and kumo.json.
 
-#![allow(dead_code)]
-
 /// RGB triple in 0–255.
 pub type Rgb = [u8; 3];
 

@@ -388,6 +388,72 @@ fn codegen_wraps_native_rows() {
 }
 
 #[test]
+fn codegen_compose_keeps_context_strings_literal() {
+    let mut ctx = TemplateContext::new();
+    ctx.set("message", "Price $amount ${run { 7 }}");
+    ctx.set("url", "https://example.invalid/${run { 7 }}");
+    let ir = render_template_to_ir(
+        "button \"{message}\"\niframe src={url}\nbutton label={message}",
+        &ctx,
+    )
+    .unwrap();
+    assert!(matches!(
+        &ir.root[0],
+        crate::ViewNode::Button { label, label_parts, .. }
+            if label == "Price $amount ${run { 7 }}"
+                && matches!(label_parts.as_slice(), [crate::ir::LabelPart::Expr(value)] if value == "message")
+    ));
+    assert!(matches!(
+        &ir.root[1],
+        crate::ViewNode::WebView { src, .. } if src == "https://example.invalid/${run { 7 }}"
+    ));
+    assert!(matches!(
+        &ir.root[2],
+        crate::ViewNode::Button { label, label_parts, .. }
+            if label == "Price $amount ${run { 7 }}" && label_parts.is_empty()
+    ));
+    let compose = generate_native_source(&ir, NativeCodegenTarget::Compose, "LiteralView");
+    assert!(compose.contains(r#"Text(CrepusStateStore.text("message"))"#));
+    assert!(compose.contains(r#"Text("Price \$amount \${run { 7 }}")"#));
+    let url = r#""https://example.invalid/\${run { 7 }}""#;
+    assert_eq!(compose.matches(url).count(), 3);
+
+    let swift = generate_native_source(&ir, NativeCodegenTarget::SwiftUi, "LiteralView");
+    assert!(swift.contains(r#"Text(CrepusActions.model.text("message"))"#));
+    assert!(swift.contains(r#"Text("Price $amount ${run { 7 }}")"#));
+}
+
+#[test]
+fn codegen_compose_keeps_decoded_ir_strings_literal() {
+    let ir: ViewIr = serde_json::from_value(json!({
+        "version": IR_VERSION,
+        "root": [{
+            "kind": "tabs",
+            "bind": "$selected",
+            "onChange": "change:$value",
+            "tabs": [{
+                "value": "${run { 7 }}",
+                "label": "$label",
+                "children": []
+            }]
+        }, {
+            "kind": "picker",
+            "bind": "$selected",
+            "onChange": "change:$value",
+            "options": [{"value": "$option", "label": "$label"}]
+        }]
+    }))
+    .unwrap();
+    let compose = generate_native_source(&ir, NativeCodegenTarget::Compose, "LiteralView");
+    assert_eq!(compose.matches(r#""\${run { 7 }}""#).count(), 3);
+    assert!(compose.contains(r#"CrepusStateStore.text("\$selected")"#));
+    assert!(compose.contains(
+        r#"CrepusActions.performChange("change:\$value", "\$selected", JsonPrimitive("\$option"))"#
+    ));
+    assert_eq!(compose.matches(r#"Text("\$label")"#).count(), 2);
+}
+
+#[test]
 fn codegen_honors_native_justify_center() {
     let ir = render_template_to_ir(
         "div flex flex-col justify-center h-full\n  span\n    \"Centered\"",
@@ -642,9 +708,8 @@ fn codegen_preserves_control_change_bindings() {
     );
     assert!(compose
         .contains("CrepusActions.performChange(\"sync_enabled\", \"enabled\", JsonPrimitive(it))"));
-    assert!(compose.contains(
-        "CrepusActions.performChange(\"sync_volume\", \"volume\", JsonPrimitive(it.toDouble()))"
-    ));
+    assert!(compose
+        .contains("CrepusActions.performChange(\"sync_volume\", \"volume\", JsonPrimitive(it))"));
     assert!(
         compose.contains("CrepusActions.performChange(\"sync_name\", \"name\", JsonPrimitive(it))")
     );
@@ -1390,7 +1455,7 @@ fn vue_sfc_lowers_to_view_ir_with_class_tokens() {
     <button class="px-4 py-2" @click="increment">Add</button>
     <input type="text" v-model="query" />
     <ul class="list">
-      <li v-for="(item) in items" class="row">{{ item }}</li>
+      <li v-for="item in items" class="row">{{ item }}</li>
     </ul>
   </div>
 </template>
@@ -2235,12 +2300,14 @@ fn link_and_badge_metadata_propagates_expression_errors() {
 }
 
 #[test]
-fn file_picker_multiple_evaluates_boolean_values() {
+fn file_picker_multiple_preserves_expression_presence() {
     for tag in ["file-picker", "filepicker", "media-picker"] {
         for (suffix, expected) in [
             ("", false),
             (" multiple", true),
-            (" multiple={false}", false),
+            // Portable picker expressions retain authored presence except null.
+            (" multiple={false}", true),
+            (" multiple={null}", false),
             (" multiple={true}", true),
         ] {
             let ir =
@@ -2255,13 +2322,19 @@ fn file_picker_multiple_evaluates_boolean_values() {
             render_template_to_ir(&format!("{tag} multiple={{1 +}}"), &TemplateContext::new())
                 .is_err()
         );
-        let mut ctx = TemplateContext::new();
-        ctx.set("allow_many", false);
-        let ir = render_template_to_ir(&format!("{tag} multiple={{allow_many}}"), &ctx).unwrap();
-        assert_eq!(
-            serde_json::to_value(ir).unwrap()["root"][0]["multiple"],
-            false
-        );
+        for (value, expected) in [
+            (crepuscularity_core::TemplateValue::Bool(false), true),
+            (crepuscularity_core::TemplateValue::Null, false),
+        ] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("allow_many", value);
+            let ir =
+                render_template_to_ir(&format!("{tag} multiple={{allow_many}}"), &ctx).unwrap();
+            assert_eq!(
+                serde_json::to_value(ir).unwrap()["root"][0]["multiple"],
+                expected
+            );
+        }
     }
 }
 

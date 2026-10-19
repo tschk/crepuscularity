@@ -223,7 +223,12 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
         .event_handlers
         .iter()
         .zip(&new.event_handlers)
-        .any(|(a, b)| a.event != b.event || a.modifiers != b.modifiers || a.handler != b.handler || a.model_before_listener != b.model_before_listener)
+        .any(|(a, b)| {
+            a.event != b.event
+                || a.modifiers != b.modifiers
+                || a.handler != b.handler
+                || a.model_before_listener != b.model_before_listener
+        })
     {
         return false;
     }
@@ -287,14 +292,19 @@ mod path_tests {
     }
 }
 
-
 #[cfg(test)]
 mod model_order_tests {
     use super::*;
     #[test]
     fn changing_native_model_listener_order_requires_replacement() {
-        let old = crepuscularity_core::parser::parse_vue_native_file(r#"<template><Child v-model="value" @update:modelValue="observe"/></template>"#).unwrap();
-        let new = crepuscularity_core::parser::parse_vue_native_file(r#"<template><Child @update:modelValue="observe" v-model="value"/></template>"#).unwrap();
+        let old = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child v-model="value" @update:modelValue="observe"/></template>"#,
+        )
+        .unwrap();
+        let new = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child @update:modelValue="observe" v-model="value"/></template>"#,
+        )
+        .unwrap();
         assert!(!ast_shape_compatible(&old, &new));
     }
 }
