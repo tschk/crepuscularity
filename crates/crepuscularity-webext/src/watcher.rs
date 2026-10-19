@@ -189,10 +189,11 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_watcher_creation() {
-        let dir = tempdir().unwrap();
-        let watcher = CapabilityWatcher::new(dir.path()).unwrap();
+    fn test_watcher_creation() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let watcher = CapabilityWatcher::new(dir.path())?;
         assert!(watcher.recv_timeout(Duration::from_millis(10)).is_none());
+        Ok(())
     }
 
     fn event_targets_file(event_path: &Path, expected: &Path) -> bool {
