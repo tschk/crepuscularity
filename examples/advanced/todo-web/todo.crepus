@@ -4,6 +4,6 @@ div max-w-md mx-auto p-6
   for item in {items}
     div flex items-center gap-2 py-2 border-b border-zinc-200
       span
-        {item}
+        {item.value}
   p text-sm text-zinc-500 mt-4
     "{count} items"
