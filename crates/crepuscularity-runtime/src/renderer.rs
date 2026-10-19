@@ -572,14 +572,84 @@ thread_local! {
     static INCLUDE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn render_include(inc: &IncludeNode, ctx: &TemplateContext) -> AnyElement {
+struct IncludeGuard(std::marker::PhantomData<std::rc::Rc<()>>);
+
+impl IncludeGuard {
+    fn enter() -> Option<Self> {
+        INCLUDE_DEPTH.with(|depth| {
+            if depth.get() >= 64 {
+                return None;
+            }
+            depth.set(depth.get() + 1);
+            Some(Self(std::marker::PhantomData))
+        })
+    }
+}
+
+impl Drop for IncludeGuard {
+    fn drop(&mut self) {
+        INCLUDE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+fn render_include(
+    inc: &IncludeNode,
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
+) -> AnyElement {
+    stacker::maybe_grow(512 * 1024, 2 * 1024 * 1024, || {
+        render_include_inner(inc, ctx, path, slot, cache)
+    })
+}
+
+fn include_context(ctx: &TemplateContext, path: &std::path::Path) -> TemplateContext {
+    let mut child = TemplateContext::new();
+    child.base_dir = path.parent().map(|path| path.to_path_buf());
+    child.virtual_files = Arc::clone(&ctx.virtual_files);
+    for key in [
+        "crepus_target",
+        "is_gui",
+        "is_tui",
+        "is_web",
+        "crepus_platform",
+        "is_macos",
+        "is_windows",
+        "is_linux",
+    ] {
+        if let Some(value) = ctx.get(key) {
+            child.vars.insert(key.into(), value.clone());
+        }
+    }
+    child
+}
+
+#[cfg(test)]
+fn include_nodes(ctx: &TemplateContext, path: &std::path::Path) -> Result<Arc<Vec<Node>>, String> {
+    IncludeCache::default().nodes(ctx, path)
+}
+
+fn render_include_inner(
+    inc: &IncludeNode,
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
+) -> AnyElement {
+    let Some(_guard) = IncludeGuard::enter() else {
+        return div()
+            .text_color(rgb(0xff4444))
+            .child("maximum include depth (64) exceeded; possible circular include")
+            .into_any_element();
+    };
     // Multi-component syntax: "path/file.crepus#ComponentName"
     if let Some((file_part, comp_name)) = inc.path.split_once('#') {
-        return render_named_component(inc, ctx, file_part, comp_name);
+        return render_named_component(inc, ctx, file_part, comp_name, path, slot, cache);
     }
 
     // Single-component file: resolve path relative to the current file's directory.
-    let file_path = match resolve_include_path(ctx.base_dir.as_deref(), &inc.path) {
+    let file_path = match cache.resolve(ctx, &inc.path) {
         Ok(path) => path,
         Err(e) => {
             return div()
@@ -589,7 +659,8 @@ fn render_include(inc: &IncludeNode, ctx: &TemplateContext) -> AnyElement {
         }
     };
 
-    let nodes = match crepuscularity_core::ast_cache::parse_file(&file_path) {
+    let frontend = crepuscularity_core::include_paths::include_frontend_path(&file_path, &inc.path);
+    let nodes = match cache.nodes_with_frontend(ctx, &file_path, &frontend) {
         Ok(n) => n,
         Err(e) => {
             return div()
@@ -600,19 +671,25 @@ fn render_include(inc: &IncludeNode, ctx: &TemplateContext) -> AnyElement {
     };
 
     // Build child context: fresh vars from evaluated props, correct base_dir, and slot.
-    let mut child_ctx = TemplateContext::new();
-    child_ctx.base_dir = file_path.parent().map(|p| p.to_path_buf());
+    let mut child_ctx = include_context(ctx, &file_path);
 
     for (key, expr) in &inc.props {
         let val = eval_expr_value(expr, ctx);
         child_ctx.vars.insert(key.clone(), val);
     }
 
-    if !inc.slot.is_empty() {
-        child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-    }
-
-    render_nodes(nodes.as_ref(), &child_ctx)
+    let frame = SlotFrame {
+        nodes: &inc.slot,
+        context: ctx,
+        caller_slot: slot,
+    };
+    render_nodes_at_path(
+        nodes.as_ref(),
+        &child_ctx,
+        path,
+        (!inc.slot.is_empty()).then_some(&frame),
+        cache,
+    )
 }
 
 /// Render a named component from a multi-component file (`path#Name` syntax).
@@ -1738,6 +1815,121 @@ mod state_style_tests {
         expected.style().box_shadow = base.style().box_shadow.clone();
         let mut expected = crate::styler::apply_class_list(expected, "shadow-none ring-4");
         assert_eq!(actual.box_shadow, expected.style().box_shadow);
+    }
+}
+
+#[cfg(test)]
+mod include_depth_tests {
+    use super::*;
+
+    #[test]
+    fn guard_accepts_64_levels_and_resets_after_drop() {
+        let guards: Vec<_> = (0..64).map(|_| IncludeGuard::enter().unwrap()).collect();
+        assert!(IncludeGuard::enter().is_none());
+        drop(guards);
+        assert_eq!(INCLUDE_DEPTH.with(std::cell::Cell::get), 0);
+        assert!(IncludeGuard::enter().is_some());
+    }
+
+    #[test]
+    fn include_cycles_return_and_restore_the_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("self.crepus"), "include self.crepus").unwrap();
+        std::fs::write(
+            dir.path().join("named.crepus"),
+            "--- Card\ninclude named.crepus#Card",
+        )
+        .unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        for source in [
+            "include self.crepus",
+            "include named.crepus#Card",
+            "include missing.crepus",
+            "div",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let _ = render_nodes(&nodes, &ctx);
+            assert_eq!(INCLUDE_DEPTH.with(std::cell::Cell::get), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod virtual_include_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_includes_and_slots_keep_distinct_animation_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        ctx.virtual_files = Arc::new(
+            [
+                (
+                    "animated.crepus".into(),
+                    "div animate:opacity={100ms linear}".into(),
+                ),
+                ("outer.crepus".into(), "include animated.crepus".into()),
+                (
+                    "named.crepus".into(),
+                    "--- Card\ninclude outer.crepus".into(),
+                ),
+                ("slot.crepus".into(), "slot".into()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        for source in [
+            "include animated.crepus\ninclude animated.crepus",
+            "include outer.crepus\ninclude outer.crepus",
+            "include named.crepus#Card\ninclude named.crepus#Card",
+            "include slot.crepus\n  div animate:opacity={100ms linear}\ninclude slot.crepus\n  div animate:opacity={100ms linear}",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let ids = || render_siblings_with_ctx(&nodes, &ctx, "root",None, &mut IncludeCache::default()).iter_mut().map(|element| {
+                let animation = element.downcast_mut::<gpui::AnimationElement<gpui::Div>>().unwrap();
+                gpui::Element::id(animation).unwrap()
+            }).collect::<Vec<_>>();
+            let first = ids();
+            assert_eq!(first.len(), 2);
+            assert_ne!(first[0], first[1], "{source}");
+            assert_eq!(first, ids(), "{source}");
+        }
+    }
+
+    #[test]
+    fn virtual_includes_use_filename_frontends_and_preserve_nested_bundles() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        ctx.virtual_files = Arc::new(
+            [
+                (
+                    "child.svelte".into(),
+                    r#"<script>let ignored = 1;</script><div id="virtual" />"#.into(),
+                ),
+                ("outer.crepus".into(), "include child.svelte".into()),
+                (
+                    "named.crepus".into(),
+                    "--- Card\ninclude outer.crepus".into(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let nodes = include_nodes(&ctx, &dir.path().join("child.svelte")).unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("expected element")
+        };
+        assert_eq!(element.id.as_deref(), Some("virtual"));
+        let child_ctx = include_context(&ctx, &dir.path().join("outer.crepus"));
+        assert!(Arc::ptr_eq(&ctx.virtual_files, &child_ctx.virtual_files));
+        assert!(include_nodes(&child_ctx, &dir.path().join("child.svelte")).is_ok());
+        for source in ["include outer.crepus", "include named.crepus#Card"] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let _ = render_nodes(&nodes, &ctx);
+        }
     }
 }
 
