@@ -13,7 +13,8 @@ use gpui::{
 
 use crepuscularity_core::context::TemplateContext;
 use crepuscularity_core::tailwind::{
-    parse_arbitrary_length_token, parse_length_token, LengthToken,
+    parse_arbitrary_length_token, parse_css_hex_color, parse_length_token,
+    parse_opacity_percentage, resolve_css_color, LengthToken,
 };
 
 /// Apply a class to a div, optionally resolving `{expr}` placeholders against context.
@@ -103,15 +104,6 @@ fn apply_context_class(d: Div, class: &str, ctx: &TemplateContext) -> Div {
 
     // No context expression matched — fall through to normal class processing
     apply_base_class(d, class)
-}
-
-/// Parse a color string like "#1e1e2e", "1e1e2e", or "0x1e1e2e" to a u32 hex value.
-fn parse_color_str(s: &str) -> Option<u32> {
-    let hex_str = s
-        .strip_prefix('#')
-        .or_else(|| s.strip_prefix("0x"))
-        .unwrap_or(s);
-    u32::from_str_radix(hex_str, 16).ok()
 }
 
 /// Returns Ok(div) if class matched, Err(div) to fall through to dynamic.
@@ -632,8 +624,7 @@ fn apply_misc(d: Div, class: &str) -> Result<Div, Div> {
         | "pointer-events-none"
         | "whitespace-pre"
         | "sticky"
-        | "fixed"
-        | "items-stretch" => d,
+        | "fixed" => d,
 
         // ── Debug (only in debug builds) ──
         #[cfg(debug_assertions)]
