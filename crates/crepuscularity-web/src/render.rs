@@ -329,10 +329,14 @@ impl<'a> Walker<'a> {
         }
         let mut interval_ms = 3200u64;
         for b in &el.bindings {
-            if b.prop == "interval" {
+            if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
                 let v = value_to_str(&eval_expr(&b.value, ctx)?);
                 let v = v.trim_matches('"').trim();
-                interval_ms = v.parse().unwrap_or(3200);
+                interval_ms = v
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|ms| (1..=i32::MAX as u64).contains(ms))
+                    .unwrap_or(3200);
             }
         }
         let words_json = slot_rotate_words_json_attr(&phrases);
@@ -365,9 +369,17 @@ impl<'a> Walker<'a> {
             out.push_str(&format!(r#" data-crepus-id="c{id}""#));
             out.push_str(" data-crepus-kind=\"slot-rotate\"");
         }
-        if let Some(class_attr) =
-            crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
-        {
+        let mut class_attr = crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
+            .unwrap_or_default();
+        if let Some(binding) = el.bindings.iter().find(|binding| {
+            binding.origin == BindingOrigin::Attribute && binding.prop.eq_ignore_ascii_case("class")
+        }) {
+            if let Some(value) = eval_binding(binding, ctx)? {
+                class_attr.push(' ');
+                class_attr.push_str(&crate::escape_html_attribute(&value_to_str(&value)));
+            }
+        }
+        if !class_attr.is_empty() {
             out.push_str(" class=\"");
             out.push_str(&class_attr);
             out.push('"');
