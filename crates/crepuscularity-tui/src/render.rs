@@ -893,16 +893,19 @@ fn build_element(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    mut classes: Vec<String>,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
     // ── Special pseudo-elements ───────────────────────────────────────────────
     match el.tag.as_str() {
-        "slot" => return build_slot(el, ctx, parent_dir, inherited, renderer),
-        "slot-rotate" => return build_slot_rotate(el, ctx, parent_dir, inherited),
+        "slot" => return build_slot(el, ctx, parent_dir, inherited, renderer, slot),
+        "slot-rotate" => {
+            return build_slot_rotate(el, ctx, parent_dir, inherited, renderer, &classes)
+        }
         _ => {}
     }
 
-    // ── Evaluate conditional classes ──────────────────────────────────────────
-    let mut classes = active_classes(el, ctx);
+    // Classes were resolved once by build_children before hidden suppression.
     if el.tag == "button"
         && !classes.iter().any(|class| {
             matches!(
@@ -915,9 +918,16 @@ fn build_element(
     }
     let mut hints = parse_classes(&classes);
 
-    if let Some(ref el_id) = el.id {
-        hints.id = Some(el_id.clone());
-    }
+    hints.id = match element_id(el, ctx) {
+        Ok(id) => id,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
 
     let focused_id = ctx.get_str("focused_id");
     if !focused_id.is_empty()
@@ -930,32 +940,47 @@ fn build_element(
         }
     }
 
-    // Allow a `title={expr}` binding to set the block title.
-    if let Some(title_val) = el
-        .bindings
-        .iter()
-        .find(|b| b.prop == "title")
-        .map(|b| value_to_str(&eval_value(&b.value, ctx)))
-    {
-        hints.title = Some(title_val);
-    }
+    let is_text_only = text_only(&el.children);
+    let properties = (|| -> Result<ScrollConfig, CrepusError> {
+        if let Some(binding) = el.bindings.iter().find(|binding| binding.prop == "title") {
+            hints.title = crepuscularity_core::eval::eval_binding(binding, ctx)?
+                .map(|value| value_to_str(&value));
+        }
+        // Empty boxes and horizontal pure text never consumed scroll bindings.
+        // Resolve an applicable configuration once, before any child declarations.
+        if !el.children.is_empty() && (!is_text_only || hints.direction == Direction::Vertical) {
+            scroll_config(el, ctx, &classes)
+        } else {
+            Ok(ScrollConfig::default())
+        }
+    })();
+    let scroll_cfg = match properties {
+        Ok(config) => config,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
 
     let constraint = adjusted_constraint(&hints, parent_dir);
     let style = inherited.patch(hints.to_style());
 
     // ── Detect pure-text vs. mixed/structural children ────────────────────────
-    let is_pure_text = !el.children.is_empty()
-        && el.children.iter().all(|n| {
-            matches!(
-                n,
-                Node::Text(_) | Node::RawText(_) | Node::RawHtml(_) | Node::LetDecl(_)
-            )
-        });
-
-    if is_pure_text {
-        build_content_element(el, &hints, ctx, constraint, style)
+    if is_text_only && (hints.direction != Direction::Vertical || !scroll_cfg.scrollable) {
+        build_content_element(el, &hints, ctx, parent_dir, constraint, style).unwrap_or_else(
+            |error| {
+                renderer.build_error.get_or_insert(error);
+                WidgetChild {
+                    node: WidgetNode::Empty,
+                    constraint: Constraint::Length(0),
+                }
+            },
+        )
     } else if el.children.is_empty() {
-        build_empty_box(&hints, constraint, style)
+        build_empty_box(&hints, parent_dir, constraint, style)
     } else {
         build_container_element(
             el,
@@ -967,7 +992,9 @@ fn build_element(
                 style,
                 classes: &classes,
             },
+            scroll_cfg,
             renderer,
+            slot,
         )
     }
 }
