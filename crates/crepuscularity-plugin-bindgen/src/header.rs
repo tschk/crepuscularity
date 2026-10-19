@@ -1,8 +1,30 @@
 use std::io::Read;
 use std::path::Path;
 
+use syn::ext::IdentExt;
+
 pub(super) fn typed_declarations(header: &Path) -> Result<syn::File, String> {
-    validated_bindings(header).map(|(_, _, declarations)| declarations)
+    validated_bindings(header).map(|(_, _, mut declarations)| {
+        // These consumers emit C identities with their own target escaping. Rust
+        // keeps its raw identifiers in validated_bindings' code and syntax tree.
+        for item in &mut declarations.items {
+            if let syn::Item::ForeignMod(module) = item {
+                for item in &mut module.items {
+                    if let syn::ForeignItem::Fn(function) = item {
+                        function.sig.ident = function.sig.ident.unraw();
+                        for input in &mut function.sig.inputs {
+                            if let syn::FnArg::Typed(input) = input {
+                                if let syn::Pat::Ident(parameter) = input.pat.as_mut() {
+                                    parameter.ident = parameter.ident.unraw();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        declarations
+    })
 }
 
 pub(super) fn validated_bindings(header: &Path) -> Result<(String, String, syn::File), String> {
@@ -116,7 +138,7 @@ fn restore_pointer_qualifiers(
             let syn::ForeignItem::Fn(function) = item else {
                 continue;
             };
-            let name = function.sig.ident.to_string();
+            let name = function.sig.ident.unraw().to_string();
             let source_line = prototypes
                 .get(name.as_str())
                 .ok_or_else(|| format!("missing ABI prototype: {name}"))?;
@@ -165,7 +187,11 @@ fn restore_pointer_qualifiers(
             };
             corrected.insert(
                 name.clone(),
-                format!("    pub fn {name}({}){result};", arguments.join(", ")),
+                format!(
+                    "    pub fn {}({}){result};",
+                    function.sig.ident,
+                    arguments.join(", ")
+                ),
             );
         }
     }
@@ -175,7 +201,7 @@ fn restore_pointer_qualifiers(
             .trim_start()
             .strip_prefix("pub fn ")
             .and_then(|line| line.split_once('('))
-            .and_then(|(name, _)| corrected.remove(name));
+            .and_then(|(name, _)| corrected.remove(name.strip_prefix("r#").unwrap_or(name)));
         output.push_str(replacement.as_deref().unwrap_or(line));
         output.push('\n');
     }
@@ -200,7 +226,12 @@ pub(super) fn prepare(header: &Path) -> Result<(String, String), String> {
         ));
     }
 
-    let content = logical_declarations(&strip_comments(&splice_lines(&content))?)?;
+    if content.contains("??/") {
+        return Err("unsupported ABI preprocessor trigraph/line splicing".into());
+    }
+    let content = strip_comments(&splice_lines(&content))?;
+    validate_directives(&content)?;
+    let content = logical_declarations(&content)?;
     let mut source = String::new();
     let mut types = String::new();
     let mut lines = content.lines();
@@ -227,6 +258,7 @@ pub(super) fn prepare(header: &Path) -> Result<(String, String), String> {
                 return Err("unsupported CrepusSession or CrepusEventCallback typedef".into());
             }
             _ => {
+                validate_non_function_admission(&declaration)?;
                 // equilibrium 0.1.3 otherwise treats return stars as part of the function name.
                 source.push_str(&declaration.replace('*', "* "));
                 source.push('\n');
@@ -234,6 +266,88 @@ pub(super) fn prepare(header: &Path) -> Result<(String, String), String> {
         }
     }
     Ok((types, source))
+}
+
+// Bounded ABI declarations: opaque handles and ordinary aliases remain supported,
+// but concrete layouts/enums and non-function qualifiers cannot be reconstructed
+// safely after equilibrium's normalization. Do not silently discard their ABI.
+fn validate_non_function_admission(declaration: &str) -> Result<(), String> {
+    let words: Vec<_> = declaration
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    if declaration.contains(['{', '}']) || words.contains(&"enum") || words.contains(&"union") {
+        return Err("unsupported concrete struct, union or enum ABI declaration".into());
+    }
+    let typedef = words.first() == Some(&"typedef");
+    if typedef
+        && declaration
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+            .contains(")()")
+    {
+        return Err("old-style empty ABI callback parameter list; use (void)".into());
+    }
+    let function = !typedef && declaration.contains('(');
+    if !function
+        && words
+            .iter()
+            .any(|word| matches!(*word, "const" | "volatile" | "restrict" | "_Atomic"))
+    {
+        return Err("unsupported qualified non-function ABI declaration".into());
+    }
+    if !typedef && !function {
+        return Err("unsupported non-function ABI declaration".into());
+    }
+    Ok(())
+}
+
+// We do not run a C preprocessor: admit only the bundled guard and literal
+// standard includes, plus C++ linkage wrappers that cannot hide declarations.
+fn validate_directives(content: &str) -> Result<(), String> {
+    let lines: Vec<_> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let mut guard = false;
+    let mut defined = false;
+    let mut stack = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.starts_with('#') {
+            continue;
+        }
+        let words: Vec<_> = line[1..].split_whitespace().collect();
+        let fail =
+            || format!("unsupported ABI preprocessor directive (including line splicing): {line}");
+        match words.as_slice() {
+            ["ifndef", "CREPUSCULARITY_ABI_H"] if !guard && index == 0 => {
+                guard = true;
+                stack.push(false);
+            }
+            ["define", "CREPUSCULARITY_ABI_H"] if guard && !defined && index == 1 => defined = true,
+            ["include", "<stdint.h>" | "<stddef.h>"] => {}
+            ["ifdef", "__cplusplus"] if lines.get(index + 2) == Some(&"#endif") => {
+                let next = lines.get(index + 1).ok_or_else(fail)?;
+                if *next != "extern \"C\" {" && *next != "}" {
+                    return Err(fail());
+                }
+                stack.push(true);
+            }
+            ["endif"] if !stack.is_empty() => {
+                let wrapper = stack.pop().unwrap();
+                if !wrapper && !defined {
+                    return Err(fail());
+                }
+            }
+            _ => return Err(fail()),
+        }
+    }
+    if !stack.is_empty() {
+        return Err("unterminated ABI preprocessor guard".into());
+    }
+    Ok(())
 }
 
 fn splice_lines(content: &str) -> String {
@@ -421,6 +535,11 @@ fn expected_signatures(source: &str) -> Result<std::collections::BTreeMap<String
             .last()
             .ok_or("missing ABI function name")?;
         let params = line[open + 1..close].trim();
+        if params.is_empty() {
+            return Err(format!(
+                "old-style empty ABI parameter list for {name}; use (void)"
+            ));
+        }
         let mut depth = 0usize;
         let mut arity = usize::from(!params.is_empty() && params != "void");
         for ch in params.chars() {
@@ -486,7 +605,7 @@ fn validate_signatures(
         if let syn::Item::ForeignMod(module) = item {
             for item in &module.items {
                 if let syn::ForeignItem::Fn(function) = item {
-                    let name = function.sig.ident.to_string();
+                    let name = function.sig.ident.unraw().to_string();
                     if expected.get(&name) != Some(&function.sig.inputs.len()) {
                         return Err(format!("ABI parser changed parameters for {name}; unnamed or unsupported parameters are not admitted"));
                     }

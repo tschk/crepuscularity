@@ -289,9 +289,17 @@ fn finish_elements(
         let is_form = matches!(tag, Argument::StringLiteral(value) if matches!(value.value.as_str(), "input" | "textarea" | "select" | "option"));
         let replacement = if is_form {
             forms_used = true;
-            format!("{form_helper}({tag},[{}]{tail})", layers.join(","), tag = render(source, tag.span(), &edits))
+            format!(
+                "{form_helper}({tag},[{}]{tail})",
+                layers.join(","),
+                tag = render(source, tag.span(), &edits)
+            )
         } else {
-            format!("{factory}({tag},{helper}([{}]){tail})", layers.join(","), tag = render(source, tag.span(), &edits))
+            format!(
+                "{factory}({tag},{helper}([{}]){tail})",
+                layers.join(","),
+                tag = render(source, tag.span(), &edits)
+            )
         };
         let span = call.span;
         edits.retain(|(start, end, _)| {

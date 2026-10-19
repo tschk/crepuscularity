@@ -12,7 +12,10 @@ use crate::web::ThemeCss;
 
 /// Sidebar section: (group_label, list of page_stems in display order).
 const SECTIONS: &[(&str, &[&str])] = &[
-    ("Getting Started", &["index", "dsl", "components", "cli"]),
+    (
+        "Getting Started",
+        &["index", "dsl", "components", "cli", "changelog"],
+    ),
     (
         "Targets",
         &[
@@ -128,6 +131,9 @@ fn render_md(md: &str) -> (String, String) {
     }
     let mut body = String::new();
     html::push_html(&mut body, Parser::new_ext(md, opts));
+    // First-party Markdown can still embed raw HTML; strip scripts and unsafe
+    // markup the same way the web renderer sanitizes `RawHtml`.
+    let body = ammonia::clean(&body);
     if title.is_empty() {
         title = "Documentation".into();
     }
@@ -309,7 +315,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
   function render(q){{
     if(!q.trim()){{
       results.className='doc-search-results';
-      results.innerHTML='';
+      results.replaceChildren();
       showAll();
       return;
     }}
@@ -334,12 +340,22 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
       }}
       sections[i].open=anyVisible;
     }}
+    results.replaceChildren();
     if(scored.length===0){{
-      results.innerHTML='<div class="no-match">No results</div>';
+      var empty=document.createElement('div');
+      empty.className='no-match';
+      empty.textContent='No results';
+      results.appendChild(empty);
     }}else{{
-      results.innerHTML=scored.map(function(s){{
-        return '<a href="'+s.item.path+'">'+s.item.title+'</a>';
-      }}).join('');
+      for(var i=0;i<scored.length;i++){{
+        var item=scored[i].item;
+        var path=String(item&&item.path?item.path:'');
+        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf('\')!==-1||path.indexOf('..')!==-1)continue;
+        var a=document.createElement('a');
+        a.setAttribute('href',path);
+        a.textContent=String(item.title||'');
+        results.appendChild(a);
+      }}
     }}
     results.className='doc-search-results visible';
     focusIdx=-1;
@@ -425,5 +441,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(index.len(), 2);
+    }
+
+    use crate::web::ThemeCss;
+
+    #[test]
+    fn search_script_does_not_assign_inner_html() {
+        let html = render_shell("body", "Title", "<nav></nav>", &ThemeCss::default(), "Site");
+        assert!(
+            !html.contains("innerHTML"),
+            "docs search must not concatenate index fields into innerHTML"
+        );
+        assert!(html.contains("textContent"));
+        assert!(html.contains("createElement('a')"));
+    }
+
+    #[test]
+    fn generate_docs_escapes_markdown_titles_in_nav() {
+        let src = tempfile::tempdir().expect("src");
+        let out = tempfile::tempdir().expect("out");
+        std::fs::write(
+            src.path().join("xss.md"),
+            "# Hello <script>alert(1)</script>\n\nsafe body\n",
+        )
+        .expect("write md");
+
+        generate_docs(src.path(), out.path(), &ThemeCss::default(), "Site").expect("generate");
+
+        let html = std::fs::read_to_string(out.path().join("xss.html")).expect("read html");
+        assert!(
+            html.contains("<title>Hello &lt;script&gt;alert(1)&lt;/script&gt; — Site</title>"),
+            "page title must HTML-escape markdown headings"
+        );
+        assert!(
+            html.contains("&lt;script&gt;alert(1)&lt;/script&gt;</a></li>"),
+            "sidebar nav must HTML-escape markdown headings"
+        );
+
+        let idx = std::fs::read_to_string(out.path().join("docs-search-index.json")).expect("idx");
+        assert!(idx.contains("Hello <script>alert(1)</script>"));
+        assert!(
+            html.contains("a.textContent=String(item.title||'')"),
+            "search hits must use textContent so index titles cannot inject HTML"
+        );
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "markdown body HTML must be sanitized"
+        );
+    }
+
+    #[test]
+    fn generate_docs_strips_raw_html_script_from_body() {
+        let src = tempfile::tempdir().expect("src");
+        let out = tempfile::tempdir().expect("out");
+        std::fs::write(
+            src.path().join("index.md"),
+            "# Safe\n\n<script>alert(1)</script>\n\nKeep **bold** and a [link](dsl.html).\n",
+        )
+        .expect("write md");
+
+        generate_docs(src.path(), out.path(), &ThemeCss::default(), "Site").expect("generate");
+
+        let html = std::fs::read_to_string(out.path().join("index.html")).expect("read html");
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("href=\"dsl.html\""));
     }
 }

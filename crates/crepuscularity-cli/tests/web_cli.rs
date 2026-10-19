@@ -133,9 +133,10 @@ fn web_build_honors_cargo_home_and_explicit_cargo() {
 #[test]
 fn web_scaffolds_use_the_current_backend_release_families() {
     let root = tempfile::tempdir().unwrap();
-    for (kind, crate_name) in [
-        ("web", "crepuscularity-web"),
-        ("webext", "crepuscularity-webext"),
+    for (kind, crate_name, manifest_path) in [
+        ("web", "crepuscularity-web", "runtime/Cargo.toml"),
+        ("webext", "crepuscularity-webext", "runtime/Cargo.toml"),
+        ("moonshine", "crepuscularity-native", "Cargo.toml"),
     ] {
         let name = format!("{kind}-versions");
         let output = crepus()
@@ -149,7 +150,7 @@ fn web_scaffolds_use_the_current_backend_release_families() {
             String::from_utf8_lossy(&output.stderr)
         );
         let generated: toml::Value = toml::from_str(
-            &std::fs::read_to_string(root.path().join(&name).join("runtime/Cargo.toml")).unwrap(),
+            &std::fs::read_to_string(root.path().join(&name).join(manifest_path)).unwrap(),
         )
         .unwrap();
         let dependency = &generated["dependencies"][crate_name];

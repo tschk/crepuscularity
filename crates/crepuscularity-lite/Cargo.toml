@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-lite"
-version = "0.4.14"
+version = "0.4.15"
 edition.workspace = true
 license.workspace = true
 description = "GPUI desktop shell with an embedded V8 runtime and a Rust native-capability bridge."
@@ -25,7 +25,7 @@ crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", feat
 arboard = "3.6"
 dirs = "6"
 gpui = { workspace = true }
-gpui_platform = { workspace = true, features = ["runtime_shaders"] }
+gpui_platform = { workspace = true, features = ["runtime_shaders", "font-kit"] }
 open = "5.3"
 notify-debouncer-mini = "0.7"
 palette = { version = "0.7", features = ["serializing"] }

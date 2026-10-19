@@ -14,6 +14,8 @@ div min-h-screen overflow-x-hidden antialiased crepus-twilight-page text-sm lead
 					"Docs"
 				a href="./docs/cli.html" nav-link
 					"CLI"
+				a href="./docs/changelog.html" nav-link
+					"Changelog"
 				a href="./docs/lite.html" nav-link
 					"Lite"
 				a href="https://crates.io/crates/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
@@ -135,18 +137,18 @@ $ crepus aurora new my-ios && crepus aurora dev
 				p crepus-t-muted max-w-2xl m-0 mb-2
 					"Indent DSL, TSX-shaped tags, or GPUI's compile-time macro — one AST, your pick."
 				p text-xs crepus-t-muted max-w-2xl m-0 mb-8
-					"Curly braces in snippets use Unicode ｛ ｝ where the real sources use ASCII so this page stays valid .crepus."
+					"Code snippets use raw string expressions so braces remain literal."
 				div flex flex-col gap-4
 					div code-panel
 						p code-panel-label
 							"Indent · .crepus"
 						pre code-panel-pre
-							"div flex gap-3\n  button @click=\"handle_click\" text-blue-500\n    \"Click me\"\n  input type=\"text\" value=｛input_value｝ placeholder=\"Type here\""
+							{"div flex gap-3\n  button @click=\"handle_click\" text-blue-500\n    \"Click me\"\n  input type=\"text\" value={input_value} placeholder=\"Type here\""}
 					div code-panel
 						p code-panel-label
 							"JSX-style tags"
 						pre code-panel-pre
-							"<div class=\"flex gap-3\">\n  <button @click=\"handle_click\" class=\"text-blue-500\">Click me</button>\n  <input type=\"text\" value=｛input_value｝ placeholder=\"Type here\" />\n</div>"
+							{"<div class=\"flex gap-3\">\n  <button @click=\"handle_click\" class=\"text-blue-500\">Click me</button>\n  <input type=\"text\" value={input_value} placeholder=\"Type here\" />\n</div>"}
 					div code-panel
 						p code-panel-label
 							"GPUI · view!"
@@ -215,7 +217,7 @@ $ crepus aurora new my-ios && crepus aurora dev
 							p code-panel-label
 								"SwiftUI engine"
 							pre code-panel-pre
-								"navigationsplitview\n  sidebar\n    section header=\"Conversations\"\n      for conv in {conversations}\n        item @click=\"select:{conv.id}\"\n          span \"{conv.title}\"\n  detail\n    vstack gap-3 p-4\n      textfield bind=draft placeholder=\"Message\"\n      button button-prominent @click=\"send\"\n        \"Send\""
+								{"navigationsplitview\n  sidebar\n    section header=\"Conversations\"\n      for conv in {conversations}\n        item @click=\"select:{conv.id}\"\n          span \"{conv.title}\"\n  detail\n    vstack gap-3 p-4\n      textfield bind=draft placeholder=\"Message\"\n      button button-prominent @click=\"send\"\n        \"Send\""}
 					div flex flex-col gap-5
 						h3 label-eyebrow m-0
 							"Capabilities"

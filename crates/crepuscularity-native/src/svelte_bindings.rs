@@ -302,7 +302,9 @@ pub(crate) fn transform_template_with_policy(
                 "bind:value textarea bodies are not supported yet; use defaultValue",
             ));
         }
-        let has_spread = attrs.iter().any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)));
+        let has_spread = attrs
+            .iter()
+            .any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)));
         let mut input_type = "text".to_owned();
         let mut default_value = None;
         for item in attrs {
@@ -329,7 +331,8 @@ pub(crate) fn transform_template_with_policy(
             {
                 default_value = Some(attr.as_ref());
             }
-            if !open && matches!(&attr.name,JSXAttributeName::Identifier(name) if name.name=="type") {
+            if !open && matches!(&attr.name,JSXAttributeName::Identifier(name) if name.name=="type")
+            {
                 let Some(JSXAttributeValue::StringLiteral(value)) = &attr.value else {
                     return Err(fail("binding requires a static input type"));
                 };
@@ -389,7 +392,9 @@ pub(crate) fn transform_template_with_policy(
                 .get_reference(id.reference_id.get().unwrap());
             let store_symbol = if open && reference.symbol_id().is_none() {
                 id.name.strip_prefix('$').and_then(|name| {
-                    semantic.scoping().find_binding(node.scope_id(), name.into())
+                    semantic
+                        .scoping()
+                        .find_binding(node.scope_id(), name.into())
                 })
             } else {
                 None
@@ -441,12 +446,20 @@ pub(crate) fn transform_template_with_policy(
                     let check = format!("{{...(false ? {{files:({event_check}(({value}:{value_type})=>({expression}={value}))(null))}} : {{}})}}");
                     edits.push((attr.span.start as usize, attr.span.end as usize, check));
                 } else {
-                    edits.push((attr.span.start as usize, attr.span.end as usize, replacement));
+                    edits.push((
+                        attr.span.start as usize,
+                        attr.span.end as usize,
+                        replacement,
+                    ));
                 }
                 continue;
             }
             // Check authored assignment targets without constructing or calling a server setter.
-            let argument = if checked || open { "false" } else { "undefined" };
+            let argument = if checked || open {
+                "false"
+            } else {
+                "undefined"
+            };
             let expression = format!(
                 "(false ? (({value}:{value_type})=>({expression}={value}))({argument}) : {expression})"
             );
@@ -495,7 +508,11 @@ pub(crate) fn transform_template_with_policy(
                 ));
             } else if has_spread {
                 let end = attrs.last().unwrap().span().end as usize;
-                edits.push((attr.span.start as usize, attr.span.end as usize, String::new()));
+                edits.push((
+                    attr.span.start as usize,
+                    attr.span.end as usize,
+                    String::new(),
+                ));
                 edits.push((end, end, format!(" {property}={{{expression}}}")));
             } else if !checked && input {
                 ssr_helper = true;
@@ -541,7 +558,9 @@ pub(crate) fn transform_template_with_policy(
             let node = fresh("__crepusBoundElement");
             let mut event = String::new();
             for item in attrs {
-                if has_spread { continue; }
+                if has_spread {
+                    continue;
+                }
                 if let JSXAttributeItem::Attribute(attribute) = item {
                     if matches!(&attribute.name,JSXAttributeName::Identifier(name) if name.name==event_prop)
                     {
@@ -568,8 +587,11 @@ pub(crate) fn transform_template_with_policy(
             } else {
                 format!("{helper}({{get:()=>({expression}),set:({value}:{value_type})=>({expression}={value}),render:()=>{node}{event}}})")
             };
-            edits.push((attr.span.start as usize, attr.span.end as usize,
-                format!("{marker}={{({node}:{element_type})=>{install}}}")));
+            edits.push((
+                attr.span.start as usize,
+                attr.span.end as usize,
+                format!("{marker}={{({node}:{element_type})=>{install}}}"),
+            ));
         } else {
             edits.push((
                 attr.span.start as usize,
@@ -905,7 +927,8 @@ mod tests {
         assert!(lower_select(
             "function C(){let v;return <select {...p} marker={v}/>}",
             MoonshineModuleTarget::Dom,
-        ).is_ok());
+        )
+        .is_ok());
         let (output, helper) = lower_select(
             "function C(){let v;return <select marker={v}/>}",
             MoonshineModuleTarget::Ssr,

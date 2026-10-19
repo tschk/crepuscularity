@@ -180,7 +180,12 @@ fn cumulative_downloads_at_dates(
         .collect()
 }
 
-fn points_for_series(series: &[DailyDownloads], width: u32, height: u32, pad: u32) -> Vec<(u32, u32)> {
+fn points_for_series(
+    series: &[DailyDownloads],
+    width: u32,
+    height: u32,
+    pad: u32,
+) -> Vec<(u32, u32)> {
     if series.is_empty() {
         return Vec::new();
     }
@@ -214,7 +219,7 @@ fn format_exact_number(value: u64) -> String {
     for (index, ch) in digits.chars().enumerate() {
         if index > 0 {
             let split = index == first_group_len
-                || (index > first_group_len && (index - first_group_len) % 3 == 0);
+                || (index > first_group_len && (index - first_group_len).is_multiple_of(3));
             if split {
                 formatted.push(' ');
             }
@@ -561,14 +566,14 @@ async fn fetch_download_payloads(crates: &[CrateInfo]) -> Result<Vec<DownloadsRe
     let requests = js_sys::Array::new();
 
     for krate in crates {
-        requests.push(&window.fetch_with_str(&absolute_crates_url(
-            &krate.links.version_downloads,
-        )));
+        requests.push(&window.fetch_with_str(&absolute_crates_url(&krate.links.version_downloads)));
     }
 
     let responses = JsFuture::from(js_sys::Promise::all(&requests)).await?;
     let responses = js_sys::Array::from(&responses);
     let mut payloads = Vec::with_capacity(responses.length() as usize);
+
+    let json_promises = js_sys::Array::new();
 
     for response_value in responses.iter() {
         let response: web_sys::Response = response_value.dyn_into()?;
@@ -578,7 +583,13 @@ async fn fetch_download_payloads(crates: &[CrateInfo]) -> Result<Vec<DownloadsRe
                 response.status()
             )));
         }
-        let json = JsFuture::from(response.json()?).await?;
+        json_promises.push(&response.json()?.into());
+    }
+
+    let jsons = JsFuture::from(js_sys::Promise::all(&json_promises)).await?;
+    let jsons = js_sys::Array::from(&jsons);
+
+    for json in jsons.iter() {
         payloads.push(decode_json_value::<DownloadsResponse>(&json)?);
     }
 
@@ -676,7 +687,11 @@ fn render_downloads(
         "[data-downloads-peak]",
         &format!("{} total", format_exact_number(total)),
     )?;
-    set_html(root, "[data-downloads-graph]", &render_graph(&cumulative_series))?;
+    set_html(
+        root,
+        "[data-downloads-graph]",
+        &render_graph(&cumulative_series),
+    )?;
     bind_graph_hover(root)?;
     sync_downloads_list(root, &list)?;
     root.set_attribute("data-downloads-state", "ready")?;
@@ -714,8 +729,8 @@ fn sync_downloads_list(root: &web_sys::Element, html: &str) -> Result<(), JsValu
     let incoming = document.create_element("div")?;
     incoming.set_inner_html(html);
 
-    let existing_rows = list.query_selector_all("[data-downloads-row-key]")?;
-    let incoming_rows = incoming.query_selector_all("[data-downloads-row-key]")?;
+    let existing_rows = list.children();
+    let incoming_rows = incoming.children();
 
     if existing_rows.length() != incoming_rows.length()
         || existing_rows.length() == 0
@@ -746,8 +761,8 @@ fn sync_downloads_list(root: &web_sys::Element, html: &str) -> Result<(), JsValu
 
 #[cfg(target_arch = "wasm32")]
 fn download_row_keys_match(
-    existing_rows: &web_sys::NodeList,
-    incoming_rows: &web_sys::NodeList,
+    existing_rows: &web_sys::HtmlCollection,
+    incoming_rows: &web_sys::HtmlCollection,
 ) -> bool {
     use wasm_bindgen::JsCast;
 
@@ -812,10 +827,7 @@ fn sync_download_row(
     }
 
     existing_value.set_attribute("data-downloads-current", &default_value)?;
-    existing_value.set_inner_html(&format_slot_transition(
-        previous.as_deref(),
-        &default_value,
-    ));
+    existing_value.set_inner_html(&format_slot_transition(previous.as_deref(), &default_value));
 
     Ok(())
 }
@@ -830,8 +842,8 @@ fn bind_graph_hover(root: &web_sys::Element) -> Result<(), JsValue> {
 
     let move_root = root.clone();
     let move_graph = graph.clone();
-    let on_move = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_move =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             let Ok(pointer) = event.dyn_into::<web_sys::PointerEvent>() else {
                 return;
             };
@@ -840,58 +852,58 @@ fn bind_graph_hover(root: &web_sys::Element) -> Result<(), JsValue> {
             }
             pointer.prevent_default();
             let _ = apply_graph_pointer_event(&move_root, &move_graph, &pointer);
-        },
-    ));
+        }));
     graph.add_event_listener_with_callback("pointermove", on_move.as_ref().unchecked_ref())?;
     on_move.forget();
 
-    let down_root = root.clone();
     let down_graph = graph.clone();
-    let on_down = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_down =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             let Ok(pointer) = event.dyn_into::<web_sys::PointerEvent>() else {
                 return;
             };
             pointer.prevent_default();
             let _ = down_graph.set_pointer_capture(pointer.pointer_id());
+
+            let Some(down_root) = down_graph.closest("[data-downloads-widget]").ok().flatten()
+            else {
+                return;
+            };
             let _ = set_graph_scrubbing(&down_root, true);
             let _ = apply_graph_pointer_event(&down_root, &down_graph, &pointer);
-        },
-    ));
+        }));
     graph.add_event_listener_with_callback("pointerdown", on_down.as_ref().unchecked_ref())?;
     on_down.forget();
 
     let up_root = root.clone();
     let up_graph = graph.clone();
-    let on_up = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_up =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             let Ok(pointer) = event.dyn_into::<web_sys::PointerEvent>() else {
                 return;
             };
             let _ = up_graph.release_pointer_capture(pointer.pointer_id());
             let _ = set_graph_scrubbing(&up_root, false);
-        },
-    ));
+        }));
     graph.add_event_listener_with_callback("pointerup", on_up.as_ref().unchecked_ref())?;
     on_up.forget();
 
     let cancel_root = root.clone();
     let cancel_graph = graph.clone();
-    let on_cancel = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_cancel =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             let Ok(pointer) = event.dyn_into::<web_sys::PointerEvent>() else {
                 return;
             };
             let _ = cancel_graph.release_pointer_capture(pointer.pointer_id());
             let _ = set_graph_scrubbing(&cancel_root, false);
-        },
-    ));
+        }));
     graph.add_event_listener_with_callback("pointercancel", on_cancel.as_ref().unchecked_ref())?;
     on_cancel.forget();
 
     let leave_root = root.clone();
-    let on_leave = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_leave =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             if graph_is_scrubbing(&leave_root) {
                 return;
             }
@@ -902,8 +914,7 @@ fn bind_graph_hover(root: &web_sys::Element) -> Result<(), JsValue> {
             if pointer_type == "mouse" {
                 let _ = reset_graph_hover(&leave_root);
             }
-        },
-    ));
+        }));
     graph.add_event_listener_with_callback("pointerleave", on_leave.as_ref().unchecked_ref())?;
     on_leave.forget();
 
@@ -981,30 +992,31 @@ fn apply_graph_hit(root: &web_sys::Element, hit: &web_sys::Element) -> Result<()
 fn bind_graph_outside_reset(root: &web_sys::Element) -> Result<(), JsValue> {
     use wasm_bindgen::{closure::Closure, JsCast};
 
-    if root.get_attribute("data-downloads-outside-reset-bound").is_some() {
+    if root
+        .get_attribute("data-downloads-outside-reset-bound")
+        .is_some()
+    {
         return Ok(());
     }
     root.set_attribute("data-downloads-outside-reset-bound", "true")?;
 
     let reset_root = root.clone();
-    let on_down = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(
-        move |event: web_sys::Event| {
+    let on_down =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |event: web_sys::Event| {
             if graph_is_scrubbing(&reset_root) {
                 return;
             }
             let inside_graph = event
                 .target()
-                .and_then(|target: web_sys::EventTarget| {
-                    target.dyn_into::<web_sys::Element>().ok()
-                })
+                .and_then(|target: web_sys::EventTarget| target.dyn_into::<web_sys::Element>().ok())
                 .and_then(|target| target.closest("[data-downloads-graph]").ok().flatten())
                 .is_some();
             if !inside_graph {
                 let _ = reset_graph_hover(&reset_root);
             }
-        },
-    ));
-    document()?.add_event_listener_with_callback("pointerdown", on_down.as_ref().unchecked_ref())?;
+        }));
+    document()?
+        .add_event_listener_with_callback("pointerdown", on_down.as_ref().unchecked_ref())?;
     on_down.forget();
 
     Ok(())

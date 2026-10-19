@@ -59,7 +59,11 @@ fn assert_rust_output(repo_root: &Path, header: Option<PathBuf>, functions: usiz
     assert_eq!(
         header
             .lines()
-            .filter(|line| line.contains("crepus_") && line.trim_end().ends_with(';'))
+            .filter(|line| {
+                !line.trim_start().starts_with("typedef")
+                    && line.contains('(')
+                    && line.trim_end().ends_with(';')
+            })
             .count(),
         functions,
         "update the signature checks when the ABI adds functions"
@@ -132,7 +136,8 @@ fn overridden_header_preserves_typedefs_and_additional_functions() {
     let original = std::fs::read_to_string(
         root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     let varied = original
         .replace(
             "typedef struct CrepusSession CrepusSession;",
@@ -188,7 +193,8 @@ fn oversized_original_headers_are_rejected_without_writing_generated_rust() {
     let original = std::fs::read_to_string(
         root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
     )
-    .unwrap();
+    .unwrap()
+    .replace("\r\n", "\n");
     for limit in ["bytes", "lines"] {
         let output = TempOutput::new();
         let header = output.0.join("oversized.h");
@@ -219,4 +225,28 @@ fn oversized_original_headers_are_rejected_without_writing_generated_rust() {
             "oversized {limit} input wrote generated Rust"
         );
     }
+}
+
+#[test]
+fn rust_keyword_functions_preserve_raw_identifiers_and_const_signatures() {
+    let root = repo_root();
+    let output = TempOutput::new();
+    let header = output.0.join("keywords.h");
+    let original = std::fs::read_to_string(
+        root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let custom = original.replace(
+        "#ifdef __cplusplus\n}",
+        "int32_t match(int32_t type);\nconst char *async(const void *type);\n\n#ifdef __cplusplus\n}",
+    );
+    assert_ne!(custom, original);
+    std::fs::write(&header, custom).unwrap();
+    assert_rust_output(
+        &root,
+        Some(header),
+        15,
+        "const _: unsafe extern \"C\" fn(i32) -> i32 = r#match;\nconst _: unsafe extern \"C\" fn(*const c_void) -> *const c_char = r#async;",
+    );
 }

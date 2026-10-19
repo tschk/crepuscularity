@@ -223,25 +223,54 @@ pub(crate) fn mark_groups(
     let mut edits = Vec::new();
     let mut spread_bodies = Vec::new();
     for node in nodes.iter() {
-        let AstKind::JSXElement(element) = node.kind() else { continue; };
+        let AstKind::JSXElement(element) = node.kind() else {
+            continue;
+        };
         if !matches!(&element.opening_element.name, JSXElementName::Identifier(_))
-            || !element.opening_element.attributes.iter().any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)))
-            || !roots.iter().any(|root| root.start <= element.span.start && root.end >= element.span.end)
-        { continue; }
-        let parent = nodes.ancestors(node.id()).find_map(|ancestor| match ancestor.kind() {
-            AstKind::JSXElement(parent) if matches!(&parent.opening_element.name, JSXElementName::IdentifierReference(_) | JSXElementName::MemberExpression(_)) => Some(parent),
-            _ => None,
-        });
-        let Some(parent) = parent else { continue; };
-        let Some(closing) = &parent.closing_element else { continue; };
-        let span = (parent.opening_element.span.end as usize, closing.span.start as usize);
-        if span.0 < span.1 && !spread_bodies.contains(&span) { spread_bodies.push(span); }
+            || !element
+                .opening_element
+                .attributes
+                .iter()
+                .any(|item| matches!(item, JSXAttributeItem::SpreadAttribute(_)))
+            || !roots
+                .iter()
+                .any(|root| root.start <= element.span.start && root.end >= element.span.end)
+        {
+            continue;
+        }
+        let parent = nodes
+            .ancestors(node.id())
+            .find_map(|ancestor| match ancestor.kind() {
+                AstKind::JSXElement(parent)
+                    if matches!(
+                        &parent.opening_element.name,
+                        JSXElementName::IdentifierReference(_)
+                            | JSXElementName::MemberExpression(_)
+                    ) =>
+                {
+                    Some(parent)
+                }
+                _ => None,
+            });
+        let Some(parent) = parent else {
+            continue;
+        };
+        let Some(closing) = &parent.closing_element else {
+            continue;
+        };
+        let span = (
+            parent.opening_element.span.end as usize,
+            closing.span.start as usize,
+        );
+        if span.0 < span.1 && !spread_bodies.contains(&span) {
+            spread_bodies.push(span);
+        }
     }
     // Implicit component children are lazy callbacks too; preserve a template owner
     // for spread intrinsics before the component-prop pass moves their source.
-    for (start,end) in spread_bodies {
-        edits.push((start,start,format!("<{group}>")));
-        edits.push((end,end,format!("</{group}>")));
+    for (start, end) in spread_bodies {
+        edits.push((start, start, format!("<{group}>")));
+        edits.push((end, end, format!("</{group}>")));
     }
     for span in spans {
         edits.push((
@@ -425,9 +454,13 @@ pub(crate) fn lower_groups(
                 }
                 output.push_str(&self.source[last as usize..group.span.start as usize]);
                 let jsx_child = self.jsx_group_children.contains(&group.span.start);
-                if jsx_child { output.push('{'); }
+                if jsx_child {
+                    output.push('{');
+                }
                 output.push_str(&self.group(group)?);
-                if jsx_child { output.push('}'); }
+                if jsx_child {
+                    output.push('}');
+                }
                 last = group.span.end;
             }
             output.push_str(&self.source[last as usize..span.end as usize]);
@@ -700,7 +733,8 @@ pub(crate) fn lower_groups(
                         continue;
                     }
                     if self.hints.bindings.iter().any(|marker| marker == name) {
-                        let Some(JSXAttributeValue::ExpressionContainer(value)) = &attribute.value else {
+                        let Some(JSXAttributeValue::ExpressionContainer(value)) = &attribute.value
+                        else {
                             return Err("invalid spread binding installer".into());
                         };
                         bindings.push(self.nested(value.expression.span())?);
@@ -729,7 +763,9 @@ pub(crate) fn lower_groups(
                         )
                         .map_err(|error| error.to_string())?,
                         None => "true".into(),
-                        _ => return Err("unsupported intrinsic Svelte spread attribute value".into()),
+                        _ => {
+                            return Err("unsupported intrinsic Svelte spread attribute value".into())
+                        }
                     };
                     let authored = if name == "className" {
                         "class".to_owned()
@@ -738,18 +774,30 @@ pub(crate) fn lower_groups(
                     } else {
                         name.to_owned()
                     };
-                    let name = serde_json::to_string(&authored).map_err(|error| error.to_string())?;
+                    let name =
+                        serde_json::to_string(&authored).map_err(|error| error.to_string())?;
                     layers.push(format!("()=>({{[{name}]:{value}}})"));
                 }
                 statements.push(format!("const {node}=<{tag} {namespace}/>;"));
                 if bindings.is_empty() {
-                    statements.push(format!("{p}spread({node},{});", layers.join(","), p=self.prefix));
+                    statements.push(format!(
+                        "{p}spread({node},{});",
+                        layers.join(","),
+                        p = self.prefix
+                    ));
                 }
-                for (child, range) in self.children(&element.children, retain, statements, updates)? {
+                for (child, range) in
+                    self.children(&element.children, retain, statements, updates)?
+                {
                     self.append(&node, &child, range, statements);
                 }
                 if !bindings.is_empty() {
-                    statements.push(format!("{p}boundSpread({node},[{}],{});", bindings.join(","), layers.join(","), p=self.prefix));
+                    statements.push(format!(
+                        "{p}boundSpread({node},[{}],{});",
+                        bindings.join(","),
+                        layers.join(","),
+                        p = self.prefix
+                    ));
                 }
                 return Ok((node, false));
             }
@@ -1147,7 +1195,9 @@ pub(crate) fn lower_groups(
     };
     let spread_import = if emitter.spreads_used {
         format!("import{{installElementSpread as {p}spread,installBoundElementSpread as {p}boundSpread}}from\"@tschk/moonshine-svelte/runes\";\n")
-    } else { String::new() };
+    } else {
+        String::new()
+    };
     let block_alias = format!("{p}block");
     let source = format!("{spread_import}{reference_import}{consumer_import}import{{templateBlock as {p}block,createInsertionRange as {p}range,prepareInsertionRange as {p}prepare,moveInsertionRange as {p}move,setAttributeValue as {p}attribute}}from\"@tschk/moonshine-dom/dom\";import{{createRenderEffect as {p}effect,createRenderMemo as {p}memo,getRenderScheduler as {p}scheduler,createComponentScope as {p}scope,onCleanup as {p}cleanup}}from\"@tschk/moonshine-dom/reactive\";import{{setOptionValue as {p}option,setInputValue as {p}input}}from\"@tschk/moonshine-svelte/binding\";import{{createRuneEffect as {p}post}}from\"@tschk/moonshine-svelte/runes\";import{{installAction as {p}action,installAttachment as {p}attach}}from\"@tschk/moonshine-svelte/directives\";\nfunction {p}select(element:{types}.HTMLSelectElement,read:()=>unknown):void{{const observer=new {realm}.MutationObserver(entries=>{{if(entries.every(entry=>{{if(entry.target instanceof {realm}.Element&&entry.target.closest(\"selectedcontent\"))return true;if(entry.type!==\"childList\")return false;const nodes=[...entry.addedNodes,...entry.removedNodes];return nodes.length>0&&nodes.every(node=>node.nodeName===\"SELECTEDCONTENT\");}}))return;{p}attribute(element,\"value\",read());}});observer.observe(element,{{childList:true,subtree:true,attributes:true,attributeFilter:[\"value\"]}});{p}cleanup(()=>observer.disconnect());}}\nfunction {p}bind(install:()=>void):void{{const scheduler={p}scheduler();if(!scheduler)throw {realm}.Error(\"Template binding requires rune scheduler\");{p}scope(()=>scheduler.branch(()=>{p}post(install)));}}\n{body}");
     Ok(LoweredGroups {
