@@ -555,24 +555,85 @@ pub(crate) fn is_truthy(v: &TemplateValue) -> bool {
     }
 }
 
-fn compare(lhs: &TemplateValue, rhs: &TemplateValue, op: &str) -> bool {
-    // Numeric comparison (coerce Int to Float for mixed)
-    let as_f64 = |v: &TemplateValue| -> Option<f64> {
-        match v {
-            TemplateValue::Int(n) => Some(*n as f64),
-            TemplateValue::Float(f) => Some(*f),
-            _ => None,
-        }
-    };
-
-    if let (Some(l), Some(r)) = (as_f64(lhs), as_f64(rhs)) {
+fn compare(lhs: &TemplateValue, rhs: &TemplateValue, op: &str) -> Result<bool, &'static str> {
+    if matches!(lhs, TemplateValue::List(_) | TemplateValue::Scope(_))
+        || matches!(rhs, TemplateValue::List(_) | TemplateValue::Scope(_))
+    {
         return match op {
-            "==" => (l - r).abs() < f64::EPSILON,
-            "!=" => (l - r).abs() >= f64::EPSILON,
-            "<" => l < r,
-            "<=" => l <= r,
-            ">" => l > r,
-            ">=" => l >= r,
+            "==" => Ok(collections_equal(lhs, rhs)),
+            "!=" => Ok(!collections_equal(lhs, rhs)),
+            _ => Err("ordering comparisons are not supported for collections"),
+        };
+    }
+    Ok(compare_scalar(lhs, rhs, op))
+}
+
+fn collections_equal(lhs: &TemplateValue, rhs: &TemplateValue) -> bool {
+    let mut pending = vec![(lhs, rhs)];
+    while let Some((lhs, rhs)) = pending.pop() {
+        match (lhs, rhs) {
+            (TemplateValue::Scope(lhs), TemplateValue::Scope(rhs)) => {
+                if !queue_context_values(lhs, rhs, &mut pending) {
+                    return false;
+                }
+            }
+            (TemplateValue::List(lhs), TemplateValue::List(rhs)) => {
+                if lhs.len() != rhs.len() {
+                    return false;
+                }
+                for (lhs, rhs) in lhs.iter().zip(rhs) {
+                    if !queue_context_values(lhs, rhs, &mut pending) {
+                        return false;
+                    }
+                }
+            }
+            (TemplateValue::List(_) | TemplateValue::Scope(_), _)
+            | (_, TemplateValue::List(_) | TemplateValue::Scope(_)) => return false,
+            _ if !compare_scalar(lhs, rhs, "==") => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+fn queue_context_values<'a>(
+    lhs: &'a TemplateContext,
+    rhs: &'a TemplateContext,
+    pending: &mut Vec<(&'a TemplateValue, &'a TemplateValue)>,
+) -> bool {
+    // Rendering resources and slot metadata are not object fields.
+    if lhs.vars.len() != rhs.vars.len() {
+        return false;
+    }
+    for (key, lhs) in &lhs.vars {
+        let Some(rhs) = rhs.vars.get(key) else {
+            return false;
+        };
+        pending.push((lhs, rhs));
+    }
+    true
+}
+
+fn compare_scalar(lhs: &TemplateValue, rhs: &TemplateValue, op: &str) -> bool {
+    use std::cmp::Ordering;
+
+    let ordering = match (lhs, rhs) {
+        (TemplateValue::Int(a), TemplateValue::Int(b)) => Some(Some(a.cmp(b))),
+        (TemplateValue::Float(a), TemplateValue::Float(b)) => Some(a.partial_cmp(b)),
+        (TemplateValue::Int(a), TemplateValue::Float(b)) => Some(compare_int_float(*a, *b)),
+        (TemplateValue::Float(a), TemplateValue::Int(b)) => {
+            Some(compare_int_float(*b, *a).map(Ordering::reverse))
+        }
+        _ => None,
+    };
+    if let Some(ordering) = ordering {
+        return match op {
+            "==" => ordering == Some(Ordering::Equal),
+            "!=" => ordering != Some(Ordering::Equal),
+            "<" => ordering == Some(Ordering::Less),
+            "<=" => matches!(ordering, Some(Ordering::Less | Ordering::Equal)),
+            ">" => ordering == Some(Ordering::Greater),
+            ">=" => matches!(ordering, Some(Ordering::Greater | Ordering::Equal)),
             _ => false,
         };
     }
@@ -588,6 +649,24 @@ fn compare(lhs: &TemplateValue, rhs: &TemplateValue, op: &str) -> bool {
         ">" => lstr > rstr,
         ">=" => lstr >= rstr,
         _ => false,
+    }
+}
+
+/// Compare mixed numbers without rounding the integer through f64.
+fn compare_int_float(integer: i64, float: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    if float.is_nan() {
+        return None;
+    }
+    if float < i64::MIN as f64 {
+        return Some(Ordering::Greater);
+    }
+    if float >= -(i64::MIN as f64) {
+        return Some(Ordering::Less);
+    }
+    match integer.cmp(&(float as i64)) {
+        Ordering::Equal => 0.0_f64.partial_cmp(&float.fract()),
+        ordering => Some(ordering),
     }
 }
 
@@ -1148,6 +1227,44 @@ mod tests {
             eval_expr("(1 + 2) * 3", &ctx).unwrap(),
             TemplateValue::Int(9)
         ));
+    }
+
+    #[test]
+    fn numeric_comparisons_preserve_large_integer_distinctions() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("maximum", i64::MAX);
+        ctx.set("upper", -(i64::MIN as f64));
+        ctx.set("nan", f64::NAN);
+        ctx.set("infinite", f64::INFINITY);
+        ctx.set("lower", i64::MIN as f64);
+        ctx.set("negative_infinite", f64::NEG_INFINITY);
+        ctx.set("tiny", f64::EPSILON / 2.0);
+        for source in [
+            "9007199254740993 != 9007199254740992",
+            "9007199254740993 > 9007199254740992",
+            "9007199254740993 > 9007199254740992.0",
+            "9007199254740992.0 < 9007199254740993",
+            "maximum < upper",
+            "infinite == infinite",
+            "nan != nan",
+            "-9223372036854775808 == lower",
+            "-9223372036854775808 > negative_infinite",
+            "0 > -0.5",
+            "0 < 0.5",
+            "-0.5 < 0",
+            "0.5 > 0",
+            "tiny != 0.0",
+        ] {
+            assert!(eval_condition(source, &ctx).unwrap(), "{source}");
+        }
+        for source in [
+            "9007199254740993 == 9007199254740992",
+            "maximum == upper",
+            "nan == nan",
+            "nan < 1",
+        ] {
+            assert!(!eval_condition(source, &ctx).unwrap(), "{source}");
+        }
     }
 
 }
