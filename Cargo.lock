@@ -2032,6 +2032,7 @@ dependencies = [
  "notify 8.2.0",
  "serde",
  "serde_json",
+ "stacker",
  "tempfile",
  "toml 1.1.2+spec-1.1.0",
 ]
