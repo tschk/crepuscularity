@@ -461,6 +461,7 @@ fn apply_typography(d: Div, class: &str) -> Result<Div, Div> {
     Ok(match class {
         // ── Typography — weight ──
         "font-thin" => d.font_weight(gpui::FontWeight::THIN),
+        "font-extralight" => d.font_weight(gpui::FontWeight::EXTRA_LIGHT),
         "font-light" => d.font_weight(gpui::FontWeight::LIGHT),
         "font-normal" => d.font_weight(gpui::FontWeight::NORMAL),
         "font-medium" => d.font_weight(gpui::FontWeight::MEDIUM),
