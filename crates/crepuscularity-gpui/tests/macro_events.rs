@@ -51,3 +51,49 @@ fn static_grid_utilities_construct_the_requested_gpui_style() {
         format!("{:?}", expected.style())
     );
 }
+
+#[test]
+fn bound_ids_and_event_closures_compile_against_gpui() {
+    let button_id = SharedString::from("bound-button");
+    let _ = view! {r#"<button id={button_id} @click={|_, _, _| {}}>Press</button>"#};
+    let _ = view! {r#"<div @hover={|_, _, _| {}}>Hover</div>"#};
+    let _ = view! {r#"button @click={|_, _, _| {}}"#};
+    let _ = KeyboardView::render;
+}
+
+struct KeyboardView;
+
+impl KeyboardView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        view! {r#"<div @keydown|ctrl+s={handle_key} @keyup|cmd+Esc={|_, _, _| {}}>Key</div>"#}
+    }
+
+    fn handle_key(&mut self, _event: &KeyDownEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+    }
+}
+
+#[test]
+fn dynamic_class_lists_compile_with_ids_and_handlers() {
+    let theme = String::from("flex flex-row gap-4 p-2 bg-red-500");
+    let _ = view! {r#"<div id="dynamic" class={theme} @click={|_, _, _| {}}>Content</div>"#};
+    let theme = SharedString::from("flex flex-col");
+    let _ = view! {r#"div class={theme}"#};
+}
+
+#[test]
+fn multiple_state_utilities_construct_without_panicking() {
+    let _ = view! {r#"div hover:bg-red-500 hover:text-white focus:p-2 focus:m-1 active:bg-blue-500 active:text-black"#};
+}
+
+#[test]
+fn conditional_target_classes_construct() {
+    let enabled = true;
+    let _ = view! {r#"div class:gpui:flex-row={enabled} class:gui:p-2={enabled} class:web:hidden={enabled}"#};
+}
+
+#[test]
+fn mixed_static_and_dynamic_state_classes_construct_and_evaluate_once() {
+    let mut evaluations = 0;
+    let _ = view! {r#"div hover:bg-blue-500 class={{ evaluations += 1; "hover:bg-red-500 hover:text-white focus:p-2 active:bg-black" }} hover:p-2"#};
+    assert_eq!(evaluations, 1);
+}
