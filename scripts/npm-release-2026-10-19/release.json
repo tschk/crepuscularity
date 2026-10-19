@@ -1,0 +1,193 @@
+{
+  "owner": "undivisible",
+  "registry": "https://registry.npmjs.org",
+  "observedDate": "2026-10-19",
+  "packages": [
+    {
+      "name": "@tschk/moonshine-react-router",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-react-router",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-router",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/router",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-deploy-bun",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/deploy-bun",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/core",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-next",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-next",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-react",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/react",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-shaders",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/shaders",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-server",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/server",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-framework",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/framework",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-waku",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-waku",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-tanstack",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-tanstack",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/crepus-moonshine",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/crepus-moonshine",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/crepuscularity-wasm",
+      "observedLatest": "0.1.3",
+      "version": "0.1.4",
+      "artifact": "tschk-crepuscularity-wasm-0.1.4.tgz",
+      "sha512": "94325ab0ef8ba0461ae755ac2460b079b334a93f0dd6330a8433e870da17a2b002e868400daed31bec8f6d1aa98a14fecf014c937f4030c912ef6384f25189fd",
+      "sourceCommit": "053bde61b8868c569dc4d7f910074b7b8e2f681d"
+    },
+    {
+      "name": "@trychert/facetime",
+      "observedLatest": "0.1.0-beta.6"
+    },
+    {
+      "name": "@tschk/moonshine-cli",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/cli",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-compiler",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/compiler",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-solid",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-solid",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-adapter-conformance",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-conformance",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-deploy-cloudflare",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/deploy-cloudflare",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@trychert/facetime-opensource",
+      "observedLatest": "0.1.2"
+    },
+    {
+      "name": "@tschk/moonshine-deploy-vercel",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/deploy-vercel",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-deploy-node",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/deploy-node",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-components",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/components",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/svelte-streamdown",
+      "observedLatest": "0.0.1",
+      "path": "minion-workspace/work/svelte-streamdown/packages/svelte-streamdown",
+      "version": "0.0.1",
+      "releaseNote": "Published 0.0.1 contains current runtime behavior inspected. Local differences include an explicit type annotation, README and build-script cleanup; an optional patch requires a new version."
+    },
+    {
+      "name": "@tschk/flowtoken-svelte",
+      "observedLatest": "0.0.2",
+      "path": "minion-workspace/work/flowtoken-svelte/packages/flowtoken-svelte",
+      "version": "0.0.2",
+      "releaseNote": "Published 0.0.2 artifact lacks current tokenization and animation changes. Review/tests and a new version are required; existing 0.0.2 cannot be overwritten."
+    },
+    {
+      "name": "@tschk/moonshine-vue",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-vue",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-dom",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/dom",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-angular",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-angular",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-nuxt",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-nuxt",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-svelte",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-svelte",
+      "version": "0.4.43"
+    },
+    {
+      "name": "@tschk/moonshine-astro",
+      "observedLatest": "0.4.4",
+      "path": "moonshine/packages/adapter-astro",
+      "version": "0.4.43"
+    }
+  ]
+}
