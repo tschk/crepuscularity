@@ -69,8 +69,61 @@ jobs:
           cargo install wasm-bindgen-cli --version "$VERSION" --locked
         shell: bash
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Check shared palette generation
+        run: python3 scripts/test-tailwind-colors.py
+
+      - name: Test web event delegation and extension assets
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun test crates/crepuscularity-cli/tests/web-events.test.ts
+          bun test crates/crepuscularity-webext/tests
+
+      - name: Check and test embedded without the parser
+        run: |
+          cargo check --locked -p crepuscularity-embedded --no-default-features
+          cargo test --locked -p crepuscularity-embedded --no-default-features --lib
+
+      - name: Test web without default features
+        run: |
+          cargo test --locked -p crepuscularity-web --no-default-features
+          cargo test --locked -p crepuscularity-web --no-default-features --features hydration
+
+      - name: Check reactive and web WASM feature combinations
+        run: |
+          cargo check --locked -p crepuscularity-reactive --target wasm32-unknown-unknown
+          cargo check --locked -p crepuscularity-reactive --target wasm32-unknown-unknown --features dom
+          cargo check --locked -p crepuscularity-web --target wasm32-unknown-unknown --no-default-features --features dom
+          cargo check --locked -p crepuscularity-web --target wasm32-unknown-unknown --no-default-features --features reactive --tests
+          cargo check --locked -p crepuscularity-web --target wasm32-unknown-unknown --no-default-features --features dom,reactive --tests
+
+      - name: Test WASM parser through JavaScript
+        run: bash crates/crepuscularity-wasm/build.sh
+        shell: bash
+
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        shell: python {0}
+        run: |
+          import json
+          import subprocess
+
+          # Keep rustfmt's command line below Windows' process argument limit.
+          result = subprocess.run(
+              ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+              check=True, capture_output=True, text=True,
+          )
+          metadata = json.loads(result.stdout)
+          members = set(metadata["workspace_members"])
+          names = sorted(
+              package["name"] for package in metadata["packages"]
+              if package["id"] in members
+          )
+          for name in names:
+              subprocess.run(["cargo", "fmt", "-p", name, "--", "--check"], check=True)
 
       - name: Run clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -78,6 +131,17 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --workspace
+
+      - name: Test native action scaffold
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          NATIVE_CHECK_DIR="$RUNNER_TEMP/crepus-native-actions"
+          mkdir -p "$NATIVE_CHECK_DIR/src"
+          cp crates/crepuscularity-cli/templates/native/rust/src/lib.rs "$NATIVE_CHECK_DIR/src/lib.rs"
+          cp crates/crepuscularity-cli/templates/native/rust/Cargo.toml.template "$NATIVE_CHECK_DIR/Cargo.toml"
+          cargo test --manifest-path "$NATIVE_CHECK_DIR/Cargo.toml" --all-features
 
       - name: Test CLI with all features
         run: cargo test --locked --package crepuscularity-cli --features full

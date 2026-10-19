@@ -1,8 +1,16 @@
 
+    @Synchronized
     private fun videoValue(method: String): JSONObject {
         if (method != "capture") error("unsupported video method: $method")
+        val capture = captureVideo ?: error("video capture unavailable")
+        check(pendingVideoAction == null) { "capture already active" }
         pendingVideoAction = "video.capture"
-        captureVideo?.invoke() ?: emit(errorJson("video.capture", "video capture unavailable"))
+        try {
+            capture()
+        } catch (error: Exception) {
+            pendingVideoAction = null
+            throw error
+        }
         return JSONObject().put("opening", true)
     }
 

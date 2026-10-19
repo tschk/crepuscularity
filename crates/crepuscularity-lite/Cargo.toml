@@ -15,16 +15,17 @@ cli = ["dep:clap"]
 # Terminal benchmark UI + parallel headless V8 matrix (`crepus-bench` binary).
 bench-tui = ["cli", "dep:crossterm", "dep:ratatui", "parallel", "v8", "oxc"]
 # V8 JavaScript runtime (rusty_v8) — embedded JS evaluation via `v8_host`.
-v8 = ["dep:v8", "dep:icu_calendar", "dep:icu_calendar_data", "dep:icu_locale", "dep:icu_locale_data"]
+v8 = ["dep:futures-channel", "dep:v8", "dep:icu_calendar", "dep:icu_calendar_data", "dep:icu_locale", "dep:icu_locale_data"]
 # Oxc TypeScript / TSX / JSX transpiler — transforms `.ts`/`.tsx` guest sources.
 oxc = ["dep:oxc_allocator", "dep:oxc_codegen", "dep:oxc_parser", "dep:oxc_semantic", "dep:oxc_span", "dep:oxc_transformer"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+futures-channel = { version = "0.3", optional = true }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
 arboard = "3.6"
 dirs = "6"
 gpui = { workspace = true }
-gpui_platform = { workspace = true, features = ["runtime_shaders"] }
+gpui_platform = { workspace = true, features = ["runtime_shaders", "font-kit"] }
 open = "5.3"
 notify-debouncer-mini = "0.7"
 palette = { version = "0.7", features = ["serializing"] }

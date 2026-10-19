@@ -5,10 +5,10 @@ use std::{cell::Cell, ops::Range, rc::Rc};
 
 use crepuscularity_core::{ast, TemplateContext};
 use gpui::{
-    accesskit, point, prelude::*, px, rems, size, App, AppContext, Bounds, Context, Div, Element,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    GlobalElementId, InspectorElementId, LayoutId, Pixels, Point, Render, RenderOnce, ShapedLine,
-    SharedString, Stateful, Subscription, TextRun, UTF16Selection, Window,
+    accesskit, point, prelude::*, px, rems, size, App, Bounds, Context, Div, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
+    InspectorElementId, LayoutId, Pixels, Point, Render, RenderOnce, ShapedLine, SharedString,
+    Stateful, Subscription, TextRun, UTF16Selection, Window,
 };
 
 use crate::{
@@ -52,6 +52,7 @@ impl InputConfig {
         bindings: &RuntimeBindings,
     ) -> Result<Self, String> {
         use crate::runtime_element::{presence_boolean, text};
+        crate::runtime_element::reject_html_attributes(element)?;
         if !element.children.is_empty() || !element.animations.is_empty() {
             return Err("GPUI input does not accept children or animate attributes".into());
         }
@@ -371,6 +372,15 @@ impl TextInput {
             }
         } else if plain {
             match key {
+                // Tab traversal is a native window operation, including for readonly
+                // fields. Modified Tab remains available to the host's key handlers.
+                "tab" => {
+                    if mods.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                }
                 "left" | "right" => {
                     self.edit(window, cx, |m| m.move_grapheme(key == "right", mods.shift))
                 }
@@ -406,7 +416,7 @@ impl TextInput {
             geometry.line = window.text_system().shape_line(
                 SharedString::from(geometry.text.clone()),
                 geometry.font_size,
-                &[geometry.run.clone()],
+                std::slice::from_ref(&geometry.run),
                 None,
             );
         }
@@ -758,7 +768,7 @@ impl Element for InputText {
         let line = if placeholder {
             window
                 .text_system()
-                .shape_line("".into(), font_size, &[run.clone()], None)
+                .shape_line("".into(), font_size, std::slice::from_ref(&run), None)
         } else {
             display_line.clone()
         };

@@ -543,17 +543,41 @@ pub fn try_load_apple(manifest_path: &Path) -> Option<AppleTomlSection> {
 
 /// Load web targets from `crepus.toml`, walking up from cwd when `manifest` is `None`.
 pub fn load_web_targets(manifest: Option<PathBuf>) -> Option<Vec<ResolvedWebTarget>> {
-    let cwd = std::env::current_dir().ok()?;
-    let mpath = manifest.or_else(|| find_manifest_upward(&cwd))?;
-    let md = manifest_dir(&mpath, &cwd)?;
-    let raw = std::fs::read_to_string(&mpath).ok()?;
-    let man = CrepusManifest::parse(&raw).ok()?;
-    let targets = man.web_targets(&md).ok()?;
-    if targets.is_empty() {
-        None
-    } else {
-        Some(targets)
-    }
+    try_load_web_targets(manifest).ok().flatten()
+}
+
+/// Fallible web target loading; an absent manifest or no web targets is not an error.
+pub fn try_load_web_targets(
+    manifest: Option<PathBuf>,
+) -> Result<Option<Vec<ResolvedWebTarget>>, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
+    let Some(mpath) = manifest.or_else(|| find_manifest_upward(&cwd)) else {
+        return Ok(None);
+    };
+    let raw = match std::fs::read_to_string(&mpath) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A dangling symlink is an authored config, not an absent config.
+            return match std::fs::symlink_metadata(&mpath) {
+                Err(metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(None)
+                }
+                Err(metadata_error) => {
+                    Err(format!("inspect {}: {metadata_error}", mpath.display()))
+                }
+                Ok(_) => Err(format!("read {}: {error}", mpath.display())),
+            };
+        }
+        Err(error) => return Err(format!("read {}: {error}", mpath.display())),
+    };
+    let md = manifest_dir(&mpath, &cwd)
+        .ok_or_else(|| format!("manifest has no parent: {}", mpath.display()))?;
+    let man = CrepusManifest::parse(&raw)
+        .map_err(|error| format!("parse {}: {error}", mpath.display()))?;
+    let targets = man
+        .web_targets(&md)
+        .map_err(|error| format!("web targets in {}: {error}", mpath.display()))?;
+    Ok((!targets.is_empty()).then_some(targets))
 }
 
 pub fn load_manifest_targets(
@@ -577,12 +601,16 @@ pub fn pick_targets(
 ) -> Result<Vec<ResolvedTarget>, String> {
     if let Some(id) = id {
         let ids: Vec<&str> = targets.iter().map(|t| t.id.as_str()).collect();
-        return targets
-            .iter()
-            .find(|t| t.id == id)
-            .cloned()
-            .map(|t| vec![t])
-            .ok_or_else(|| format!("no target with id {id:?} (available: {ids:?})"));
+        let mut matches = targets.iter().filter(|target| target.id == id);
+        let target = matches
+            .next()
+            .ok_or_else(|| format!("no target with id {id:?} (available: {ids:?})"))?;
+        if matches.next().is_some() {
+            return Err(format!(
+                "ambiguous target id {id:?}: multiple targets match"
+            ));
+        }
+        return Ok(vec![target.clone()]);
     }
     Ok(targets.to_vec())
 }
@@ -593,11 +621,18 @@ pub fn resolve_pick(
 ) -> Result<ResolvedWebTarget, String> {
     let ids: Vec<&str> = targets.iter().map(|t| t.id.as_str()).collect();
     match (id, targets.len()) {
-        (Some(id), _) => targets
-            .iter()
-            .find(|t| t.id == id)
-            .cloned()
-            .ok_or_else(|| format!("no web target with id {id:?} (available: {ids:?})")),
+        (Some(id), _) => {
+            let mut matches = targets.iter().filter(|target| target.id == id);
+            let target = matches
+                .next()
+                .ok_or_else(|| format!("no web target with id {id:?} (available: {ids:?})"))?;
+            if matches.next().is_some() {
+                return Err(format!(
+                    "ambiguous web target id {id:?}: multiple targets match"
+                ));
+            }
+            Ok(target.clone())
+        }
         (None, 1) => Ok(targets[0].clone()),
         (None, n) => Err(format!(
             "crepus.toml defines {n} web targets {ids:?}; pass --target ID"
@@ -608,6 +643,51 @@ pub fn resolve_pick(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dummy_web_target(id: &str) -> ResolvedWebTarget {
+        ResolvedWebTarget {
+            id: id.to_string(),
+            site_dir: std::path::PathBuf::from(format!("/tmp/{}", id)),
+            out_dir: std::path::PathBuf::from(format!("/tmp/{}/out", id)),
+            entry: "src/main.rs".to_string(),
+            meta: WebTargetMeta::default(),
+        }
+    }
+
+    #[test]
+    fn test_resolve_pick() {
+        let t1 = dummy_web_target("foo");
+        let t2 = dummy_web_target("bar");
+
+        // 0 targets, no id
+        let err = resolve_pick(&[], None).unwrap_err();
+        assert_eq!(
+            err,
+            "crepus.toml defines 0 web targets []; pass --target ID"
+        );
+
+        // 1 target, no id
+        let res = resolve_pick(std::slice::from_ref(&t1), None).unwrap();
+        assert_eq!(res.id, "foo");
+
+        // 2 targets, no id
+        let err = resolve_pick(&[t1.clone(), t2.clone()], None).unwrap_err();
+        assert_eq!(
+            err,
+            r#"crepus.toml defines 2 web targets ["foo", "bar"]; pass --target ID"#
+        );
+
+        // id matches
+        let res = resolve_pick(&[t1.clone(), t2.clone()], Some("bar")).unwrap();
+        assert_eq!(res.id, "bar");
+
+        // id doesn't match
+        let err = resolve_pick(&[t1.clone(), t2.clone()], Some("baz")).unwrap_err();
+        assert_eq!(
+            err,
+            r#"no web target with id "baz" (available: ["foo", "bar"])"#
+        );
+    }
 
     #[test]
     fn resolves_webext_browsers_and_safari_packaging() {
@@ -640,5 +720,63 @@ platforms = ["macos", "ios"]
         let safari = target.webext_config.safari.as_ref().expect("safari config");
         assert_eq!(safari.bundle_identifier, "com.example.extension");
         assert_eq!(safari.project_location.as_deref(), Some("build/safari"));
+    }
+}
+
+#[cfg(test)]
+mod fallible_web_target_tests {
+    use super::*;
+
+    #[test]
+    fn optional_loader_retains_legacy_fallback_while_fallible_loader_reports_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("crepus.toml");
+        std::fs::write(&manifest, "invalid TOML [[[").unwrap();
+        assert!(try_load_web_targets(Some(manifest.clone())).is_err());
+        assert!(load_web_targets(Some(manifest)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod ambiguous_selection_tests {
+    use super::*;
+
+    #[test]
+    fn named_selectors_reject_duplicate_ids_but_unselected_lists_remain_valid() {
+        let manifest = CrepusManifest::parse(
+            r#"[[targets]]
+type = "web"
+id = "same"
+site = "one"
+[[targets]]
+type = "web"
+id = "same"
+site = "two"
+"#,
+        )
+        .unwrap();
+        let targets = manifest.resolved_targets(Path::new("/manifest"));
+        assert!(pick_targets(&targets, Some("same"))
+            .unwrap_err()
+            .contains("ambiguous"));
+        assert_eq!(pick_targets(&targets, None).unwrap().len(), 2);
+        assert!(pick_targets(&targets, Some("missing"))
+            .unwrap_err()
+            .contains("no target"));
+        assert_eq!(pick_targets(&targets[..1], Some("same")).unwrap().len(), 1);
+        let web = manifest.web_targets(Path::new("/manifest")).unwrap();
+        assert!(resolve_pick(&web, Some("same"))
+            .unwrap_err()
+            .contains("ambiguous"));
+        assert!(resolve_pick(&web, None)
+            .unwrap_err()
+            .contains("pass --target"));
+        assert!(resolve_pick(&web, Some("missing"))
+            .unwrap_err()
+            .contains("no web target"));
+        assert_eq!(
+            resolve_pick(&web[..1], Some("same")).unwrap().site_dir,
+            Path::new("/manifest/one")
+        );
     }
 }

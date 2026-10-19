@@ -233,3 +233,382 @@ fn non_astro_paths_do_not_use_the_astro_frontend() {
         parse_template_with_path("div flex\n  \"hi\"", Some(Path::new("page.crepus"))).unwrap();
     assert_eq!(element(&nodes[0]).tag, "div");
 }
+
+#[test]
+fn content_directives_require_a_value_and_are_mutually_exclusive() {
+    for directive in ["set:html", "set:text"] {
+        for attribute in [directive.to_string(), format!("{directive}={{}}")] {
+            let error = parse_err(&format!("<div {attribute} />"));
+            assert!(error.contains("requires an expression"), "{error}");
+        }
+        for second in ["set:html", "set:text"] {
+            let error = parse_err(&format!(
+                "<Fragment {directive}={{first}} {second}={{second}} />"
+            ));
+            assert!(error.contains("only one content directive"), "{error}");
+        }
+        for expression in ["0", "false", "''"] {
+            parse(&format!("<div {directive}={{{expression}}} />"));
+        }
+    }
+}
+
+#[test]
+fn class_list_rejects_missing_and_empty_braced_values() {
+    for attribute in ["class:list", "class:list={}", "class:list={   }"] {
+        let error = parse_err(&format!("<div {attribute} />"));
+        assert!(error.contains("class:list requires"), "{error}");
+    }
+    for attribute in [
+        "class:list=\"\"",
+        "class:list={[]}",
+        "class:list={false}",
+        "class:list={''}",
+    ] {
+        parse(&format!("<div {attribute} />"));
+    }
+}
+
+#[test]
+fn unsupported_raw_text_tags_fail_before_parsing_their_bodies() {
+    for source in [
+        r#"<script>const text = "{secret}";</script>"#,
+        r#"<script>if (a < b) { run(); }</script>"#,
+        r#"<style>.x { color: red; }</style>"#,
+        r#"<script src="/app.js"></script>"#,
+        "<script />",
+        "<style></style>",
+        "<SCRIPT>text</SCRIPT>",
+        "<Style />",
+    ] {
+        let error = parse_err(source);
+        assert!(error.contains("raw-text"), "{source}: {error}");
+    }
+}
+
+#[test]
+fn stylesheet_links_and_ordinary_interpolation_remain_supported() {
+    let nodes = parse(r#"<link rel="stylesheet" href="/app.css"/><p>{name}</p>"#);
+    assert_eq!(element(&nodes[0]).tag, "link");
+    assert_eq!(element(&nodes[1]).tag, "p");
+    assert!(
+        matches!(&element(&nodes[1]).children[0], Node::Text(parts) if matches!(&parts[0], TextPart::Expr(name) if name == "name"))
+    );
+}
+
+mod split_tests {
+    use crate::parser::split_astro_source;
+
+    #[test]
+    fn utf8_spans_slice_content_exactly() {
+        let src = "---\nconst s = \"héllo ✓\";\n---\n<p>é</p>";
+        let split = split_astro_source(src).unwrap();
+        let fm = split.frontmatter.unwrap();
+        assert_eq!(fm.content, "const s = \"héllo ✓\";\n");
+        assert_eq!(&src[fm.span.clone()], fm.content);
+        assert_eq!(split.template, "\n<p>é</p>");
+        assert_eq!(&src[split.template_start..], split.template);
+    }
+
+    #[test]
+    fn crlf_fences() {
+        let src = "---\r\nlet a = 1;\r\n---\r\n<p/>";
+        let split = split_astro_source(src).unwrap();
+        let fm = split.frontmatter.unwrap();
+        assert_eq!(fm.content, "let a = 1;\r\n");
+        assert_eq!(split.template, "\n<p/>");
+        assert_eq!(&src[split.template_start..], split.template);
+    }
+
+    #[test]
+    fn empty_fence() {
+        let src = "---\n---\n<p/>";
+        let split = split_astro_source(src).unwrap();
+        let fm = split.frontmatter.unwrap();
+        assert_eq!(fm.content, "");
+        assert_eq!(fm.span, 4..4);
+        assert_eq!(split.template, "\n<p/>");
+    }
+
+    #[test]
+    fn no_fence() {
+        let src = "<p>---</p>";
+        let split = split_astro_source(src).unwrap();
+        assert!(split.frontmatter.is_none());
+        assert_eq!(split.template, src);
+        assert_eq!(split.template_start, 0);
+    }
+
+    #[test]
+    fn close_at_eof() {
+        let src = "---\nx\n---";
+        let split = split_astro_source(src).unwrap();
+        assert_eq!(split.frontmatter.unwrap().content, "x\n");
+        assert_eq!(split.template, "");
+        assert_eq!(split.template_start, src.len());
+    }
+
+    #[test]
+    fn missing_close_errors() {
+        for src in ["---", "---\nx\n<p/>", " \t---\r\n"] {
+            assert!(split_astro_source(src).is_err(), "{src:?}");
+        }
+    }
+
+    #[test]
+    fn leading_whitespace_retains_original_byte_offsets() {
+        let src = "\u{2003}\n \t--- \t\r\nconst value = 'é';\r\n \t--- \t\r\n<p/>";
+        let split = split_astro_source(src).unwrap();
+        let fm = split.frontmatter.unwrap();
+        assert_eq!(fm.content, "const value = 'é';\r\n");
+        assert_eq!(&src[fm.span], fm.content);
+        assert_eq!(split.template, "\n<p/>");
+        assert_eq!(&src[split.template_start..], split.template);
+    }
+}
+
+#[test]
+fn authored_module_components_do_not_change_legacy_template_admission() {
+    for source in [
+        "<Card title={name}/>",
+        "<div><Card/></div>",
+        "{show ? <Card/> : <Other/>}",
+        "{items.map(item => <Card title={item}/>)}",
+    ] {
+        assert!(
+            crate::parser::parse_astro_module_template(source).is_ok(),
+            "{source}"
+        );
+        assert!(
+            parse_template_with_path(source, Some(Path::new("Page.astro"))).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn authored_literals_and_braced_values_retain_different_origins() {
+    let nodes = crate::parser::parse_astro_module_template(r#"<p id={"&amp;"} title="&amp;" class="a  b" class:list={["base", {active: ok}]}>"quoted" \n{message}</p>"#).unwrap();
+    let el = element(&nodes[0]);
+    assert!(el.id.is_none() && el.classes.is_empty());
+    assert_eq!(el.bindings[0].origin, BindingOrigin::Expression);
+    assert_eq!(el.bindings[1].origin, BindingOrigin::Literal);
+    assert_eq!(el.bindings[2].value, "\"a  b\"");
+    assert_eq!(el.bindings[3].prop, "class:list");
+    assert!(
+        matches!(&el.children[0], Node::Text(parts) if parts[0] == TextPart::Literal("\"quoted\" \\n".into()))
+    );
+}
+
+#[test]
+fn authored_content_directives_preserve_html_literal_and_js_expression_semantics() {
+    let nodes = crate::parser::parse_astro_module_template(
+        r#"<p set:text="&amp;"/><p set:text={'&amp;'}/><div set:html="&lt;b&gt;"/>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        element(&nodes[0]).children,
+        vec![Node::Text(vec![TextPart::Expr("\"&\"".into())])]
+    );
+    assert_eq!(
+        element(&nodes[1]).children,
+        vec![Node::Text(vec![TextPart::Expr("'&amp;'".into())])]
+    );
+    assert_eq!(
+        element(&nodes[2]).children,
+        vec![Node::RawHtml("\"<b>\"".into())]
+    );
+}
+
+#[test]
+fn shared_content_directives_preserve_quoted_literals_and_braced_expressions() {
+    for (directive, raw_html) in [("set:text", false), ("set:html", true)] {
+        for (attribute, expected) in [
+            ("\"label\"", "\"label\""),
+            ("\"&amp;&lt;b&gt;\"", "\"&<b>\""),
+            ("\"\"", "\"\""),
+            ("\"   \"", "\"   \""),
+            ("{label}", "label"),
+            ("{'&amp;'}", "'&amp;'"),
+        ] {
+            let nodes = parse(&format!("<div {directive}={attribute} />"));
+            let expected_node = if raw_html {
+                Node::RawHtml(expected.into())
+            } else {
+                Node::Text(vec![TextPart::Expr(expected.into())])
+            };
+            assert_eq!(
+                element(&nodes[0]).children,
+                vec![expected_node],
+                "{directive}={attribute}"
+            );
+        }
+    }
+}
+
+#[test]
+fn html_attribute_entities_do_not_use_svelte_dynamic_character_rules() {
+    assert_eq!(
+        crate::parser::svelte_entities::decode_static_attribute("&notit; &not= &not_ &#0; &#10;"),
+        "&notit; &not= ¬_ � \n"
+    );
+}
+
+#[test]
+fn authored_pre_whitespace_is_retained_through_elements_and_expressions() {
+    let nodes =
+        crate::parser::parse_astro_module_template("<pre>\n  {value}\n  <b> x </b>\n</pre>")
+            .unwrap();
+    let children = &element(&nodes[0]).children;
+    assert_eq!(
+        children[0],
+        Node::Text(vec![TextPart::Literal("\n  ".into())])
+    );
+    assert_eq!(
+        children[1],
+        Node::Text(vec![TextPart::Expr("value".into())])
+    );
+    assert_eq!(
+        children[2],
+        Node::Text(vec![TextPart::Literal("\n  ".into())])
+    );
+    assert_eq!(
+        element(&children[3]).children,
+        vec![Node::Text(vec![TextPart::Literal(" x ".into())])]
+    );
+    assert_eq!(
+        children[4],
+        Node::Text(vec![TextPart::Literal("\n".into())])
+    );
+}
+
+#[test]
+fn authored_textarea_keeps_all_whitespace_including_empty_lines() {
+    for body in ["\n  a\n  b\n", "\n\n", " \t "] {
+        let nodes =
+            crate::parser::parse_astro_module_template(&format!("<textarea>{body}</textarea>"))
+                .unwrap();
+        assert_eq!(
+            element(&nodes[0]).children,
+            vec![Node::Text(vec![TextPart::Literal(body.into())])]
+        );
+    }
+}
+
+#[test]
+fn authored_root_inline_separators_survive_without_changing_legacy_formatting() {
+    let nodes = crate::parser::parse_astro_module_template("<b>x</b> <i>y</i>").unwrap();
+    assert_eq!(nodes[1], Node::Text(vec![TextPart::Literal(" ".into())]));
+    let nodes = crate::parser::parse_astro_module_template("<div>\n <b>x</b>\n</div>").unwrap();
+    assert_eq!(element(&nodes[0]).children.len(), 1);
+    let legacy = parse("<pre>\n  a\n</pre>");
+    assert_eq!(
+        element(&legacy[0]).children,
+        vec![Node::Text(vec![TextPart::Literal("a".into())])]
+    );
+}
+
+#[test]
+fn branch_markup_text_does_not_supply_javascript_punctuation() {
+    for source in [
+        "{ok && <p>Don't: really? a && b .map(x)</p>}",
+        "{ok ? <p>Note: it's fine?</p> : <q>no: why?</q>}",
+        "{items.map(item => <li>{item}'s: ready?</li>)}",
+        "{ok ? (<p>it's: fine?</p>) : null}",
+    ] {
+        parse(source);
+        crate::parser::parse_astro_module_template(source).unwrap();
+    }
+}
+
+#[test]
+fn nested_branch_markup_and_attributes_are_lexed_in_their_own_context() {
+    parse(
+        r#"{ok && <ul>{items.map(item => <li>{item ? <b title="a>b?:}">it's: good?</b> : "n/a"}</li>)}</ul>}"#,
+    );
+    parse("{ok ? <div><!-- it's: ? } --><br>don't: stop?</div> : null}");
+}
+
+#[test]
+fn branch_scanning_keeps_js_strings_comparisons_and_comments() {
+    for source in [
+        "{left < right && <p>it's</p>}",
+        "{ok && \"<b>it's: ?\"}",
+        "{ok && /* it's } ?: */ <p>text</p>}",
+        "{ok && // it's } ?: \n <p>text</p>}",
+        "{ok ? `it's: ${value}?` : <p>none</p>}",
+    ] {
+        crate::parser::parse_astro_module_template(source).unwrap();
+    }
+}
+
+#[test]
+fn malformed_branch_markup_still_rejects_and_depth_recovers() {
+    assert!(crate::parser::parse_astro_module_template("{ok && <p>don't}").is_err());
+    let source = format!("{}x{}", "{ok && <p>".repeat(140), "</p>}".repeat(140));
+    assert!(crate::parser::parse_astro_module_template(&source).is_err());
+    parse("{ok && <p>it's fine</p>}");
+}
+
+#[test]
+fn branch_scanner_keeps_supported_nesting_and_wide_sibling_sequences() {
+    // Each nested logical tag consumes three frontend nesting levels.
+    for depth in [1, 16, 64, 85] {
+        let source = format!("{}x{}", "{ok && <p>".repeat(depth), "</p>}".repeat(depth));
+        crate::parser::parse_astro_module_template(&source).unwrap();
+    }
+    let source = format!("{{ok && <div>{}</div>}}", "<b>it's: ready?</b>".repeat(256));
+    let nodes = crate::parser::parse_astro_module_template(&source).unwrap();
+    let Node::If(block) = &nodes[0] else {
+        panic!("if block")
+    };
+    assert_eq!(element(&block.then_children[0]).children.len(), 256);
+}
+
+#[test]
+fn template_substitutions_do_not_close_the_outer_expression() {
+    for source in [
+        r#"<p>{`a${`b}c${value}`}d`}</p>"#,
+        r#"{ok ? `a${{key: `b}c`}.key}` : <p>no</p>}"#,
+        r#"<p>{`a\`${`b\${literal}`}d`}</p>"#,
+    ] {
+        crate::parser::parse_astro_module_template(source).unwrap();
+    }
+}
+
+#[test]
+fn malformed_and_overdeep_template_substitutions_fail_without_poisoning_the_scanner() {
+    assert!(crate::parser::parse_astro_module_template("<p>{`a${value}</p>").is_err());
+    let source = format!("<p>{{{}x{}}}</p>", "`a${".repeat(150), "}`".repeat(150));
+    assert!(crate::parser::parse_astro_module_template(&source).is_err());
+    crate::parser::parse_astro_module_template("<p>{`ok${value}`}</p>").unwrap();
+}
+
+#[test]
+fn nested_attribute_templates_use_expression_boundaries_without_interpolating_quoted_literals() {
+    let nodes = crate::parser::parse_astro_module_template(
+        r#"<p title={ `a${`b}c${value}`}d` } data-literal="{value}" />"#,
+    )
+    .unwrap();
+    let el = element(&nodes[0]);
+    assert_eq!(el.bindings[0].value, "`a${`b}c${value}`}d`");
+    assert_eq!(el.bindings[1].origin, BindingOrigin::Literal);
+    assert_eq!(el.bindings[1].value, "\"{value}\"");
+}
+
+#[test]
+fn authored_spreads_preserve_attribute_order_without_admitting_legacy_spreads() {
+    let source = "<Card {...first} label=\"explicit\" {...last}/>";
+    let nodes = super::parse_astro_module_template(source).unwrap();
+    let bindings = &element(&nodes[0]).bindings;
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| binding.prop.as_str())
+            .collect::<Vec<_>>(),
+        ["...", "label", "..."]
+    );
+    assert_eq!(bindings[0].value, "first");
+    assert_eq!(bindings[2].value, "last");
+    assert!(parse_err("<div {...first}/>").contains("spread attributes"));
+}

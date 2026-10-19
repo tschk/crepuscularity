@@ -14,7 +14,7 @@ filesystem = []
 
 [dependencies]
 libc = "0.2"
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

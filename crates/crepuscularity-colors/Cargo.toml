@@ -1,0 +1,7 @@
+[package]
+name = "crepuscularity-colors"
+version = "0.1.0"
+edition = "2021"
+license = "ISC"
+description = "Shared no-std Tailwind color palette for Crepuscularity renderers."
+repository = "https://github.com/tschk/crepuscularity"

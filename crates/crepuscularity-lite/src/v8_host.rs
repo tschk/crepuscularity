@@ -132,6 +132,10 @@ impl V8Host {
         Ok(Self { isolate, context })
     }
 
+    pub(crate) fn isolate_handle(&self) -> v8::IsolateHandle {
+        self.isolate.thread_safe_handle()
+    }
+
     pub fn eval(&mut self, source: &str) -> Result<String, String> {
         let isolate = &mut *self.isolate;
         let hs = pin!(v8::HandleScope::new(isolate));

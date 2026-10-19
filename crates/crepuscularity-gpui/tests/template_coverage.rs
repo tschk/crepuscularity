@@ -54,12 +54,17 @@ div
     .into_any_element();
 }
 
-#[test]
-fn filtered_inline_handlers_can_retain_non_copy_captures() {
+#[gpui::test]
+fn filtered_inline_handlers_can_retain_non_copy_captures(cx: &mut gpui::TestAppContext) {
     let counter = Arc::new(AtomicUsize::new(0));
-    let _ = view!(r#"
+    cx.update(|app| {
+        // Filtered listeners retain an entity context, matching the production macro contract.
+        let _entity = app.new(|cx: &mut gpui::Context<()>| {
+            let _ = view!(r#"
 div @keydown|ctrl+s={move |event, _window, _cx| { if event.keystroke.key == "s" { counter.fetch_add(1, Ordering::Relaxed); } }}
 "#).into_any_element();
+        });
+    });
 }
 
 #[test]
@@ -70,7 +75,7 @@ fn images_state_styles_and_native_builders_expand_against_ce() {
 div hover:bg-red-500 hover:text-white class:hover:p-4={selected}
     img src={"logo.png"} alt={"Logo"} w-6 h-6
     svg src={"icon.svg"} w-6 h-6
-    button checked disabled bind:native={|el| el.occlude()}
+    button disabled bind:native={|el| el.occlude()}
         "Disabled"
 "#
     )

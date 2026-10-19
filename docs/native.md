@@ -23,6 +23,11 @@ Instead of compiling directly to native UI frameworks, Crepuscularity generates 
 
 The `crepuscularity-native` crate converts templates to a structured JSON format that native applications can consume.
 
+Tabs (`tabs`, `tabview`, `page-switcher`) accept direct `tab` and `page` children
+plus literal whitespace. Other direct content, declarations and structural
+wrappers produce errors rather than disappearing. Panel bodies retain normal
+layout, declarations and control flow.
+
 For non-Rust hosts, the stable boundary is the same View IR JSON emitted by `crepus native ir`. See [Polyglot plugins](polyglot.md).
 
 ## Quick Start
@@ -57,9 +62,15 @@ cd android && gradle wrapper --gradle-version 8.10
 #    crepus native build android --dir <root>
 ```
 
-`crepus native run android --dir <root>` runs `gradle :app:installDebug` on a
-connected device/emulator and prints the `adb shell am start` line you need to
-launch the app.
+Android builds apply `[android]` `namespace` and `application_id` overrides from
+`crepus.toml` to simple assignments in `android/app/build.gradle.kts`, retaining
+similarly named fields such as `applicationIdSuffix` and trailing `//` comments.
+
+`crepus native run android --dir <root>` runs `gradle :app:installDebug`, then
+launches the app on a connected device/emulator with `adb shell am start`.
+The launch component uses the simple `applicationId` assignment in
+`android/app/build.gradle.kts`. Trailing `//` comments are ignored outside quoted
+values; comment markers inside a quoted value are preserved.
 
 The default shell contains View IR, host glue, and the app-local Rust bridge only: no
 vendored Bluetooth Java or Bluetooth permission. Add platform capabilities per app:
@@ -90,7 +101,7 @@ Android and iOS, plus only the required platform declarations. It supports `stat
 | `share` | `share` | Android chooser; iOS activity sheet; accepts `text`, `url`, and optional `title` |
 | `image-picker` (`imagepicker`, `media-picker`) | `pick` | Android system picker; iOS PHPicker; results stream as `imagePicker.pick`. The named `pick_media` action is installed with this capability. |
 | `documentPicker` (`documents`) | `pick` | Android/iOS multiple-document picker; emits imported cached-file metadata |
-| `photo-library` (`photolibrary`, `media-library`) | `scan`, `getRecentMedia` | Android MediaStore and iOS PhotoKit, each requesting media access only when called; emits one cached-file result per asset |
+| `photo-library` (`photolibrary`, `media-library`) | `scan`, `getRecentMedia` | Android MediaStore and iOS PhotoKit, each requesting media access only when called; emits one cached-file result per image/video asset, with `mediaKind` from the library asset type; `getRecentMedia` visits newest first, `scan` oldest first (`getRecentMedia` uses a combined image/video query on Android, breaking equal-date ties by descending media ID) |
 | `camera` | `takePhoto` | Android system camera preview and iOS camera picker; emits one cached JPEG result |
 | `video` | `capture` | Android system video camera or iOS camera movie picker; emits cached video metadata |
 | `dimensions` | `get`, `getWindow` | Current Android window metrics or iOS screen bounds, expressed in display points |
@@ -116,6 +127,15 @@ Android and iOS, plus only the required platform declarations. It supports `stat
 | `system-bars` (`systembars`, `status-bar`) | `status`, `set` | Android status/navigation colors and light-icon flags; iOS supported window appearance style |
 | `deep-links` (`deeplinks`, `deep-link`, `url-events`) | `status`, `getInitialUrl`, `open` | Receives `crepus://` URLs as `deepLinks.openUrl` events and opens valid URLs through the platform |
 
+Document-picker metadata reads and file copies run on serial workers; final results
+return on the main thread. Android queues at most four waiting imports and rejects
+further submissions explicitly; Activity teardown invalidates pending delivery.
+iOS admits one import at a time, retaining that slot until a canceled copy finishes.
+Cancellation or teardown suppresses stale publication and removes completed stale
+copies, but does not interrupt an ongoing provider read. iOS security-scoped access
+covers metadata and copying. Real provider grants and device responsiveness still
+require platform testing.
+
 `filesystem` enables its scoped Rust backend only after `crepus native add filesystem`; the
 default app shell and share-extension builds exclude it. It supports `readText`, `writeText`,
 `delete`, `mkdir`, `list`, and `stat`, and rejects absolute paths and parent-directory segments.
@@ -123,7 +143,8 @@ default app shell and share-extension builds exclude it. It supports `readText`,
 ### Service and entitlement boundaries
 
 Capabilities installed by `crepus native add` stay local to the app and add only their required
-platform declarations. Push delivery needs an APNs/FCM project and server credentials; payments,
+platform declarations. Existing iOS permission usage descriptions are preserved;
+overlapping capabilities add only missing usage-description keys. Push delivery needs an APNs/FCM project and server credentials; payments,
 wallets, Google Maps, cloud sync, and authentication need the app's own provider configuration.
 Health, NFC, background execution, widgets, and media services also require
 their platform-specific entitlement or user permission before an app can use them. They are not
@@ -136,6 +157,12 @@ containers:
 ```bash
 crepus native sync views/main.crepus --dir . --out desktop/share/dashboard.view-ir.json --var name=Ada --pretty
 ```
+
+Sync validates all destinations before updating any fixture. Default destinations
+must stay inside the scaffold directory. Explicit `--out` paths may select an
+external directory; destination file links must resolve within that selected
+parent. Existing internal links remain supported. This validation assumes stable
+filesystem links; later I/O failures can still leave some fixtures updated.
 
 ### iOS-only scaffold with XcodeGen + a real `.xcodeproj`
 
@@ -165,6 +192,23 @@ crepus native codegen views/main.crepus --platform swiftui --out Generated --vie
 crepus native codegen views/main.crepus --platform compose --out android/app/src/main/java/dev/example/generated --view-name DashboardView --var name=Ada
 ```
 
+Generated bound controls require the async edit helpers in the current native
+host templates. When upgrading an existing host, migrate its `CrepusStateStore`
+draft helpers and `CrepusRustActions` queued-change bridge together before
+regenerating views. Regeneration alone does not update custom host adapters.
+The explicit synchronous change APIs remain available for existing callers.
+The Swift bridge returns complete per-call action JSON through
+`crepus_mobile_dispatch_json_owned` and `crepus_mobile_dispatch_change_json_owned`,
+then releases each result with `crepus_mobile_free_string`. Large results do not
+require replaying the action. Rebuild the app-local Rust library when adopting
+this bridge; older libraries lack these symbols. Existing buffer-based C exports
+remain available with their required-length/truncation contract.
+Generated Android `CrepusActions.perform` delivers recoverable dispatcher
+exceptions as `{"ok":false,"error":"..."}` results through its captured main-thread
+sink. The serial queue waits for this delivery before dispatching the next action.
+After an accepted main-thread post, both action and bound-change jobs wait through
+worker interruption until delivery finishes, then restore interrupt status.
+
 ```rust
 use crepuscularity_core::TemplateContext;
 use crepuscularity_native::{render_template_to_ir, to_json_pretty};
@@ -183,11 +227,18 @@ let json = to_json_pretty(&ir)?;
 println!("{}", json);
 ```
 
+When the IR is no longer needed, `crepuscularity_native::to_json_owned(ir)`
+consumes it and produces compact JSON with iterative child traversal. It preserves
+Serde's field order, escaping, and omission of optional fields, while avoiding
+recursive serialization of deeply nested containers. The WASM bindings and C ABI
+use this path. `to_json(&ir)` and `to_json_pretty(&ir)` remain available for callers
+that retain the IR.
+
 This produces JSON that native shells can parse:
 
 ```json
 {
-  "version": 4,
+  "version": 7,
   "root": [
     {
       "kind": "stack",

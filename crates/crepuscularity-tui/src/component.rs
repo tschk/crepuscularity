@@ -69,6 +69,8 @@ impl ComponentRegistry {
         );
     }
 
+    /// Register named components and defaults from a component file. Relative includes
+    /// use the render context base_dir; supply the file parent for file-backed components.
     pub fn register_file(&mut self, path: &Path) -> Result<(), CrepusError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| CrepusError::render(format!("component file error: {:?}: {}", path, e)))?;
@@ -120,14 +122,13 @@ impl ComponentRegistry {
             .ok_or_else(|| CrepusError::render(format!("component not found: {name}")))?;
 
         let mut child_ctx = ctx.clone();
-        for (key, value) in &component.defaults {
-            child_ctx
-                .vars
-                .entry(key.clone())
-                .or_insert_with(|| value.clone());
-        }
         for (key, value) in props {
             child_ctx.vars.insert(key.clone(), value.clone());
+        }
+        for (key, value) in &component.defaults {
+            if !child_ctx.vars.contains_key(key) {
+                child_ctx.vars.insert(key.clone(), value.clone());
+            }
         }
 
         let nodes = parse_template(&component.source)?;

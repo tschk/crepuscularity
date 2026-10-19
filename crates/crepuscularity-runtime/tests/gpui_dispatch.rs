@@ -126,13 +126,21 @@ fn runtime_input_keeps_its_entity_when_the_template_rerenders(cx: &mut TestAppCo
 fn tab_navigation_includes_readonly_and_skips_disabled_inputs(cx: &mut TestAppContext) {
     let drafts = Rc::new(RefCell::new(Vec::new()));
     let output = drafts.clone();
-    let bindings = RuntimeBindings::new().on("edited", move |event, _, _| {
-        if let crepuscularity_runtime::RuntimeEventKind::Input(input) = event.kind {
-            output.borrow_mut().push(input.text.clone());
-        }
-    });
+    let keys = Rc::new(RefCell::new(Vec::new()));
+    let observed_keys = keys.clone();
+    let bindings = RuntimeBindings::new()
+        .on("keys", move |event, _, _| {
+            if let crepuscularity_runtime::RuntimeEventKind::KeyDown(key) = event.kind {
+                observed_keys.borrow_mut().push(key.keystroke.key.clone());
+            }
+        })
+        .on("edited", move |event, _, _| {
+            if let crepuscularity_runtime::RuntimeEventKind::Input(input) = event.kind {
+                output.borrow_mut().push(input.text.clone());
+            }
+        });
     let (_, cx) = cx.add_window_view(|_, _| TemplateFixture {
-        nodes: parse_template("div flex flex-col\n    input #readonly readonly @input=edited\n    input #disabled disabled @input=edited\n    input #editable @input=edited").unwrap(),
+        nodes: parse_template("div flex flex-col\n    input #readonly readonly @input=edited @keydown=keys\n    input #disabled disabled @input=edited\n    input #editable @input=edited @keydown=keys").unwrap(),
         context: TemplateContext::new(),
         bindings,
     });
@@ -146,17 +154,18 @@ fn tab_navigation_includes_readonly_and_skips_disabled_inputs(cx: &mut TestAppCo
     redraw(cx);
     cx.simulate_input("blocked");
     assert!(drafts.borrow().is_empty());
-    cx.update(|window, cx| {
-        window.focus_next(cx);
-        assert!(!readonly.is_focused(window));
-    });
+    cx.simulate_keystrokes("tab");
+    cx.update(|window, _| assert!(!readonly.is_focused(window)));
     redraw(cx);
     cx.simulate_input("ok");
     assert_eq!(drafts.borrow().last().map(String::as_str), Some("ok"));
-    cx.update(|window, cx| {
-        window.focus_prev(cx);
-        assert!(readonly.is_focused(window));
-    });
+    cx.simulate_keystrokes("shift-tab");
+    cx.update(|window, _| assert!(readonly.is_focused(window)));
+    redraw(cx);
+    keys.borrow_mut().clear();
+    cx.simulate_keystrokes("ctrl-tab");
+    cx.update(|window, _| assert!(readonly.is_focused(window)));
+    assert_eq!(keys.borrow().last().map(String::as_str), Some("tab"));
 }
 
 #[gpui::test]
@@ -189,4 +198,47 @@ fn native_shortcuts_preserve_word_navigation_selection_and_undo(cx: &mut TestApp
         "ctrl-z"
     });
     cx.update(|_, cx| assert_eq!(field.read(cx).model().text(), "one two"));
+}
+
+#[gpui::test]
+fn keyed_loop_factory_identity_survives_reordering(cx: &mut TestAppContext) {
+    use crepuscularity_core::TemplateValue;
+    let records = Rc::new(RefCell::new(Vec::new()));
+    let output = records.clone();
+    let bindings = RuntimeBindings::new().element("Probe", move |request, _, _| {
+        output
+            .borrow_mut()
+            .push((request.context.get_str("name"), request.id.to_string()));
+        Ok(gpui::div()
+            .w(gpui::px(20.))
+            .h(gpui::px(20.))
+            .into_any_element())
+    });
+    let mut first = TemplateContext::new();
+    first.set("name", "first");
+    let mut second = TemplateContext::new();
+    second.set("name", "second");
+    let initial = vec![first.clone(), second.clone()];
+    let (view, cx) = cx.add_window_view(|_, _| {
+        let mut context = TemplateContext::new();
+        context.set("rows", TemplateValue::List(initial));
+        TemplateFixture {
+            context,
+            bindings,
+            nodes: parse_template("for row in rows\n  Probe key={name}").unwrap(),
+        }
+    });
+    redraw(cx);
+    let before: std::collections::HashMap<_, _> = records.borrow().iter().cloned().collect();
+    assert_eq!(before.len(), 2);
+    assert_ne!(before["first"], before["second"]);
+    records.borrow_mut().clear();
+    view.update(cx, |view, cx| {
+        view.context
+            .set("rows", TemplateValue::List(vec![second, first]));
+        cx.notify();
+    });
+    redraw(cx);
+    let after: std::collections::HashMap<_, _> = records.borrow().iter().cloned().collect();
+    assert_eq!(before, after);
 }

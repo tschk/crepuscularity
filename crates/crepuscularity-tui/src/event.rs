@@ -6,7 +6,7 @@
 //! routes events to the focused element's callback with support for event
 //! bubbling to parent elements.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub use crossterm::event::{KeyEvent, MouseEvent};
 
@@ -15,6 +15,8 @@ pub use crossterm::event::{KeyEvent, MouseEvent};
 pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
+    /// Verbatim bracketed-paste contents; the host owns enabling terminal paste mode.
+    Paste(String),
     Resize(u16, u16),
     FocusGained,
     FocusLost,
@@ -28,7 +30,7 @@ impl From<crossterm::event::Event> for Event {
             crossterm::event::Event::Resize(w, h) => Event::Resize(w, h),
             crossterm::event::Event::FocusGained => Event::FocusGained,
             crossterm::event::Event::FocusLost => Event::FocusLost,
-            _ => Event::FocusLost,
+            crossterm::event::Event::Paste(text) => Event::Paste(text),
         }
     }
 }
@@ -48,10 +50,15 @@ impl FocusManager {
         Self::default()
     }
 
-    /// Replace the focusable ID list. If the current focus is no longer in the
-    /// list, it is cleared.
+    /// Replace the focusable IDs, keeping the first occurrence of each ID.
+    /// Preserve existing focus when present; otherwise select the first ID,
+    /// or clear focus when the list is empty.
     pub fn set_focusable_ids(&mut self, ids: Vec<String>) {
-        self.focusable_ids = ids;
+        let mut seen = HashSet::new();
+        self.focusable_ids = ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
         if let Some(ref focused) = self.focused_id {
             if !self.focusable_ids.iter().any(|id| id == focused) {
                 self.focused_id = None;
@@ -176,16 +183,21 @@ impl EventDispatcher {
     }
 
     /// Dispatch an event to the focused element's callback, bubbling to
-    /// parents if not handled.
+    /// parents if not handled. Each element is visited at most once, even if
+    /// the registered parent relationships contain a cycle.
     pub fn dispatch(&self, event: &Event, focused_id: Option<&str>) -> DispatchResult {
-        let mut current = focused_id.map(|s| s.to_string());
+        let mut current = focused_id;
+        let mut visited = HashSet::new();
         while let Some(id) = current {
-            if let Some(cb) = self.callbacks.get(&id) {
+            if !visited.insert(id) {
+                break;
+            }
+            if let Some(cb) = self.callbacks.get(id) {
                 if cb(event) {
                     return DispatchResult::Handled;
                 }
             }
-            current = self.parents.get(&id).cloned();
+            current = self.parents.get(id).map(String::as_str);
         }
         DispatchResult::NotHandled
     }

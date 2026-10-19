@@ -66,7 +66,8 @@ methods and feature declarations; it is not a coverage percentage.
 
 ## Coverage matrix
 
-"Implemented" here describes this source patch, pending compilation and tests.
+"Implemented" describes the reconciled source validated on 19–20 October 2026;
+see the scoped evidence below.
 "Native" means application code must supply the behavior through the escape
 hatches above. No row establishes platform acceptance merely by compiling.
 
@@ -75,7 +76,7 @@ hatches above. No row establishes platform acceptance merely by compiling.
 | Entities, globals, subscriptions, async tasks, custom `Element`/`Render` | Native Rust | Native factory with retained entities | Host owns lifecycle; no DSL serialization |
 | Div/text hierarchy and conditionals | Existing mappings | Existing mappings | Six frontends need shared behavioral fixtures |
 | Loop identity | Keyed root (`key={item.id}`), index fallback | Keyed root, duplicate-key diagnostic, index fallback | Reorder tests and nested-loop render acceptance |
-| Template instances/includes/slots | Identified native parent required for repeated macro instances | Explicit namespace threaded through all recursion | Legacy call-site fallback cannot distinguish repeats at one call site |
+| Template instances/includes/slots | Identified native parent required for repeated macro instances | Explicit namespace threaded through all recursion | Legacy render entry points use root/index fallback; repeated instances should provide distinct explicit namespaces |
 | Layout/color/spacing/typography/borders/shadows | Utility subset; self alignment/items-stretch added | Utility subset; items-stretch added | Unknown static utilities and CSS-only approximations remain; generated helpers need full mapping inventory |
 | Hover/focus/active styling | One accumulated refinement per state, including conditions | One accumulated refinement per state | Focus needs focusable/host focus handling; native handles advanced state selectors |
 | Mouse/key/scroll/pinch/hover | Named direct mappings; Ctrl and Command distinct; unknown modifiers error | Registered callbacks borrow original event and receive Window/App | Real dispatch, bubbling and propagation tests pending |
@@ -83,12 +84,12 @@ hatches above. No row establishes platform acceptance merely by compiling.
 | Disabled controls | Omit declared callbacks and focusable flag | Generic callbacks omitted; input additionally writes native disabled/readonly flags | Generic controls still lack disabled a11y semantics; input node/tree acceptance pending |
 | Raster images and SVG | Actual identified image/SVG child in semantic wrapper | Same; asset/URL and filesystem sources distinguished | Intrinsic/constrained layout, loading failures and animated frames need UI tests |
 | StyledImage transforms/fallbacks/cache, canvas/surface | Native | Native factory | No dedicated DSL properties yet |
-| Text input/selection/composition | Retained `Entity<TextInput>` via native expression; built-in macro input still errors | Built-in retained single-line text input; 11 EntityInputHandler methods, model and synthetic fixtures written | All tests pending; textarea/password/number/autofill/validation/visual-bidi editing still unsupported; real IME acceptance open |
+| Text input/selection/composition | Retained `Entity<TextInput>` via native expression; built-in macro input still errors | Built-in retained single-line text input; 11 EntityInputHandler methods, model and synthetic fixtures written | Model/dispatch and native macOS editing/focus checks passed; textarea/password/number/autofill/validation/visual-bidi editing still unsupported; real IME and copy/cut acceptance open |
 | Roles, names, descriptions and values | Typed AccessKit roles and metadata bindings | Named role subset and basic metadata/checked bindings | Extra runtime metadata fields/actions/synthetic children use native factory |
 | Accessibility actions/synthetic children | Native builder/custom element | Built-in input provides text run, directional selection, SetValue and SetTextSelection; generic nodes use native factory | Accessibility tree and screen-reader verification pending |
 | External file drop | Native builder hook | `@drop` borrows `ExternalPaths` | OS delivery not verified |
 | Internal typed drag/drop, external drag source | Native builder hook with exact payload type | Native factory with exact payload type | No generic serialized drag substitute |
-| Animation/Transition | Native; AST animate attributes now error explicitly | Existing supported animation subset with scoped identity | Built-in scale approximation removed; unknown properties report error; easing/duration validation remains incomplete |
+| Animation/Transition | Native; AST animate attributes now error explicitly | Existing supported animation subset with scoped identity | Legacy scale approximation remains; easing/duration validation remains incomplete |
 | Lists/uniform lists/deferred/anchored/container queries | Native | Native factory | Dedicated template shorthands absent |
 | Window/App/platform/assets/HTTP/clipboard/keymap/testing | Native namespace | Host code/factory | Platform capabilities are not exercised by template tests |
 
@@ -156,23 +157,22 @@ only; newer Zed headless behavior must not be attributed to this CE release.
 
 ## Verification and release gate
 
-Completed for the foundation: archive checksum/source review, independent source review, standalone
-Rust formatting/parser check, `git diff --check`, build-free inventory generation.
-Not completed: Cargo type checking, unit tests, native runtime dispatch, image
-layout/animation, input/IME, accessibility trees, cross-platform feature builds.
-No heavy jobs, dependency downloads or live device/UI actions were run for this
-milestone. Do not publish or label it "full coverage" on this evidence.
-The input extension's independent source review found missing TextRun metadata,
-tab-stop opt-in and newline normalization. The corrected candidate also addresses
-grapheme-interior deletion, cursor-only geometry, alignment and composition-end
-notifications; its narrow follow-up review is recorded in the external receipt.
+The reconciled candidate compiled and passed 198 normal GPUI/runtime tests,
+including seven dispatch tests, strict all-target Clippy and 21 Metal rendering
+checks. The seven dispatch fixtures were rerun successfully after fixing actual
+Tab/Shift+Tab delivery. Existing macro coverage passed 65 tests with nine
+platform checks intentionally ignored; the inherited Windows fixture and CI
+formatting coverage remain intact.
 
-When a build slot is assigned, first run the macro unit tests, then focused runtime/adapter tests including
-`crates/crepuscularity-gpui/tests/template_coverage.rs`. The fixture covers images,
-native builders, typed IDs, custom loop roots, captured callbacks and namespace access. Use one Cargo job and the approved
-target directory; do not regenerate the shared lock concurrently with Kit work.
-After that, build deterministic headless dispatch/state/a11y regressions before
-requesting real-platform acceptance. The retained input implementation and editing/composition tests are now part of this candidate; all remain unexecuted. See [validation and remaining gaps](gpui-ce-validation.md) for exact commands and prerequisites.
+Real macOS interaction acceptance passed Unicode paste/editing, emoji
+selection/deletion, undo/redo, draft retention after parent redraw and continued
+typing, change/submit, authoritative external replacement, Tab/Shift+Tab traversal,
+readonly/disabled restrictions and enabling/restoring permissions. OS IME and
+copy/cut clipboard roundtrip remain unverified. Accessibility/screen-reader,
+other input types and full cross-platform/native-feature acceptance remain open.
+No full GPUI parity or all-features acceptance is claimed. See
+[validation and remaining gaps](gpui-ce-validation.md) for the input contract and
+scoped verification details.
 
 Regenerate the inventory from already-cached sources:
 

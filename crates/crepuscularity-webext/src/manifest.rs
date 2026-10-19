@@ -545,16 +545,18 @@ impl ManifestV3 {
         let mut resource_matches = manifest.web_accessible_resources.matches.clone();
         if resource_matches.is_empty() {
             resource_matches = host_permissions.to_vec();
-            let mut seen: std::collections::HashSet<&str> =
-                host_permissions.iter().map(|s| s.as_str()).collect();
             for content_script in content_scripts {
-                for pattern in &content_script.matches {
-                    if seen.insert(pattern.as_str()) {
-                        resource_matches.push(pattern.clone());
-                    }
-                }
+                resource_matches.extend(content_script.matches.iter().cloned());
             }
         }
+
+        // WAR grants access by origin; Chromium rejects path-scoped matches.
+        let mut seen = std::collections::HashSet::new();
+        resource_matches = resource_matches
+            .into_iter()
+            .map(|pattern| normalize_resource_match(&pattern).unwrap_or(pattern))
+            .filter(|pattern| seen.insert(pattern.clone()))
+            .collect();
 
         if !resources.is_empty() && !resource_matches.is_empty() {
             vec![WebAccessibleResources {
@@ -585,7 +587,7 @@ impl ManifestV3 {
                 BrowserTarget::Firefox => Some(BackgroundSpec {
                     service_worker: None,
                     scripts: vec![background_script],
-                    kind: None,
+                    kind: Some("module".to_string()),
                 }),
             }
         } else {
@@ -611,8 +613,9 @@ impl ManifestV3 {
     }
 
     fn resolve_page(p: String) -> String {
-        if p.ends_with(".crepus") {
-            p.trim_end_matches(".crepus").to_string() + ".html"
+        let (path, suffix) = p.split_at(p.find(['?', '#']).unwrap_or(p.len()));
+        if let Some(stem) = path.strip_suffix(".crepus") {
+            format!("{stem}.html{suffix}")
         } else {
             p
         }
@@ -657,6 +660,25 @@ impl ManifestV3 {
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("ManifestV3 serialization failed")
     }
+}
+
+fn normalize_resource_match(pattern: &str) -> Option<String> {
+    let (scheme, remainder) = pattern.split_once("://")?;
+    if !matches!(scheme, "http" | "https" | "*" | "file" | "ftp") {
+        return None;
+    }
+    let (host, _) = remainder.split_once('/')?;
+    // This is normalization, not validation: leave malformed input for the
+    // browser to diagnose rather than repairing its scheme or authority.
+    if (host.is_empty() && scheme != "file")
+        || (scheme == "file" && !host.is_empty())
+        || host.chars().any(|character| {
+            character.is_whitespace() || matches!(character, ':' | '?' | '#' | '@' | '\\')
+        })
+    {
+        return None;
+    }
+    Some(format!("{scheme}://{host}/*"))
 }
 
 fn gecko_slug(name: &str) -> String {
@@ -993,6 +1015,42 @@ host-permissions = ["https://example.com/*"]
     }
 
     #[test]
+    fn content_script_default_fallback_match_about_blank() {
+        let manifest = ExtensionManifest {
+            extension: ExtensionInfo {
+                name: "Test".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                author: None,
+                homepage: None,
+                minimum_chrome_version: None,
+            },
+            capabilities: CapabilitiesSection {
+                content_script: true,
+                host_permissions: vec!["https://example.com/*".to_string()],
+                ..Default::default()
+            },
+            content_scripts: vec![],
+            plugins: HashMap::new(),
+            options: ManifestOptions::default(),
+            web_accessible_resources: WebAccessibleResourcesOptions::default(),
+            commands: BTreeMap::new(),
+            chrome_url_overrides: BTreeMap::new(),
+        };
+
+        let opts = ManifestOptions::default();
+        let content_scripts = ManifestV3::build_content_scripts(&manifest, &opts);
+
+        assert_eq!(content_scripts.len(), 1);
+        assert_eq!(content_scripts[0].matches, vec!["https://example.com/*"]);
+        assert_eq!(content_scripts[0].js, vec!["src/content.js"]);
+        assert_eq!(content_scripts[0].css, vec!["src/content.css"]);
+        assert_eq!(content_scripts[0].run_at, "document_idle".to_string());
+        assert_eq!(content_scripts[0].all_frames, None);
+        assert_eq!(content_scripts[0].match_about_blank, None);
+    }
+
+    #[test]
     fn test_manifest_v3_generation() {
         let manifest = ExtensionManifest {
             extension: ExtensionInfo {
@@ -1129,6 +1187,7 @@ alarms = true
         };
 
         let json = manifest.to_manifest_v3_json_for_browser(BrowserTarget::Firefox);
+        assert!(json.contains("\"type\": \"module\""));
         assert!(json.contains("\"scripts\": ["));
         assert!(json.contains("\"src/background.js\""));
         assert!(json.contains("\"browser_specific_settings\""));
@@ -1283,5 +1342,134 @@ matches = ["<all_urls>"]
         assert_eq!(BrowserTarget::parse("unknown"), None);
         assert_eq!(BrowserTarget::parse(""), None);
         assert_eq!(BrowserTarget::parse("Chrome"), None);
+    }
+    #[test]
+    fn war_normalizes_derived_origins_without_changing_host_or_content_scope() {
+        let manifest: ExtensionManifest = toml::from_str(
+            r#"
+[extension]
+name = "Scoped resources"
+version = "1.0.0"
+[capabilities]
+host-permissions = ["https://example.com/app/*", "https://other.example/private/*"]
+[[content_scripts]]
+matches = ["https://example.com/editor/*", "*://*.example.org/tools/*"]
+js = ["src/content.js"]
+"#,
+        )
+        .unwrap();
+        let generated = manifest.to_manifest_v3();
+        assert_eq!(
+            generated.web_accessible_resources[0].matches,
+            [
+                "https://example.com/*",
+                "https://other.example/*",
+                "*://*.example.org/*",
+            ]
+        );
+        assert_eq!(
+            generated.host_permissions,
+            manifest.capabilities.host_permissions
+        );
+        assert_eq!(
+            generated.content_scripts[0].matches,
+            manifest.content_scripts[0].matches
+        );
+    }
+
+    #[test]
+    fn war_normalizes_explicit_matches_and_deduplicates_in_first_origin_order() {
+        let manifest: ExtensionManifest = toml::from_str(r#"
+[extension]
+name = "Explicit resources"
+version = "1.0.0"
+[web_accessible_resources]
+matches = ["https://b.example/one/*", "https://a.example/two/*", "https://b.example/three/*", "https://space.example/some path/*", "<all_urls>", "file:///documents/*", "file:///*", "not-a-pattern", "https://"]
+"#).unwrap();
+        let generated = manifest.to_manifest_v3();
+        assert_eq!(
+            generated.web_accessible_resources[0].matches,
+            [
+                "https://b.example/*",
+                "https://a.example/*",
+                "https://space.example/*",
+                "<all_urls>",
+                "file:///*",
+                "not-a-pattern",
+                "https://",
+            ]
+        );
+        assert_eq!(
+            manifest.web_accessible_resources.matches[0],
+            "https://b.example/one/*"
+        );
+    }
+    #[test]
+    fn page_conversion_replaces_only_the_final_crepus_extension() {
+        for (source, expected) in [
+            ("pages/options.v1.crepus", "pages/options.v1.html"),
+            ("pages/repeat.crepus.crepus", "pages/repeat.crepus.html"),
+            ("pages/plain.html", "pages/plain.html"),
+        ] {
+            assert_eq!(ManifestV3::resolve_page(source.into()), expected);
+        }
+    }
+    #[test]
+    fn public_manifest_page_urls_preserve_query_and_fragment_suffixes() {
+        for (source, expected) in [
+            (
+                "pages/options.crepus?mode=compact#panel",
+                "pages/options.html?mode=compact#panel",
+            ),
+            (
+                "pages/options.crepus#panel?literal",
+                "pages/options.html#panel?literal",
+            ),
+            (
+                "pages/repeat.crepus.crepus?mode=1",
+                "pages/repeat.crepus.html?mode=1",
+            ),
+            (
+                "pages/already.html?next=other.crepus",
+                "pages/already.html?next=other.crepus",
+            ),
+            (
+                "pages/already.html#other.crepus",
+                "pages/already.html#other.crepus",
+            ),
+        ] {
+            let mut manifest: ExtensionManifest =
+                toml::from_str("[extension]\nname = 'Page URL'\nversion = '1.0.0'\n").unwrap();
+            manifest.options.action_popup = Some(source.into());
+            manifest.options.popup_html = Some("unused.html".into());
+            manifest.options.options_page = Some(source.into());
+            manifest
+                .chrome_url_overrides
+                .insert("newtab".into(), source.into());
+            let generated = manifest.to_manifest_v3();
+            assert_eq!(generated.action.unwrap().default_popup, expected);
+            assert_eq!(generated.options_page.as_deref(), Some(expected));
+            assert_eq!(
+                generated
+                    .chrome_url_overrides
+                    .get("newtab")
+                    .map(String::as_str),
+                Some(expected)
+            );
+
+            manifest.options.action_popup = None;
+            manifest.options.popup_html = Some(source.into());
+            manifest.options.options_ui = Some(OptionsUiSpec {
+                page: source.into(),
+                browser_style: None,
+                open_in_tab: Some(true),
+            });
+            let generated = manifest.to_manifest_v3();
+            assert_eq!(generated.action.unwrap().default_popup, expected);
+            assert!(generated.options_page.is_none());
+            let options = generated.options_ui.unwrap();
+            assert_eq!(options.page, expected);
+            assert_eq!(options.open_in_tab, Some(true));
+        }
     }
 }

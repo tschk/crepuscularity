@@ -6,6 +6,22 @@ use gpui::{
 
 use crate::bindings::{RuntimeBindings, RuntimeEvent, RuntimeEventKind};
 
+/// Built-in GPUI controls do not implement HTML attribute presence semantics.
+/// Host native factories receive the original AST and own their typed contract.
+pub(crate) fn reject_html_attributes(el: &Element) -> Result<(), String> {
+    if let Some(binding) = el
+        .bindings
+        .iter()
+        .find(|binding| binding.origin == crepuscularity_core::ast::BindingOrigin::Attribute)
+    {
+        return Err(format!(
+            "GPUI built-in controls do not support HTML attribute binding `attr.{}`",
+            binding.prop
+        ));
+    }
+    Ok(())
+}
+
 fn value(expr: &str, ctx: &TemplateContext) -> Result<TemplateValue, String> {
     crepuscularity_core::eval::eval_expr(expr, ctx).map_err(|e| e.to_string())
 }
@@ -31,7 +47,7 @@ pub(crate) fn presence_boolean(expr: &str, ctx: &TemplateContext) -> Result<bool
     }
 }
 
-fn disabled(el: &Element, ctx: &TemplateContext) -> Result<bool, String> {
+pub(crate) fn disabled(el: &Element, ctx: &TemplateContext) -> Result<bool, String> {
     el.bindings
         .iter()
         .find(|b| b.prop == "disabled")
@@ -44,10 +60,12 @@ pub(crate) fn apply_bindings(
     el: &Element,
     ctx: &TemplateContext,
 ) -> Result<Stateful<Div>, String> {
+    reject_html_attributes(el)?;
     for binding in &el.bindings {
         let expr = &binding.value;
         d = match binding.prop.as_str() {
             "id" | "key" => d, // Consumed by identity scoping before construction.
+            "interval" if el.tag == "slot-rotate" => d,
             "src" if matches!(el.tag.as_str(), "img" | "image" | "svg") => d,
             "path" if matches!(el.tag.as_str(), "img" | "image") => d,
             "disabled" => if presence_boolean(expr, ctx)? { d.cursor_not_allowed().opacity(0.5) } else { d },
@@ -156,6 +174,7 @@ pub(crate) fn apply_events(
     id: &str,
     bindings: &RuntimeBindings,
 ) -> Result<Stateful<Div>, String> {
+    reject_html_attributes(el)?;
     let is_disabled = disabled(el, ctx)?;
     let mut seen = std::collections::HashSet::new();
     for handler in &el.event_handlers {
@@ -262,5 +281,42 @@ mod tests {
         assert!(boolean("true", &ctx).unwrap());
         assert!(boolean("\"false\"", &ctx).is_err());
         assert!(role("buton").is_err());
+    }
+}
+
+#[cfg(test)]
+mod html_attribute_admission_tests {
+    use super::reject_html_attributes;
+    use crepuscularity_core::{ast::Node, parse_template_with_path};
+    use std::path::Path;
+
+    #[test]
+    fn builtins_reject_html_attribute_bindings_before_evaluation() {
+        for source in [
+            "<button [attr.disabled]=\"false\"></button>",
+            "<input [attr.DISABLED]=\"null\"/>",
+            "<input [attr.value]=\"'draft'\"/>",
+            "<div [attr.ID]=\"'identity'\"></div>",
+        ] {
+            let nodes = parse_template_with_path(source, Some(Path::new("Entry.ng"))).unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!("element expected")
+            };
+            let error = reject_html_attributes(element).unwrap_err();
+            assert!(error.contains("HTML attribute binding"), "{error}");
+        }
+    }
+
+    #[test]
+    fn ordinary_property_bindings_remain_admitted() {
+        let nodes = parse_template_with_path(
+            "<input [disabled]=\"false\" value=\"draft\"/>",
+            Some(Path::new("Entry.ng")),
+        )
+        .unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("element expected")
+        };
+        reject_html_attributes(element).unwrap();
     }
 }

@@ -3,7 +3,7 @@
 use crate::ast::*;
 
 use super::super::jsx::attrs::jsx_brace_expr;
-use super::super::RawParseError;
+use super::super::{scan_top_level, RawParseError};
 use super::{parse_svelte_nodes, svelte_err};
 
 /// Read a `{…}` tag, returning its trimmed inner text and the remaining source.
@@ -104,7 +104,7 @@ fn parse_each<'a>(
     body_src: &'a str,
     depth: usize,
 ) -> Result<(Node, &'a str), RawParseError> {
-    let Some(as_pos) = head.find(" as ") else {
+    let Some(as_pos) = scan_top_level(head, |i, _| head[i..].starts_with(" as ")) else {
         return Err(svelte_err(
             root,
             tag_src,
@@ -118,10 +118,26 @@ fn parse_each<'a>(
 
     // Drop a trailing `(key)` keyed-each expression — keying is a DOM-diffing
     // concern the shared IR does not model.
-    if binding.ends_with(')') {
-        if let Some(open) = binding.rfind('(') {
-            binding = binding[..open].trim();
+    if let Some(open) = binding.find('(') {
+        let key = &binding[open..];
+        let close = super::super::match_delimiter(key, '(', ')')
+            .ok_or_else(|| svelte_err(root, tag_src, "unclosed keyed-each expression"))?;
+        if key[1..close].trim().is_empty() || !key[close + 1..].trim().is_empty() {
+            return Err(svelte_err(
+                root,
+                tag_src,
+                "keyed-each requires one nonempty key expression with no trailing text",
+            ));
         }
+        binding = binding[..open].trim();
+    }
+
+    if binding.is_empty() {
+        return Err(svelte_err(
+            root,
+            tag_src,
+            "`{#each}` requires a nonempty item binding before its key",
+        ));
     }
 
     if binding.contains(',') {
@@ -138,6 +154,14 @@ fn parse_each<'a>(
             tag_src,
             "destructuring `{#each … as {a, b}}` is not supported: the shared \
              ForBlock binds a single item variable",
+        ));
+    }
+
+    if !crate::eval::is_variable_name(binding) {
+        return Err(svelte_err(
+            root,
+            tag_src,
+            "loop requires a supported item variable name",
         ));
     }
 
@@ -190,7 +214,7 @@ fn expect_close<'a>(root: &'a str, src: &'a str, name: &str) -> Result<&'a str, 
         src,
         format!(
             "expected `{{/{name}}}`, found: {}",
-            &src[..src.len().min(40)]
+            super::super::diagnostic_prefix(src, 40)
         ),
     ))
 }

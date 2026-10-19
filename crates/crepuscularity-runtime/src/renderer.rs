@@ -4,6 +4,12 @@
 /// - Dynamic theme colors via context expressions in class values
 /// - GPUI animations via `animate:property={duration easing}` attributes
 /// - All standard Tailwind-like classes mapped to GPUI methods
+///
+/// Direct public render calls share include snapshots for that call and recheck
+/// sources on the next call. HotReloadView supplies worker-prepared snapshots.
+/// Props, defaults, slots and animation paths remain per occurrence.
+use std::borrow::Cow;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,11 +21,202 @@ use gpui::{
 
 use crepuscularity_core::include_paths::resolve_include_path;
 use crepuscularity_core::preprocess::slot_rotate_child_phrases;
+use crepuscularity_core::virtual_files::lookup_virtual_file;
 
-use crate::bindings::{ElementRequest, RuntimeBindings};
-use crate::styler::{apply_element_classes, parse_duration_ms};
+mod prepared;
+pub(crate) use prepared::{prepare_includes, PreparedIncludes};
+
+use crate::styler::{apply_class_with_ctx, parse_duration_ms, state_style_with_initial};
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
+
+#[derive(Default)]
+struct IncludeCache {
+    bindings: crate::RuntimeBindings,
+    bundles: Vec<BundleCache>,
+    prepared: Option<Arc<PreparedIncludes>>,
+}
+
+type IncludeIdentity = (std::path::PathBuf, std::path::PathBuf);
+
+struct BundleCache {
+    virtual_files: Arc<std::collections::HashMap<String, String>>,
+    nodes: std::collections::HashMap<IncludeIdentity, Result<Arc<Vec<Node>>, String>>,
+    sources: std::collections::HashMap<std::path::PathBuf, Arc<str>>,
+    resolutions: std::collections::HashMap<
+        (Option<std::path::PathBuf>, String),
+        Result<std::path::PathBuf, String>,
+    >,
+    components: std::collections::HashMap<
+        std::path::PathBuf,
+        Result<Arc<crepuscularity_core::parser::ComponentFile>, String>,
+    >,
+}
+
+impl IncludeCache {
+    fn bundle(&mut self, ctx: &TemplateContext) -> &mut BundleCache {
+        let index = self
+            .bundles
+            .iter()
+            .position(|bundle| Arc::ptr_eq(&bundle.virtual_files, &ctx.virtual_files))
+            .unwrap_or_else(|| {
+                self.bundles.push(BundleCache {
+                    virtual_files: Arc::clone(&ctx.virtual_files),
+                    nodes: Default::default(),
+                    sources: Default::default(),
+                    resolutions: Default::default(),
+                    components: Default::default(),
+                });
+                self.bundles.len() - 1
+            });
+        &mut self.bundles[index]
+    }
+
+    fn resolve(
+        &mut self,
+        ctx: &TemplateContext,
+        literal: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        let key = (ctx.base_dir.clone(), literal.to_owned());
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.resolutions.get(&key))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).resolutions.get(&key) {
+            return result.clone();
+        }
+        let path = resolve_include_path(ctx.base_dir.as_deref(), literal)
+            .map_err(|error| error.to_string())?;
+        self.bundle(ctx).resolutions.insert(key, Ok(path.clone()));
+        Ok(path)
+    }
+
+    fn source(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<str>, String> {
+        if let Some(source) = self.bundle(ctx).sources.get(path) {
+            return Ok(Arc::clone(source));
+        }
+        let source: Arc<str> = lookup_virtual_file(ctx, path)
+            .map(Ok)
+            .unwrap_or_else(|| std::fs::read_to_string(path))
+            .map_err(|error| format!("include error: {:?}: {}", path, error))?
+            .into();
+        Ok(source)
+    }
+
+    #[cfg(test)]
+    fn nodes(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<Vec<Node>>, String> {
+        self.nodes_with_frontend(ctx, path, path)
+    }
+
+    fn nodes_with_frontend(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+        frontend: &std::path::Path,
+    ) -> Result<Arc<Vec<Node>>, String> {
+        let key = (path.to_path_buf(), frontend.to_path_buf());
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.nodes.get(&key))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).nodes.get(&key) {
+            return result.clone();
+        }
+        let source = self.source(ctx, path)?;
+        let nodes =
+            if crepuscularity_core::virtual_files::lookup_virtual_file_entry(ctx, path).is_some() {
+                // Virtual ASTs belong to this render's retained bundle snapshot.
+                crepuscularity_core::parse_template_with_path(&source, Some(frontend)).map(Arc::new)
+            } else {
+                crepuscularity_core::ast_cache::parse_content_with_path(&source, Some(frontend))
+            }
+            .map_err(|error| error.to_string())?;
+        self.bundle(ctx).sources.insert(path.to_path_buf(), source);
+        self.bundle(ctx).nodes.insert(key, Ok(Arc::clone(&nodes)));
+        Ok(nodes)
+    }
+
+    fn components(
+        &mut self,
+        ctx: &TemplateContext,
+        path: &std::path::Path,
+    ) -> Result<Arc<crepuscularity_core::parser::ComponentFile>, String> {
+        if let Some(prepared) = &self.prepared {
+            return prepared
+                .bundle(ctx)
+                .and_then(|bundle| bundle.components.get(path))
+                .cloned()
+                .unwrap_or_else(|| Err("include was not prepared for this context".into()));
+        }
+        if let Some(result) = self.bundle(ctx).components.get(path) {
+            return result.clone();
+        }
+        let content = self.source(ctx, path)?;
+        let file = Arc::new(
+            crepuscularity_core::parser::parse_component_file(&content)
+                .map_err(|error| format!("component file parse error: {error}"))?,
+        );
+        self.bundle(ctx).sources.insert(path.to_path_buf(), content);
+        self.bundle(ctx)
+            .components
+            .insert(path.to_path_buf(), Ok(Arc::clone(&file)));
+        Ok(file)
+    }
+}
+
+pub(crate) fn render_nodes_prepared_with_bindings(
+    namespace: &str,
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    prepared: Arc<PreparedIncludes>,
+    bindings: &crate::RuntimeBindings,
+) -> AnyElement {
+    if namespace == "root" && bindings.is_empty() {
+        return render_nodes_prepared(nodes, ctx, prepared);
+    }
+    render_nodes_at_path(
+        nodes,
+        ctx,
+        namespace,
+        None,
+        &mut IncludeCache {
+            prepared: Some(prepared),
+            bindings: bindings.clone(),
+            ..Default::default()
+        },
+    )
+}
+
+pub(crate) fn render_nodes_prepared(
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    prepared: Arc<PreparedIncludes>,
+) -> AnyElement {
+    render_nodes_at_path(
+        nodes,
+        ctx,
+        "root",
+        None,
+        &mut IncludeCache {
+            prepared: Some(prepared),
+            ..Default::default()
+        },
+    )
+}
 
 fn eval_expr_value(expr: &str, ctx: &TemplateContext) -> TemplateValue {
     crepuscularity_core::eval::eval_expr(expr, ctx).unwrap_or(TemplateValue::Null)
@@ -29,31 +226,113 @@ fn eval_condition_bool(ctx: &TemplateContext, expr: &str) -> bool {
     ctx.eval_condition(expr).unwrap_or(false)
 }
 
-/// Render a list of nodes into a single `AnyElement`, threading `LetDecl`s into
-/// a running context clone so later siblings see the declared variables.
-/// The legacy API derives identity from its caller location. Repeated instances
-/// at the same call site (including helper functions) must use explicit namespaces.
-#[track_caller]
-pub fn render_nodes(nodes: &[Node], ctx: &TemplateContext) -> AnyElement {
-    let caller = std::panic::Location::caller();
-    render_nodes_with_bindings(
-        &format!("{caller}"),
-        nodes,
-        ctx,
-        &RuntimeBindings::default(),
-    )
+const GPUI_TARGET_KEYS: [&str; 8] = [
+    "crepus_target",
+    "is_gui",
+    "is_tui",
+    "is_web",
+    "crepus_platform",
+    "is_macos",
+    "is_windows",
+    "is_linux",
+];
+
+fn has_gpui_target_defaults(ctx: &TemplateContext) -> bool {
+    GPUI_TARGET_KEYS
+        .iter()
+        .all(|key| ctx.vars.contains_key(*key))
 }
 
-/// Render with explicitly registered host callbacks and native elements.
-/// Use a unique, stable namespace for each template instance in the same view.
-/// Inside a reordered loop, put `bind:key={item.id}` on its single root element.
+fn gpui_target_defaults() -> [(&'static str, TemplateValue); 8] {
+    [
+        ("crepus_target", TemplateValue::Str("gpui".into())),
+        ("is_gui", TemplateValue::Bool(true)),
+        ("is_tui", TemplateValue::Bool(false)),
+        ("is_web", TemplateValue::Bool(false)),
+        (
+            "crepus_platform",
+            TemplateValue::Str(std::env::consts::OS.into()),
+        ),
+        ("is_macos", TemplateValue::Bool(cfg!(target_os = "macos"))),
+        (
+            "is_windows",
+            TemplateValue::Bool(cfg!(target_os = "windows")),
+        ),
+        ("is_linux", TemplateValue::Bool(cfg!(target_os = "linux"))),
+    ]
+}
+
+fn with_gpui_target(ctx: &TemplateContext) -> Cow<'_, TemplateContext> {
+    if has_gpui_target_defaults(ctx) {
+        return Cow::Borrowed(ctx);
+    }
+    let mut ctx = ctx.clone();
+    for (key, value) in gpui_target_defaults() {
+        ctx.vars.entry(key.into()).or_insert(value);
+    }
+    Cow::Owned(ctx)
+}
+
+pub(crate) fn with_gpui_target_in_place<R>(
+    ctx: &mut TemplateContext,
+    render: impl FnOnce(&TemplateContext) -> R,
+) -> R {
+    if has_gpui_target_defaults(ctx) {
+        return render(ctx);
+    }
+    struct Restore<'a> {
+        ctx: &'a mut TemplateContext,
+        inserted: Vec<&'static str>,
+    }
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            for key in self.inserted.drain(..) {
+                self.ctx.vars.remove(key);
+            }
+        }
+    }
+    let mut guard = Restore {
+        ctx,
+        inserted: Vec::with_capacity(8),
+    };
+    for (key, value) in gpui_target_defaults() {
+        if let std::collections::hash_map::Entry::Vacant(entry) = guard.ctx.vars.entry(key.into()) {
+            entry.insert(value);
+            guard.inserted.push(key);
+        }
+    }
+    render(guard.ctx)
+}
+
+struct SlotFrame<'a> {
+    nodes: &'a [Node],
+    context: &'a TemplateContext,
+    caller_slot: Option<&'a SlotFrame<'a>>,
+}
+
+/// Render nodes into one element. Declarations affect following siblings
+/// without changing the caller's context.
+pub fn render_nodes(nodes: &[Node], ctx: &TemplateContext) -> AnyElement {
+    render_nodes_with_bindings("root", nodes, ctx, &crate::RuntimeBindings::default())
+}
+
+/// Render one template instance with stable identity and registered native behavior.
 pub fn render_nodes_with_bindings(
     namespace: &str,
     nodes: &[Node],
     ctx: &TemplateContext,
-    bindings: &RuntimeBindings,
+    bindings: &crate::RuntimeBindings,
 ) -> AnyElement {
-    render_nodes_with_ctx(nodes, ctx.clone(), namespace, bindings)
+    render_nodes_at_path(
+        nodes,
+        ctx,
+        namespace,
+        None,
+        &mut IncludeCache {
+            bindings: bindings.clone(),
+            ..Default::default()
+        },
+    )
 }
 
 pub(crate) fn render_error(message: impl Into<String>) -> AnyElement {
@@ -64,123 +343,166 @@ pub(crate) fn render_error(message: impl Into<String>) -> AnyElement {
 }
 
 fn scoped_id(scope: &str, segment: &str) -> String {
-    // Length-prefix segments: literal IDs containing `/` cannot alias a path.
     format!("{scope}/{}:{segment}", segment.len())
 }
 
-fn node_id(scope: &str, index: usize, node: &Node, ctx: &TemplateContext) -> String {
-    if let Node::Element(element) = node {
-        if let Some(binding) = element.bindings.iter().find(|b| b.prop == "id") {
-            return scoped_id(
-                scope,
-                &format!("id:{}", value_to_str(&eval_expr_value(&binding.value, ctx))),
-            );
-        }
-        if let Some(id) = &element.id {
-            return scoped_id(scope, &format!("id:{id}"));
-        }
+fn node_identity(path: &str, index: usize, node: &Node, ctx: &TemplateContext) -> String {
+    match node {
+        Node::Element(el) => element_id(el, ctx)
+            .map(|id| scoped_id(path, &format!("id:{id}")))
+            .unwrap_or_else(|| format!("{path}/{index}")),
+        _ => format!("{path}/{index}"),
     }
-    scoped_id(scope, &format!("node:{index}"))
 }
 
-fn render_children(
+fn render_nodes_at_path(
     nodes: &[Node],
-    mut ctx: TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
+) -> AnyElement {
+    render_nodes_with_ctx(nodes, &with_gpui_target(ctx), path, slot, cache)
+}
+
+fn render_siblings_with_ctx(
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> Vec<AnyElement> {
-    let mut rendered = Vec::new();
-    let mut ids = std::collections::HashSet::new();
+    let mut ctx = Cow::Borrowed(ctx);
+    let mut rendered: Vec<AnyElement> = Vec::new();
+    let mut identities = std::collections::HashSet::new();
+
     for (index, node) in nodes.iter().enumerate() {
         if let Node::LetDecl(decl) = node {
-            if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
+            if decl.is_default && ctx.vars.contains_key(&decl.name) {
+                // Default: skip if already set by parent props
+            } else {
                 let val = eval_expr_value(&decl.expr, &ctx);
-                ctx.vars.insert(decl.name.clone(), val);
+                ctx.to_mut().vars.insert(decl.name.clone(), val);
             }
         } else {
-            let id = node_id(scope, index, node, &ctx);
-            if !ids.insert(id.clone()) {
+            let identity = node_identity(path, index, node, &ctx);
+            if !identities.insert(identity.clone()) {
                 rendered.push(render_error(format!(
-                    "Duplicate GPUI template identity `{id}`"
+                    "Duplicate GPUI template identity `{identity}`"
                 )));
                 continue;
             }
-            rendered.push(render_node_in_scope(node, &ctx, &id, bindings));
+            rendered.push(render_node_with_ctx(node, &ctx, &identity, slot, cache));
         }
     }
+
     rendered
 }
 
 fn render_nodes_with_ctx(
     nodes: &[Node],
-    ctx: TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
-    let mut rendered = render_children(nodes, ctx, scope, bindings);
+    let mut rendered = render_siblings_with_ctx(nodes, ctx, path, slot, cache);
     match rendered.len() {
+        0 => div().into_any_element(),
         1 => rendered.remove(0),
-        _ => div().children(rendered).into_any_element(),
+        _ => {
+            let mut d = div();
+            for child in rendered {
+                d = d.child(child);
+            }
+            d.into_any_element()
+        }
     }
 }
 
-#[track_caller]
 pub fn render_node(node: &Node, ctx: &TemplateContext) -> AnyElement {
-    let caller = std::panic::Location::caller();
-    let id = node_id(&format!("{caller}"), 0, node, ctx);
-    render_node_in_scope(node, ctx, &id, &RuntimeBindings::default())
+    render_node_with_ctx(
+        node,
+        &with_gpui_target(ctx),
+        "root",
+        None,
+        &mut IncludeCache::default(),
+    )
 }
 
-fn render_node_in_scope(
+fn render_node_with_ctx(
     node: &Node,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
     match node {
-        Node::Element(el) => render_element(el, ctx, scope, bindings),
-        Node::Text(parts) => div()
-            .child(SharedString::from(render_text(parts, ctx)))
-            .into_any_element(),
-        Node::If(block) => render_if(block, ctx, scope, bindings),
-        Node::For(block) => render_for(block, ctx, scope, bindings),
-        Node::Match(block) => render_match(block, ctx, scope, bindings),
-        Node::LetDecl(_) => div().into_any_element(),
-        Node::RawText(expr) | Node::RawHtml(expr) => div()
-            .child(SharedString::from(value_to_str(&eval_expr_value(
-                expr, ctx,
-            ))))
-            .into_any_element(),
-        Node::Include(inc) => render_include(inc, ctx, scope, bindings),
-        Node::Embed(_) => {
-            render_error("GPUI does not execute web embeds; register a native element instead")
+        Node::Element(el) => render_element(el, ctx, path, slot, cache),
+        Node::Text(parts) => {
+            let text = render_text(parts, ctx);
+            div().child(SharedString::from(text)).into_any_element()
         }
+        Node::If(block) => render_if(block, ctx, path, slot, cache),
+        Node::For(block) => render_for(block, ctx, path, slot, cache),
+        Node::Match(block) => render_match(block, ctx, path, slot, cache),
+        Node::LetDecl(_) => div().into_any_element(), // handled in render_nodes_with_ctx
+        Node::RawText(expr) => {
+            let val = eval_expr_value(expr, ctx);
+            div()
+                .child(SharedString::from(value_to_str(&val)))
+                .into_any_element()
+        }
+        Node::RawHtml(expr) => {
+            let val = eval_expr_value(expr, ctx);
+            div()
+                .child(SharedString::from(value_to_str(&val)))
+                .into_any_element()
+        }
+        Node::Include(inc) => render_include(inc, ctx, path, slot, cache),
+        Node::Embed(embed) => div()
+            .text_color(rgb(0xff4444))
+            .child(SharedString::from(format!(
+                "embed '{}' is not supported by the GPUI target; guard with is_web",
+                embed.src
+            )))
+            .into_any_element(),
     }
 }
 
 fn render_element(
     el: &Element,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
+    // Intercept the `slot` pseudo-tag: render slot content from parent, or fallback children.
     if el.tag == "slot" {
-        return if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
-            render_nodes_with_ctx(slot_nodes, (**slot_ctx).clone(), scope, bindings)
+        return if let Some(frame) = slot {
+            render_nodes_at_path(frame.nodes, frame.context, path, frame.caller_slot, cache)
+        } else if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
+            render_nodes_at_path(slot_nodes, slot_ctx, path, None, cache)
         } else {
-            render_nodes_with_ctx(&el.children, ctx.clone(), scope, bindings)
+            render_nodes_at_path(&el.children, ctx, path, slot, cache)
         };
     }
+
+    let bindings = cache.bindings.clone();
     if bindings.has_element(&el.tag) {
-        return bindings.render_element(ElementRequest {
-            id: SharedString::from(scope.to_owned()),
+        let children = render_siblings_with_ctx(&el.children, ctx, path, slot, cache);
+        return bindings.render_element(crate::ElementRequest {
+            id: SharedString::from(path.to_owned()),
             element: el.clone(),
             context: ctx.clone(),
-            children: render_children(&el.children, ctx.clone(), scope, bindings),
+            children,
         });
     }
+    if let Err(error) = crate::runtime_element::reject_html_attributes(el) {
+        return render_error(error);
+    }
     if el.tag == "input" {
-        return crate::text_input::runtime_input(el, ctx, scope, bindings)
+        return crate::text_input::runtime_input(el, ctx, path, &bindings)
             .unwrap_or_else(render_error);
     }
     if el.tag == "textarea" {
@@ -188,68 +510,44 @@ fn render_element(
             "GPUI textarea/multiline editing is not implemented; register a native editor",
         );
     }
-    if !matches!(
-        el.tag.as_str(),
-        "div"
-            | "section"
-            | "article"
-            | "main"
-            | "header"
-            | "footer"
-            | "nav"
-            | "aside"
-            | "figure"
-            | "ul"
-            | "ol"
-            | "li"
-            | "span"
-            | "p"
-            | "label"
-            | "h1"
-            | "h2"
-            | "h3"
-            | "h4"
-            | "h5"
-            | "h6"
-            | "strong"
-            | "em"
-            | "small"
-            | "button"
-            | "img"
-            | "image"
-            | "svg"
-            | "slot-rotate"
-    ) {
-        return render_error(format!(
-            "Unregistered GPUI element `{}`; register a native factory",
-            el.tag
-        ));
+
+    // Web-only rotating text: GPUI shows the first phrase as a static preview.
+    if el.tag == "slot-rotate" {
+        let label = match slot_rotate_child_phrases(&el.children) {
+            Ok(phrases) => phrases.into_iter().next().unwrap_or_default(),
+            Err(error) => {
+                return div()
+                    .text_color(rgb(0xff4444))
+                    .child(SharedString::from(error.to_string()))
+                    .into_any_element();
+            }
+        };
+        let mut d = div();
+        for class in &el.classes {
+            d = apply_class_with_ctx(d, class, Some(ctx));
+        }
+        for cc in &el.conditional_classes {
+            if eval_condition_bool(ctx, &cc.condition) {
+                d = apply_class_with_ctx(d, &cc.class, Some(ctx));
+            }
+        }
+        return finish_element_bound(d.child(SharedString::from(label)), el, ctx, path, &bindings);
     }
-    let classes = el.classes.iter().map(String::as_str).chain(
-        el.conditional_classes
-            .iter()
-            .filter(|cc| eval_condition_bool(ctx, &cc.condition))
-            .map(|cc| cc.class.as_str()),
-    );
-    let mut d = apply_element_classes(
-        base_tag_element(&el.tag).id(SharedString::from(scope.to_owned())),
-        classes,
-        Some(ctx),
-    );
-    if el.tag == "button" {
-        d = d.role(gpui::accesskit::Role::Button);
+
+    let mut d = base_tag_element(&el.tag);
+
+    // Apply static and dynamic classes with context for expression resolution
+    for class in &el.classes {
+        d = apply_class_with_ctx(d, class, Some(ctx));
     }
-    if matches!(el.tag.as_str(), "img" | "image" | "svg") {
-        d = d.role(gpui::accesskit::Role::Image);
+
+    // Apply conditional classes
+    for cc in &el.conditional_classes {
+        if eval_condition_bool(ctx, &cc.condition) {
+            d = apply_class_with_ctx(d, &cc.class, Some(ctx));
+        }
     }
-    d = match crate::runtime_element::apply_bindings(d, el, ctx) {
-        Ok(d) => d,
-        Err(e) => return render_error(e),
-    };
-    d = match crate::runtime_element::apply_events(d, el, ctx, scope, bindings) {
-        Ok(d) => d,
-        Err(e) => return render_error(e),
-    };
+
     if el.tag == "img" || el.tag == "image" {
         let source = el
             .bindings
@@ -284,58 +582,169 @@ fn render_element(
             image = image.h(gpui::rems(1.));
         }
         d = d.child(image);
-    } else if el.tag == "slot-rotate" {
-        let label = slot_rotate_child_phrases(&el.children)
-            .ok()
-            .and_then(|p| p.into_iter().next())
-            .unwrap_or_default();
-        d = d.child(SharedString::from(label));
     } else {
-        d = d.children(render_children(&el.children, ctx.clone(), scope, bindings));
+        d = d.children(render_siblings_with_ctx(
+            &el.children,
+            ctx,
+            path,
+            slot,
+            cache,
+        ));
     }
-    if !el.animations.is_empty() {
-        if let Some(spec) = el.animations.iter().find(|a| {
-            !matches!(
-                a.property.as_str(),
-                "opacity"
-                    | "fade"
-                    | "fade-in"
-                    | "fade-out"
-                    | "pulse"
-                    | "slide-down"
-                    | "slide-up"
-                    | "slide-right"
-                    | "slide-left"
-                    | "grow"
-            )
-        }) {
-            return render_error(format!(
-                "Unsupported GPUI animation `{}`; use a native element",
-                spec.property
-            ));
-        }
-        return render_with_animations(d, &el.animations, scope);
-    }
-    d.into_any_element()
+
+    finish_element_bound(d, el, ctx, path, &bindings)
 }
 
-// Sizing utilities apply to the actual image; the semantic wrapper follows its
-// child. Raster auto dimensions retain CE intrinsic measurement. SVG defaults
-// to one rem because the pinned Svg has no intrinsic-size measurement.
 fn transfer_image_size(wrapper: &mut impl Styled, image: &mut impl Styled) {
     image.style().size = std::mem::take(&mut wrapper.style().size);
     image.style().min_size = std::mem::take(&mut wrapper.style().min_size);
     image.style().max_size = std::mem::take(&mut wrapper.style().max_size);
 }
 
-/// Wrap a div with GPUI animations based on the parsed animation specs.
-fn render_with_animations(
-    d: gpui::Stateful<gpui::Div>,
-    animations: &[AnimationSpec],
-    scope: &str,
+fn element_id(el: &Element, ctx: &TemplateContext) -> Option<SharedString> {
+    let value = if let Some(id) = &el.id {
+        id.clone()
+    } else {
+        let binding = el
+            .bindings
+            .iter()
+            .find(|binding| binding.matches_prop("id"))?;
+        let value = crepuscularity_core::eval::eval_binding(binding, ctx)
+            .ok()
+            .flatten()?;
+        value_to_str(&value)
+    };
+    (!value.is_empty()).then(|| SharedString::from(value))
+}
+
+fn element_state_style(
+    el: &Element,
+    ctx: &TemplateContext,
+    state: &str,
+    base: Option<&gpui::StyleRefinement>,
+) -> gpui::StyleRefinement {
+    let mut style = gpui::StyleRefinement::default();
+    for class in el.classes.iter().map(String::as_str).chain(
+        el.conditional_classes
+            .iter()
+            .filter(|class| eval_condition_bool(ctx, &class.condition))
+            .map(|class| class.class.as_str()),
+    ) {
+        let is_list = class.starts_with('{') && class.ends_with('}');
+        let resolved = if is_list {
+            ctx.interpolate(class).unwrap_or_default()
+        } else {
+            class.to_owned()
+        };
+        let classes = if is_list {
+            resolved.split_whitespace().collect::<Vec<_>>()
+        } else {
+            vec![resolved.as_str()]
+        };
+        for class in classes {
+            style = state_style_with_initial(style, std::iter::once(class), state, Some(ctx), base);
+        }
+    }
+    if style.box_shadow.as_ref() == base.and_then(|base| base.box_shadow.as_ref()) {
+        style.box_shadow = None;
+    }
+    style
+}
+
+fn finish_element_bound(
+    mut d: gpui::Div,
+    el: &Element,
+    ctx: &TemplateContext,
+    path: &str,
+    bindings: &crate::RuntimeBindings,
 ) -> AnyElement {
-    let id_str = scoped_id(scope, "animation");
-    let id = ElementId::Name(SharedString::from(id_str));
+    let hover = element_state_style(el, ctx, "hover", Some(d.style()));
+    let focus = element_state_style(el, ctx, "focus", Some(d.style()));
+    let active = element_state_style(el, ctx, "active", Some(d.style()));
+    let focusable = focus != gpui::StyleRefinement::default();
+    let scrolling = [d.style(), &hover, &focus, &active].iter().any(|style| {
+        style.overflow.x == Some(gpui::Overflow::Scroll)
+            || style.overflow.y == Some(gpui::Overflow::Scroll)
+    });
+    let needs_id = scrolling
+        || focusable
+        || active != gpui::StyleRefinement::default()
+        || !el.bindings.is_empty()
+        || !el.event_handlers.is_empty()
+        || matches!(el.tag.as_str(), "button" | "img" | "image" | "svg");
+    let d = d.hover(|_| hover).focus(|_| focus);
+    // Public explicit IDs retain their authored value. Internal template paths
+    // independently scope retained input state and runtime callback identities.
+    let id = element_id(el, ctx)
+        .or_else(|| needs_id.then(|| SharedString::from(format!("crepus-node-{path}"))));
+    if let Some(id) = id {
+        let mut d = d.id(id.clone()).active(|_| active);
+        if el.tag == "button" {
+            d = d.role(gpui::accesskit::Role::Button);
+        }
+        if matches!(el.tag.as_str(), "img" | "image" | "svg") {
+            d = d.role(gpui::accesskit::Role::Image);
+        }
+        d = match crate::runtime_element::apply_bindings(d, el, ctx) {
+            Ok(d) => d,
+            Err(error) => return render_error(error),
+        };
+        d = match crate::runtime_element::apply_events(d, el, ctx, path, bindings) {
+            Ok(d) => d,
+            Err(error) => return render_error(error),
+        };
+        if focusable && !crate::runtime_element::disabled(el, ctx).unwrap_or(true) {
+            d = d.focusable().tab_index(0);
+        }
+        if !el.animations.is_empty() {
+            render_with_animations(d, &el.animations, path, Some(id))
+        } else {
+            d.into_any_element()
+        }
+    } else if !el.animations.is_empty() {
+        render_with_animations(d, &el.animations, path, None)
+    } else {
+        d.into_any_element()
+    }
+}
+
+fn animation_id(path: &str, explicit_id: Option<SharedString>) -> SharedString {
+    explicit_id.unwrap_or_else(|| SharedString::from(format!("crepus-anim-{path}")))
+}
+
+// GPUI retains the sequence index and start time under this ID. Configuration
+// edits must start fresh, especially when a shorter sequence replaces an old one.
+fn animation_state_id(
+    path: &str,
+    explicit_id: Option<SharedString>,
+    animations: &[AnimationSpec],
+) -> SharedString {
+    let mut config = DefaultHasher::new();
+    animations.len().hash(&mut config);
+    for spec in animations {
+        spec.property.hash(&mut config);
+        parse_duration_ms(&spec.duration_expr)
+            .unwrap_or(300)
+            .hash(&mut config);
+        spec.easing.hash(&mut config);
+        spec.repeat.hash(&mut config);
+    }
+    SharedString::from(format!(
+        "{}-{:016x}",
+        animation_id(path, explicit_id),
+        config.finish()
+    ))
+}
+
+/// Wrap a div with GPUI animations based on the parsed animation specs.
+fn render_with_animations<E: Styled + IntoElement + 'static>(
+    d: E,
+    animations: &[AnimationSpec],
+    path: &str,
+    explicit_id: Option<SharedString>,
+) -> AnyElement {
+    // shortcut: positional IDs change on sibling reorder; use explicit IDs for reorderable nodes.
+    let id = ElementId::Name(animation_state_id(path, explicit_id, animations));
 
     if animations.len() == 1 {
         let spec = &animations[0];
@@ -396,6 +805,11 @@ fn apply_animation_property<E: Styled>(d: E, property: &str, delta: f32) -> E {
         "opacity" | "fade" | "fade-in" => d.opacity(delta),
         "fade-out" => d.opacity(1.0 - delta),
         "pulse" => d.opacity(0.4 + delta * 0.6),
+        "scale" => {
+            // Scale from 0.8 to 1.0
+            let scale = 0.8 + delta * 0.2;
+            d.opacity(scale) // GPUI doesn't have transform: scale; use opacity as approximation
+        }
         "slide-down" => {
             // Slide from -10px to 0px
             let offset = gpui::px(-10.0 * (1.0 - delta));
@@ -446,139 +860,223 @@ fn render_text(parts: &[TextPart], ctx: &TemplateContext) -> String {
 fn render_if(
     block: &IfBlock,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
     if eval_condition_bool(ctx, &block.condition) {
-        render_nodes_with_ctx(
-            &block.then_children,
-            ctx.clone(),
-            &scoped_id(scope, "then"),
-            bindings,
-        )
+        render_nodes_at_path(&block.then_children, ctx, path, slot, cache)
     } else if let Some(else_children) = &block.else_children {
-        render_nodes_with_ctx(
-            else_children,
-            ctx.clone(),
-            &scoped_id(scope, "else"),
-            bindings,
-        )
+        render_nodes_at_path(else_children, ctx, path, slot, cache)
     } else {
         div().into_any_element()
+    }
+}
+
+fn for_each_loop_context(
+    block: &ForBlock,
+    ctx: &TemplateContext,
+    mut visit: impl FnMut(&TemplateContext),
+) {
+    let TemplateValue::List(items) = eval_expr_value(&block.iterator, ctx) else {
+        return;
+    };
+    let mut child_ctx = ctx.clone();
+    let pattern = block.pattern.trim();
+    let mut overwritten = Vec::new();
+    for item_ctx in items {
+        for (key, value) in &item_ctx.vars {
+            overwritten.push((
+                key.clone(),
+                child_ctx.vars.insert(key.clone(), value.clone()),
+            ));
+        }
+        if !pattern.is_empty() {
+            let value = item_ctx
+                .get("value")
+                .cloned()
+                .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()));
+            overwritten.push((
+                pattern.to_string(),
+                child_ctx.vars.insert(pattern.to_string(), value),
+            ));
+        }
+        visit(&child_ctx);
+        // Reverse restores duplicate writes when an item field is also the alias.
+        for (key, value) in overwritten.drain(..).rev() {
+            match value {
+                Some(value) => {
+                    child_ctx.vars.insert(key, value);
+                }
+                None => {
+                    child_ctx.vars.remove(&key);
+                }
+            }
+        }
     }
 }
 
 fn render_for(
     block: &ForBlock,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
-    let items = match crepuscularity_core::eval::eval_expr(&block.iterator, ctx) {
-        Ok(TemplateValue::List(items)) => items,
-        Ok(_) => return render_error("GPUI loop iterator must evaluate to a list"),
-        Err(e) => return render_error(e.to_string()),
-    };
-
-    let mut d = div();
-    let mut child_ctx = ctx.clone();
-    let pattern = block.pattern.trim();
-    let has_pattern = !pattern.is_empty();
+    let mut children = Vec::new();
     let mut keys = std::collections::HashSet::new();
-    for (index, item_ctx) in items.iter().enumerate() {
-        child_ctx.vars.clone_from(&ctx.vars);
-        child_ctx.vars.extend(item_ctx.vars.clone());
-        if has_pattern {
-            let value = if item_ctx.vars.len() == 1 {
-                item_ctx
-                    .vars
-                    .get("value")
-                    .cloned()
-                    .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()))
-            } else {
-                TemplateValue::Scope(item_ctx.clone())
-            };
-            child_ctx.vars.insert(pattern.to_owned(), value);
+    let mut failure = None;
+    for_each_loop_context(block, ctx, |child_ctx| {
+        if failure.is_some() {
+            return;
         }
         let key = if let [Node::Element(root)] = block.body.as_slice() {
             root.bindings
                 .iter()
-                .find(|b| b.prop == "key")
-                .map(|b| value_to_str(&eval_expr_value(&b.value, &child_ctx)))
+                .find(|binding| binding.prop == "key")
+                .map(|binding| {
+                    crepuscularity_core::eval::eval_expr(&binding.value, child_ctx)
+                        .map(|value| value_to_str(&value))
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()
         } else {
-            None
-        }
-        .unwrap_or_else(|| index.to_string());
+            Ok(None)
+        };
+        let key = match key {
+            Ok(key) => key.unwrap_or_else(|| children.len().to_string()),
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
         if !keys.insert(key.clone()) {
-            return render_error(format!("Duplicate GPUI loop key `{key}`"));
+            failure = Some(format!("Duplicate GPUI loop key `{key}`"));
+            return;
         }
-        let child = render_nodes_with_ctx(
+        children.push(render_nodes_at_path(
             &block.body,
-            child_ctx.clone(),
-            &scoped_id(scope, &format!("item:{key}")),
-            bindings,
-        );
-        d = d.child(child);
-    }
-    d.into_any_element()
+            child_ctx,
+            &scoped_id(path, &format!("item:{key}")),
+            slot,
+            cache,
+        ));
+    });
+    failure
+        .map(render_error)
+        .unwrap_or_else(|| div().children(children).into_any_element())
 }
 
 fn render_match(
     block: &MatchBlock,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
     let val = eval_expr_value(&block.expr, ctx);
     let value = value_to_str(&val);
 
-    for (index, arm) in block.arms.iter().enumerate() {
+    for arm in &block.arms {
         let pattern = arm.pattern.trim();
         if pattern == "_" {
-            return render_nodes_with_ctx(
-                &arm.body,
-                ctx.clone(),
-                &scoped_id(scope, &format!("arm:{index}")),
-                bindings,
-            );
+            return render_nodes_at_path(&arm.body, ctx, path, slot, cache);
         }
-        if pattern.starts_with('"') && pattern.ends_with('"') {
-            let lit = &pattern[1..pattern.len() - 1];
+        if let Some(literal) = pattern.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            let lit = crepuscularity_core::parser::unescape_crepus_text_literal(literal);
             if value == lit {
-                return render_nodes_with_ctx(
-                    &arm.body,
-                    ctx.clone(),
-                    &scoped_id(scope, &format!("arm:{index}")),
-                    bindings,
-                );
+                return render_nodes_at_path(&arm.body, ctx, path, slot, cache);
             }
-        }
-        if value == pattern {
-            return render_nodes_with_ctx(
-                &arm.body,
-                ctx.clone(),
-                &scoped_id(scope, &format!("arm:{index}")),
-                bindings,
-            );
+        } else if value == pattern {
+            return render_nodes_at_path(&arm.body, ctx, path, slot, cache);
         }
     }
 
     div().into_any_element()
 }
 
+thread_local! {
+    static INCLUDE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct IncludeGuard(std::marker::PhantomData<std::rc::Rc<()>>);
+
+impl IncludeGuard {
+    fn enter() -> Option<Self> {
+        INCLUDE_DEPTH.with(|depth| {
+            if depth.get() >= 64 {
+                return None;
+            }
+            depth.set(depth.get() + 1);
+            Some(Self(std::marker::PhantomData))
+        })
+    }
+}
+
+impl Drop for IncludeGuard {
+    fn drop(&mut self) {
+        INCLUDE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
 fn render_include(
     inc: &IncludeNode,
     ctx: &TemplateContext,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
+    stacker::maybe_grow(512 * 1024, 2 * 1024 * 1024, || {
+        render_include_inner(inc, ctx, path, slot, cache)
+    })
+}
+
+fn include_context(ctx: &TemplateContext, path: &std::path::Path) -> TemplateContext {
+    let mut child = TemplateContext::new();
+    child.base_dir = path.parent().map(|path| path.to_path_buf());
+    child.virtual_files = Arc::clone(&ctx.virtual_files);
+    for key in [
+        "crepus_target",
+        "is_gui",
+        "is_tui",
+        "is_web",
+        "crepus_platform",
+        "is_macos",
+        "is_windows",
+        "is_linux",
+    ] {
+        if let Some(value) = ctx.get(key) {
+            child.vars.insert(key.into(), value.clone());
+        }
+    }
+    child
+}
+
+#[cfg(test)]
+fn include_nodes(ctx: &TemplateContext, path: &std::path::Path) -> Result<Arc<Vec<Node>>, String> {
+    IncludeCache::default().nodes(ctx, path)
+}
+
+fn render_include_inner(
+    inc: &IncludeNode,
+    ctx: &TemplateContext,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
+) -> AnyElement {
+    let Some(_guard) = IncludeGuard::enter() else {
+        return div()
+            .text_color(rgb(0xff4444))
+            .child("maximum include depth (64) exceeded; possible circular include")
+            .into_any_element();
+    };
     // Multi-component syntax: "path/file.crepus#ComponentName"
     if let Some((file_part, comp_name)) = inc.path.split_once('#') {
-        return render_named_component(inc, ctx, file_part, comp_name, scope, bindings);
+        return render_named_component(inc, ctx, file_part, comp_name, path, slot, cache);
     }
 
     // Single-component file: resolve path relative to the current file's directory.
-    let file_path = match resolve_include_path(ctx.base_dir.as_deref(), &inc.path) {
+    let file_path = match cache.resolve(ctx, &inc.path) {
         Ok(path) => path,
         Err(e) => {
             return div()
@@ -588,7 +1086,8 @@ fn render_include(
         }
     };
 
-    let nodes = match crepuscularity_core::ast_cache::parse_file(&file_path) {
+    let frontend = crepuscularity_core::include_paths::include_frontend_path(&file_path, &inc.path);
+    let nodes = match cache.nodes_with_frontend(ctx, &file_path, &frontend) {
         Ok(n) => n,
         Err(e) => {
             return div()
@@ -599,19 +1098,25 @@ fn render_include(
     };
 
     // Build child context: fresh vars from evaluated props, correct base_dir, and slot.
-    let mut child_ctx = TemplateContext::new();
-    child_ctx.base_dir = file_path.parent().map(|p| p.to_path_buf());
+    let mut child_ctx = include_context(ctx, &file_path);
 
     for (key, expr) in &inc.props {
         let val = eval_expr_value(expr, ctx);
         child_ctx.vars.insert(key.clone(), val);
     }
 
-    if !inc.slot.is_empty() {
-        child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-    }
-
-    render_nodes_with_ctx(nodes.as_ref(), child_ctx, scope, bindings)
+    let frame = SlotFrame {
+        nodes: &inc.slot,
+        context: ctx,
+        caller_slot: slot,
+    };
+    render_nodes_at_path(
+        nodes.as_ref(),
+        &child_ctx,
+        path,
+        (!inc.slot.is_empty()).then_some(&frame),
+        cache,
+    )
 }
 
 /// Render a named component from a multi-component file (`path#Name` syntax).
@@ -620,10 +1125,11 @@ fn render_named_component(
     ctx: &TemplateContext,
     file_part: &str,
     comp_name: &str,
-    scope: &str,
-    bindings: &RuntimeBindings,
+    path: &str,
+    slot: Option<&SlotFrame<'_>>,
+    cache: &mut IncludeCache,
 ) -> AnyElement {
-    let file_path = match resolve_include_path(ctx.base_dir.as_deref(), file_part) {
+    let file_path = match cache.resolve(ctx, file_part) {
         Ok(path) => path,
         Err(e) => {
             return div()
@@ -633,24 +1139,12 @@ fn render_named_component(
         }
     };
 
-    let content = match std::fs::read_to_string(&file_path) {
-        Ok(c) => c,
-        Err(e) => {
-            let msg = format!("include error: {:?}: {}", file_path, e);
+    let comp_file = match cache.components(ctx, &file_path) {
+        Ok(components) => components,
+        Err(message) => {
             return div()
                 .text_color(rgb(0xff4444))
-                .child(SharedString::from(msg))
-                .into_any_element();
-        }
-    };
-
-    let comp_file = match crepuscularity_core::parser::parse_component_file(&content) {
-        Ok(cf) => cf,
-        Err(e) => {
-            let msg = format!("component file parse error: {e}");
-            return div()
-                .text_color(rgb(0xff4444))
-                .child(SharedString::from(msg))
+                .child(SharedString::from(message))
                 .into_any_element();
         }
     };
@@ -673,8 +1167,7 @@ fn render_named_component(
         }
     };
 
-    let mut child_ctx = TemplateContext::new();
-    child_ctx.base_dir = file_path.parent().map(|p| p.to_path_buf());
+    let mut child_ctx = include_context(ctx, &file_path);
 
     // Inject TOML defaults first — passed props override them.
     for (key, expr) in &comp.meta.defaults {
@@ -688,49 +1181,1901 @@ fn render_named_component(
         child_ctx.vars.insert(key.clone(), val);
     }
 
-    if !inc.slot.is_empty() {
-        child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-    }
-
-    render_nodes_with_ctx(&comp.nodes, child_ctx, scope, bindings)
+    let frame = SlotFrame {
+        nodes: &inc.slot,
+        context: ctx,
+        caller_slot: slot,
+    };
+    render_nodes_at_path(
+        &comp.nodes,
+        &child_ctx,
+        path,
+        (!inc.slot.is_empty()).then_some(&frame),
+        cache,
+    )
 }
 
 #[cfg(test)]
 mod identity_tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn explicit_ids_are_scoped_and_stable_when_siblings_reorder() {
-        let nodes = crepuscularity_core::parser::parse_template("button #save").unwrap();
+    #[ignore = "requires a Metal device"]
+    fn text_and_unsupported_island_diagnostics_are_painted() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct TextView(Vec<Node>);
+        impl gpui::Render for TextView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .bg(rgb(0xffffff))
+                    .text_size(gpui::px(16.0))
+                    .line_height(gpui::px(20.0))
+                    .font_family("Helvetica")
+                    .child(render_nodes(&self.0, &TemplateContext::new()))
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (source, expected) in [
+            ("span text-[#ff4444] \"FONT CHECK\"", true),
+            ("embed widget.js adapter=\"react\"", true),
+            ("div\n  embed widget.js adapter=\"react\"", true),
+            ("if is_gui\n  embed widget.js adapter=\"react\"", true),
+            ("slot-rotate\n  embed widget.js adapter=\"react\"", true),
+            ("if is_web\n  embed widget.js adapter=\"react\"", false),
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let window = cx
+                .open_window(
+                    gpui::size(gpui::px(900.0), gpui::px(100.0)),
+                    move |_, app| app.new(|_| TextView(nodes)),
+                )
+                .unwrap()
+                .into();
+            cx.update_window(window, |_, window, app| {
+                window.draw(app).clear(app);
+            })
+            .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let has_red = image.pixels().any(|pixel| {
+                let [r, g, b, a] = pixel.0;
+                r > 180 && g < 130 && b < 130 && a > 0
+            });
+            assert_eq!(has_red, expected, "{source}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn worker_prepared_nested_includes_paint_frozen_and_refreshed_snapshots() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct PreparedView(Vec<Node>, TemplateContext, Arc<PreparedIncludes>);
+        impl gpui::Render for PreparedView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .bg(rgb(0xffffff))
+                    .font_family("Helvetica")
+                    .child(render_nodes_prepared(&self.0, &self.1, Arc::clone(&self.2)))
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        let ordinary = dir.path().join("ordinary.crepus");
+        let named = dir.path().join("nested/named.crepus");
+        std::fs::write(&ordinary, "include nested/named.crepus#Card").unwrap();
+        let source = |color| format!("--- Card\ndiv w-[40px] h-[40px] bg-[{color}]");
+        std::fs::write(&named, source("#ff0000")).unwrap();
+        let nodes = crepuscularity_core::parse_template("include ordinary.crepus").unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().into());
+        let caller = std::thread::current().id();
+        let prepare = || {
+            let nodes = nodes.clone();
+            let ctx = ctx.clone();
+            let (prepared, worker) = std::thread::spawn(move || {
+                (prepare_includes(&nodes, &ctx), std::thread::current().id())
+            })
+            .join()
+            .unwrap();
+            assert_ne!(worker, caller);
+            prepared
+        };
+        let red = prepare();
+        std::fs::write(&named, source("#0000ff")).unwrap();
+        let blue = prepare();
+        std::fs::remove_file(&ordinary).unwrap();
+        std::fs::remove_file(&named).unwrap();
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (prepared, expected) in [(red, [255, 0, 0, 255]), (blue, [0, 0, 255, 255])] {
+            let nodes = nodes.clone();
+            let ctx = ctx.clone();
+            let window = cx
+                .open_window(gpui::size(gpui::px(60.0), gpui::px(60.0)), move |_, app| {
+                    app.new(|_| PreparedView(nodes, ctx, prepared))
+                })
+                .unwrap()
+                .into();
+            cx.update_window(window, |_, window, app| {
+                window.draw(app).clear(app);
+            })
+            .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 60;
+            assert_eq!(image.get_pixel(10 * scale, 10 * scale).0, expected);
+            assert!(
+                image.pixels().filter(|pixel| pixel.0 == expected).count()
+                    >= (20 * scale * 20 * scale) as usize
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    // Concurrent headless Metal setup aborts; serialize the GPU fixtures.
+    pub(super) static METAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn arbitrary_color_opacity_paints_over_the_parent_background() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct OpacityView(Vec<Node>);
+        impl gpui::Render for OpacityView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &TemplateContext::new())
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (color, expected) in [
+            ("[#ff0000]/50", [255, 128, 128, 255]),
+            ("transparent/50", [255, 255, 255, 255]),
+            ("clear/100", [255, 255, 255, 255]),
+        ] {
+            let nodes = crepuscularity_core::parse_template(&format!(
+                "div w-[100px] h-[40px] bg-white\n  div size-full bg-{color}"
+            ))
+            .unwrap();
+            let window = cx
+                .open_window(
+                    gpui::size(gpui::px(120.0), gpui::px(60.0)),
+                    move |_, app| app.new(|_| OpacityView(nodes)),
+                )
+                .unwrap()
+                .into();
+            cx.update_window(window, |_, window, app| {
+                window.draw(app).clear(app);
+            })
+            .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 120;
+            assert_eq!(image.get_pixel(10 * scale, 10 * scale).0, expected);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn grid_and_flex_utilities_preserve_the_expected_painted_layout() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct GridView(Vec<Node>);
+        impl gpui::Render for GridView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &TemplateContext::new())
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (source, samples) in [
+            ("div grid grid-cols-2 grid-cols-0 grid-rows-2 grid-rows-0 w-[100px] h-[80px]\n  div bg-[#ff0000]\n  div bg-[#0000ff] col-start-2 col-start-0 col-end-3 col-end-0 row-start-1 row-start-0 row-end-2 row-end-0\n  div bg-[#00ff00] row-start-2 col-start-1\n  div bg-[#ffff00] row-start-2 col-start-2 col-span-1 col-span-0 row-span-1 row-span-0", [(10, 10, [255, 0, 0, 255]), (75, 10, [0, 0, 255, 255]), (10, 60, [0, 255, 0, 255]), (75, 60, [255, 255, 0, 255])]),
+            ("div flex flex-col items-center items-stretch justify-between justify-evenly w-[100px] h-[100px] bg-white\n  div h-[20px] bg-[#ff0000]\n  div h-[20px] bg-[#0000ff]", [(10, 25, [255, 0, 0, 255]), (10, 65, [0, 0, 255, 255]), (10, 5, [255, 255, 255, 255]), (10, 45, [255, 255, 255, 255])]),
+        ] {
+        let nodes = crepuscularity_core::parse_template(source).unwrap();
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(120.0), gpui::px(120.0)),
+                move |_, app| app.new(|_| GridView(nodes)),
+            )
+            .unwrap()
+            .into();
+        cx.update_window(window, |_, window, app| {
+            window.draw(app).clear(app);
+        })
+        .unwrap();
+        let image = cx.capture_screenshot(window).unwrap();
+        let scale = image.width() / 120;
+        for (x, y, expected) in samples {
+            assert_eq!(image.get_pixel(x * scale, y * scale).0, expected);
+        }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn interaction_styles_paint_active_and_focused_colors() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::{AppContext, InputEvent};
+        struct PaintView(Vec<Node>, TemplateContext);
+        impl gpui::Render for PaintView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &self.1)
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for source in [
+            "div flex flex-col\n  button w-[100px] h-[40px] bg-[#ff0000] active:bg-[#0000ff] focus:bg-[#00ff00]\n  button w-[100px] h-[40px] bg-[#ff0000] active:bg-[#0000ff] focus:bg-[#00ff00]",
+            "div flex flex-col\n  for item in items\n    button w-[100px] h-[40px] bg-[#ff0000] active:bg-[#0000ff] focus:bg-[#00ff00]",
+        ] {
+        let nodes = crepuscularity_core::parse_template(source).unwrap();
+        let mut template_context = TemplateContext::new();
+        template_context.set("items", TemplateValue::List(vec![TemplateContext::new(), TemplateContext::new()]));
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(120.0), gpui::px(100.0)),
+                move |_, app| app.new(|_| PaintView(nodes, template_context)),
+            )
+            .unwrap()
+            .into();
+        let pixel = |cx: &mut gpui::HeadlessAppContext| {
+            cx.update_window(window, |_, window, app| {
+                window.draw(app).clear(app);
+            })
+            .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 120;
+            [image.get_pixel(10 * scale, 10 * scale).0, image.get_pixel(10 * scale, 50 * scale).0]
+        };
+        assert_eq!(pixel(&mut cx), [[255, 0, 0, 255], [255, 0, 0, 255]], "{source}");
+        cx.update_window(window, |_, window, app| {
+            window.dispatch_event(
+                gpui::MouseDownEvent {
+                    position: gpui::point(gpui::px(10.0), gpui::px(10.0)),
+                    button: gpui::MouseButton::Left,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                app,
+            );
+        })
+        .unwrap();
+        assert_eq!(pixel(&mut cx), [[0, 0, 255, 255], [255, 0, 0, 255]], "{source}");
+        cx.update_window(window, |_, window, app| {
+            window.dispatch_event(
+                gpui::MouseUpEvent {
+                    position: gpui::point(gpui::px(10.0), gpui::px(10.0)),
+                    button: gpui::MouseButton::Left,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                app,
+            );
+        })
+        .unwrap();
+        assert_eq!(pixel(&mut cx), [[0, 255, 0, 255], [255, 0, 0, 255]], "{source}");
+        cx.update_window(window, |_, window, app| window.focus_next(app)).unwrap();
+        assert_eq!(pixel(&mut cx), [[255, 0, 0, 255], [0, 255, 0, 255]], "{source}");
+        }
+    }
+
+    #[gpui::test]
+    fn idless_focus_styles_participate_in_window_focus_navigation(cx: &mut gpui::TestAppContext) {
+        struct FocusView(Vec<Node>);
+        impl gpui::Render for FocusView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &TemplateContext::new())
+            }
+        }
+        let nodes = crepuscularity_core::parse_template("div flex flex-col\n  button w-[100px] h-[40px] focus:bg-red-500\n  button w-[100px] h-[40px] focus:bg-blue-500").unwrap();
+        let (_, cx) = cx.add_window_view(move |_, _| FocusView(nodes));
+        cx.simulate_click(
+            gpui::point(gpui::px(10.0), gpui::px(10.0)),
+            gpui::Modifiers::default(),
+        );
+        let first = cx.update(|window, app| window.focused(app).unwrap());
+        cx.simulate_click(
+            gpui::point(gpui::px(10.0), gpui::px(50.0)),
+            gpui::Modifiers::default(),
+        );
+        let second = cx.update(|window, app| window.focused(app).unwrap());
+        assert_ne!(first, second);
+        cx.update(|window, app| window.focus_prev(app));
+        assert_eq!(cx.update(|window, app| window.focused(app).unwrap()), first);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn scroll_wheel_moves_painted_content_and_preserves_clipping() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::{AppContext, InputEvent};
+        struct ScrollView(Vec<Node>);
+        impl gpui::Render for ScrollView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &TemplateContext::new())
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (class, horizontal) in [
+            ("overflow-auto", false),
+            ("overflow-scroll", true),
+            ("overflow-x-auto", true),
+            ("overflow-x-scroll", true),
+            ("overflow-y-auto", false),
+            ("overflow-y-scroll", false),
+        ] {
+            let direction = if horizontal { "flex-row" } else { "flex-col" };
+            let source = format!("div w-[120px] h-[100px] bg-white\n  div flex {direction} w-[40px] h-[40px] {class}\n    div shrink-0 w-[40px] h-[40px] bg-[#ff0000]\n    div shrink-0 w-[40px] h-[40px] bg-[#0000ff]");
+            let nodes = crepuscularity_core::parse_template(&source).unwrap();
+            let window = cx
+                .open_window(
+                    gpui::size(gpui::px(120.0), gpui::px(100.0)),
+                    move |_, app| app.new(|_| ScrollView(nodes)),
+                )
+                .unwrap()
+                .into();
+            let pixels = |cx: &mut gpui::HeadlessAppContext| {
+                cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+                    .unwrap();
+                let image = cx.capture_screenshot(window).unwrap();
+                let scale = image.width() / 120;
+                [
+                    image.get_pixel(10 * scale, 10 * scale).0,
+                    image
+                        .get_pixel(
+                            if horizontal { 50 * scale } else { 10 * scale },
+                            if horizontal { 10 * scale } else { 50 * scale },
+                        )
+                        .0,
+                ]
+            };
+            assert_eq!(
+                pixels(&mut cx),
+                [[255, 0, 0, 255], [255, 255, 255, 255]],
+                "{class}"
+            );
+            cx.update_window(window, |_, window, app| {
+                window.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: gpui::point(gpui::px(10.0), gpui::px(10.0)),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(
+                            gpui::px(if horizontal { -40.0 } else { 0.0 }),
+                            gpui::px(if horizontal { 0.0 } else { -40.0 }),
+                        )),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    app,
+                );
+            })
+            .unwrap();
+            assert_eq!(
+                pixels(&mut cx),
+                [[0, 0, 255, 255], [255, 255, 255, 255]],
+                "{class}"
+            );
+            assert_eq!(
+                pixels(&mut cx),
+                [[0, 0, 255, 255], [255, 255, 255, 255]],
+                "scroll position persists for {class}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn runtime_state_shadow_resets_preserve_the_other_shadow_kind() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::{AppContext, InputEvent};
+        struct StateShadowView(Vec<Node>, TemplateContext);
+        impl gpui::Render for StateShadowView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &self.1)
+            }
+        }
+        let nodes = crepuscularity_core::parse_template("div flex flex-row gap-[20px] bg-white\n  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 hover:ring-0\n  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class={state_classes}").unwrap();
+        let mut template_context = TemplateContext::new();
+        template_context.set("state_classes", "hover:shadow-none");
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(160.0), gpui::px(80.0)),
+                move |_, app| app.new(|_| StateShadowView(nodes, template_context)),
+            )
+            .unwrap()
+            .into();
+        let pixels = |cx: &mut gpui::HeadlessAppContext| {
+            cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+                .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 160;
+            [6, 9, 82, 85].map(|x| image.get_pixel(x * scale, 28 * scale).0)
+        };
+        let initial = pixels(&mut cx);
+        for x in [28.0, 104.0] {
+            cx.update_window(window, |_, window, app| {
+                window.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: gpui::point(gpui::px(x), gpui::px(28.0)),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    app,
+                );
+            })
+            .unwrap();
+            let actual = pixels(&mut cx);
+            if x == 28.0 {
+                assert_eq!(actual[0], initial[0]);
+                assert_eq!(actual[1], [255, 255, 255, 255]);
+            } else {
+                assert_eq!(actual[1], initial[1]);
+                assert_eq!(actual[2], [255, 255, 255, 255]);
+                assert_eq!(actual[3], initial[3]);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn dynamic_state_shadow_resets_preserve_the_other_shadow_kind() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::{AppContext, InputEvent};
+        struct StateShadowView(Vec<Node>, TemplateContext);
+        impl gpui::Render for StateShadowView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &self.1)
+            }
+        }
+        let nodes = crepuscularity_core::parse_template("div flex flex-row gap-[20px] bg-white\n  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class=\"hover:{first}\"\n  div m-[8px] size-[40px] bg-white shadow-lg ring-inset ring-4 class=\"hover:p-{second}\"").unwrap();
+        let mut template_context = TemplateContext::new();
+        template_context.set("first", "ring-0");
+        template_context.set("second", "0 shadow-none");
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(160.0), gpui::px(80.0)),
+                move |_, app| app.new(|_| StateShadowView(nodes, template_context)),
+            )
+            .unwrap()
+            .into();
+        let pixels = |cx: &mut gpui::HeadlessAppContext| {
+            cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+                .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 160;
+            [6, 9, 82, 85].map(|x| image.get_pixel(x * scale, 28 * scale).0)
+        };
+        let initial = pixels(&mut cx);
+        for x in [28.0, 104.0] {
+            cx.update_window(window, |_, window, app| {
+                window.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: gpui::point(gpui::px(x), gpui::px(28.0)),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    app,
+                );
+            })
+            .unwrap();
+            let actual = pixels(&mut cx);
+            if x == 28.0 {
+                assert_eq!(actual[0], initial[0]);
+                assert_eq!(actual[1], [255, 255, 255, 255]);
+            } else {
+                assert_eq!(actual[1], initial[1]);
+                assert_eq!(actual[2], [255, 255, 255, 255]);
+                assert_eq!(actual[3], initial[3]);
+            }
+        }
+    }
+
+    #[test]
+    fn state_shadow_resets_compose_with_base_rings_and_shadows() {
+        let nodes = crepuscularity_core::parse_template(
+            "div hover:ring-0\ndiv hover:shadow-none\ndiv hover:ring-inset",
+        )
+        .unwrap();
+        let mut base = crate::styler::apply_class_list(gpui::div(), "shadow-md ring-2");
+        for (index, node) in nodes.iter().enumerate() {
+            let Node::Element(element) = node else {
+                panic!("expected element")
+            };
+            let actual = element_state_style(
+                element,
+                &TemplateContext::new(),
+                "hover",
+                Some(base.style()),
+            );
+            let class = ["ring-0", "shadow-none", "ring-inset"][index];
+            let mut expected = gpui::div();
+            expected.style().box_shadow = base.style().box_shadow.clone();
+            let mut expected = crate::styler::apply_class(expected, class);
+            assert_eq!(actual.box_shadow, expected.style().box_shadow);
+        }
+    }
+
+    #[test]
+    fn scrolling_elements_have_stable_distinct_ids_and_axis_styles() {
+        let nodes = crepuscularity_core::parse_template("div overflow-auto\ndiv overflow-x-scroll\ndiv hover:overflow-y-auto\ndiv overflow-scroll overflow-visible\ndiv #explicit overflow-y-scroll").unwrap();
+        let ids = || {
+            let mut rendered = render_siblings_with_ctx(
+                &nodes,
+                &TemplateContext::new(),
+                "root",
+                None,
+                &mut IncludeCache::default(),
+            );
+            let mut ids = Vec::new();
+            for index in [0, 1, 2, 4] {
+                let element = rendered[index]
+                    .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                    .unwrap();
+                ids.push(gpui::Element::id(element).unwrap());
+                if index == 0 {
+                    assert_eq!(element.style().overflow.x, Some(gpui::Overflow::Scroll));
+                    assert_eq!(element.style().overflow.y, Some(gpui::Overflow::Scroll));
+                } else if index == 1 {
+                    assert_eq!(element.style().overflow.x, Some(gpui::Overflow::Scroll));
+                    assert_eq!(element.style().overflow.y, None);
+                }
+            }
+            assert!(rendered[3].downcast_mut::<gpui::Div>().is_some());
+            ids
+        };
+        let first = ids();
+        assert_eq!(first, ids());
+        assert_ne!(first[0], first[1]);
+        assert_ne!(first[1], first[2]);
+        assert_eq!(first[3], ElementId::Name("explicit".into()));
+    }
+
+    #[test]
+    fn interaction_styles_give_idless_elements_distinct_gpui_identities() {
+        let nodes = crepuscularity_core::parse_template("button active:bg-red-500\nbutton focus:bg-blue-500\ndiv\nbutton #explicit active:bg-black").unwrap();
+        let mut rendered = render_siblings_with_ctx(
+            &nodes,
+            &TemplateContext::new(),
+            "root",
+            None,
+            &mut IncludeCache::default(),
+        );
+        let mut ids = Vec::new();
+        for index in [0, 1, 3] {
+            let element = rendered[index]
+                .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                .unwrap();
+            ids.push(gpui::Element::id(element).unwrap());
+        }
+        assert_ne!(ids[0], ids[1]);
+        assert_eq!(ids[2], ElementId::Name("explicit".into()));
+        assert!(rendered[2].downcast_mut::<gpui::Div>().is_some());
+    }
+
+    #[test]
+    fn idless_sibling_animations_have_distinct_stable_gpui_ids() {
+        let nodes = crepuscularity_core::parse_template(
+            "div animate:opacity={100ms linear}\ndiv animate:opacity={200ms linear}",
+        )
+        .unwrap();
+        let ids = || {
+            render_siblings_with_ctx(
+                &nodes,
+                &TemplateContext::new(),
+                "root",
+                None,
+                &mut IncludeCache::default(),
+            )
+            .iter_mut()
+            .map(|element| {
+                let animation = element
+                    .downcast_mut::<gpui::AnimationElement<gpui::Div>>()
+                    .unwrap();
+                gpui::Element::id(animation).unwrap()
+            })
+            .collect::<Vec<_>>()
+        };
+        let first = ids();
+        assert_ne!(first[0], first[1]);
+        assert_eq!(first, ids());
+        assert_eq!(
+            animation_id("root/0", Some("explicit".into())).as_ref(),
+            "explicit"
+        );
+    }
+
+    #[test]
+    fn animation_state_identity_changes_with_ordered_configuration() {
+        let spec = AnimationSpec {
+            property: "opacity".into(),
+            duration_expr: "100ms".into(),
+            easing: "linear".into(),
+            repeat: false,
+        };
+        let id =
+            |specs: &[AnimationSpec]| animation_state_id("root/0", Some("explicit".into()), specs);
+        let original = id(std::slice::from_ref(&spec));
+        assert_eq!(original, id(std::slice::from_ref(&spec)));
+        for changed in [
+            AnimationSpec {
+                property: "scale".into(),
+                ..spec.clone()
+            },
+            AnimationSpec {
+                duration_expr: "200ms".into(),
+                ..spec.clone()
+            },
+            AnimationSpec {
+                easing: "bounce".into(),
+                ..spec.clone()
+            },
+            AnimationSpec {
+                repeat: true,
+                ..spec.clone()
+            },
+        ] {
+            assert_ne!(original, id(std::slice::from_ref(&changed)));
+            assert_ne!(
+                id(&[spec.clone(), changed.clone()]),
+                id(&[changed, spec.clone()])
+            );
+        }
+        assert_ne!(original, id(&[spec.clone(), spec]));
+        assert_eq!(
+            animation_id("root/0", Some("explicit".into())).as_ref(),
+            "explicit"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn quoted_dimension_expressions_repaint_when_context_changes() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct DimensionView(Vec<Node>, TemplateContext);
+        impl gpui::Render for DimensionView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                render_nodes(&self.0, &self.1)
+            }
+        }
+        let nodes = crepuscularity_core::parse_template(
+            "div size-full bg-white\n  div class=\"w-[{width + 0}px] h-[{height + 0}px] bg-red-500\"",
+        )
+        .unwrap();
+        let mut context = TemplateContext::new();
+        context.set("width", 30_i64);
+        context.set("height", 20_i64);
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let entity = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let captured = entity.clone();
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(100.0), gpui::px(100.0)),
+                move |_, app| {
+                    let view = app.new(|_| DimensionView(nodes, context));
+                    *captured.borrow_mut() = Some(view.clone());
+                    view
+                },
+            )
+            .unwrap()
+            .into();
+        let assert_bounds = |cx: &mut gpui::HeadlessAppContext, width: u32, height: u32| {
+            cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+                .unwrap();
+            let image = cx.capture_screenshot(window).unwrap();
+            let scale = image.width() / 100;
+            for y in 0..100 {
+                for x in 0..100 {
+                    let pixel = image.get_pixel(x * scale, y * scale).0;
+                    if x < width && y < height {
+                        assert!(
+                            pixel[0] > 150 && pixel[1] < 130 && pixel[2] < 130,
+                            "expected red at ({x}, {y}), got {pixel:?}"
+                        );
+                    } else {
+                        assert_eq!(pixel, [255, 255, 255, 255], "({x}, {y})");
+                    }
+                }
+            }
+        };
+        assert_bounds(&mut cx, 30, 20);
+        cx.update_window(window, |_, _, app| {
+            entity.borrow().as_ref().unwrap().update(app, |view, cx| {
+                view.1.set("width", 60_i64);
+                view.1.set("height", 40_i64);
+                cx.notify();
+            });
+        })
+        .unwrap();
+        assert_bounds(&mut cx, 60, 40);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn hot_reload_can_shrink_an_active_animation_sequence() {
+        let _guard = METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct AnimatedView(std::rc::Rc<std::cell::Cell<bool>>);
+        impl gpui::Render for AnimatedView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                let source = if self.0.get() {
+                    "div size-full bg-white\n  div #animated size-full bg-black animate:opacity={1ms linear}"
+                } else {
+                    "div size-full bg-white\n  div #animated size-full bg-black animate:opacity={1ms linear} animate:fade={100s linear}"
+                };
+                render_nodes(
+                    &crepuscularity_core::parse_template(source).unwrap(),
+                    &TemplateContext::new(),
+                )
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let shrink = std::rc::Rc::new(std::cell::Cell::new(false));
+        let flag = shrink.clone();
+        let window = cx
+            .open_window(
+                gpui::size(gpui::px(100.0), gpui::px(100.0)),
+                move |_, app| app.new(|_| AnimatedView(flag)),
+            )
+            .unwrap()
+            .into();
+        let draw = |cx: &mut gpui::HeadlessAppContext| {
+            cx.update_window(window, |_, window, app| window.draw(app).clear(app))
+                .unwrap();
+        };
+        draw(&mut cx);
+        std::thread::sleep(Duration::from_millis(15));
+        draw(&mut cx); // Finishes the first stage and advances the retained index.
+        draw(&mut cx); // Renders stage 1, whose fade starts almost transparent.
+        let image = cx.capture_screenshot(window).unwrap();
+        assert!(image.get_pixel(image.width() / 2, image.height() / 2).0[0] > 200);
+        shrink.set(true);
+        draw(&mut cx); // Previously indexed stage 1 in a length-one animation list.
+        std::thread::sleep(Duration::from_millis(15));
+        draw(&mut cx);
+        let image = cx.capture_screenshot(window).unwrap();
+        assert!(image.get_pixel(image.width() / 2, image.height() / 2).0[0] < 20);
+    }
+
+    #[test]
+    fn nested_declarations_style_later_siblings_without_leaking_to_parent() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("color", "#00ff00");
+        let nodes = crepuscularity_core::parse_template("div\n  div bg-{color}\n  $: default color = \"#ff0000\"\n  div bg-{color}\n  $: let color = \"#ff0000\"\n  div bg-{color}\n  $: let color = \"#0000ff\"\n  div bg-{color}").unwrap();
+        let Node::Element(parent) = &nodes[0] else {
+            panic!("expected element");
+        };
+        let mut children = render_siblings_with_ctx(
+            &parent.children,
+            &ctx,
+            "root",
+            None,
+            &mut IncludeCache::default(),
+        );
+        assert_eq!(children.len(), 4);
+        for (child, color) in children
+            .iter_mut()
+            .zip([0x00ff00, 0x00ff00, 0xff0000, 0x0000ff])
+        {
+            let actual = child.downcast_mut::<gpui::Div>().unwrap();
+            let mut expected = div().bg(gpui::rgb(color));
+            assert_eq!(
+                format!("{:?}", actual.style().background),
+                format!("{:?}", expected.style().background)
+            );
+        }
+        assert_eq!(value_to_str(ctx.get("color").unwrap()), "#00ff00");
+        let _ = render_element(parent, &ctx, "root", None, &mut IncludeCache::default());
+    }
+
+    #[test]
+    fn explicit_and_bound_ids_survive_runtime_resolution() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "dynamic");
+        for (source, expected) in [
+            ("div #static", Some("static")),
+            (
+                "div #animated animate:opacity={100ms linear}",
+                Some("animated"),
+            ),
+            ("slot-rotate #rotating\n  \"hello\"", Some("rotating")),
+            ("div id={name}", Some("dynamic")),
+            ("div id={1 +}", None),
+            ("div", None),
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!("expected element")
+            };
+            assert_eq!(element_id(element, &ctx).as_deref(), expected);
+            let _ = render_element(element, &ctx, "root", None, &mut IncludeCache::default());
+        }
+    }
+}
+
+#[cfg(test)]
+mod state_style_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_state_styles_merge_classes_context_and_conditions() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("theme", "hover:bg-red-500 hover:p-2");
+        ctx.set("color", "#ff0000");
+        ctx.set("enabled", true);
+        let nodes = crepuscularity_core::parse_template("div #state class={theme} hover:bg-{ color } class:hover:p-4={enabled} active:bg-black animate:opacity={100ms linear}").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("expected element")
+        };
+        let actual = element_state_style(element, &ctx, "hover", None);
+        let mut expected = div().bg(rgb(0xff0000)).p(gpui::rems(1.0));
+        assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+        let _ = render_element(element, &ctx, "root", None, &mut IncludeCache::default());
+    }
+
+    #[test]
+    fn interpolated_state_shadow_utilities_preserve_the_other_base_shadow_kind() {
+        let nodes = crepuscularity_core::parse_template("div class=\"hover:{variant}\"").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("expected element");
+        };
+        let mut base = crate::styler::apply_class_list(gpui::div(), "shadow-md ring-2");
+        let mut ctx = TemplateContext::new();
+        for variant in [
+            "ring-0",
+            "shadow-none",
+            "ring-inset",
+            "ring-0 shadow-none",
+            "gpui:ring-0",
+            "gpui:shadow-none",
+            "gpui:ring-inset",
+            "gpui:ring-0 gui:shadow-none",
+        ] {
+            ctx.set("variant", variant);
+            let actual = element_state_style(element, &ctx, "hover", Some(base.style()));
+            let mut expected = gpui::div();
+            expected.style().box_shadow = base.style().box_shadow.clone();
+            let mut expected = crate::styler::apply_class_list(expected, variant);
+            assert_eq!(actual.box_shadow, expected.style().box_shadow, "{variant}");
+        }
+        for (source, variant, utilities) in [
+            ("div class=\"hover:p-{variant}\"", "2 ring-0", "p-2 ring-0"),
+            (
+                "div class=\"hover:p-{variant}\"",
+                "2 shadow-none",
+                "p-2 shadow-none",
+            ),
+            ("div class=\"hover:gpui:{variant}\"", "ring-0", "ring-0"),
+            (
+                "div class=\"hover:gpui:{variant}\"",
+                "shadow-none",
+                "shadow-none",
+            ),
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!("expected element");
+            };
+            ctx.set("variant", variant);
+            let actual = element_state_style(element, &ctx, "hover", Some(base.style()));
+            let mut expected = gpui::div();
+            expected.style().box_shadow = base.style().box_shadow.clone();
+            let mut expected = crate::styler::apply_class_list(expected, utilities);
+            assert_eq!(
+                actual.box_shadow,
+                expected.style().box_shadow,
+                "{source}: {variant}"
+            );
+            assert_eq!(
+                actual.padding,
+                expected.style().padding,
+                "{source}: {variant}"
+            );
+        }
+    }
+
+    #[test]
+    fn unmatched_and_nonrecursive_state_utilities_do_not_inherit_base_shadows() {
+        let mut base = crate::styler::apply_class_list(gpui::div(), "shadow-md ring-2");
+        let mut ctx = TemplateContext::new();
+        ctx.set("nested", "ring-0");
+        for (source, variant) in [
+            ("div class=\"hover:{variant}\"", "p-2"),
+            ("div class=\"hover:{variant}\"", "unknown-utility"),
+            ("div class=\"hover:{variant}\"", ""),
+            ("div class=\"web:hover:{variant}\"", "ring-0"),
+            ("div class=\"hover:{variant}\"", "web:ring-0"),
+            ("div class=\"focus:{variant}\"", "ring-0"),
+            ("div class=\"hover:{variant}\"", "{nested}"),
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!("expected element");
+            };
+            ctx.set("variant", variant);
+            let actual = element_state_style(element, &ctx, "hover", Some(base.style()));
+            assert!(
+                actual.box_shadow.is_none(),
+                "{source}: {variant}: {:?}",
+                actual.box_shadow
+            );
+        }
+    }
+
+    #[test]
+    fn state_shadow_empty_reset_is_not_seeded_again_before_a_later_ring() {
+        let nodes = crepuscularity_core::parse_template("div class=\"hover:{variant}\"").unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("expected element");
+        };
+        let mut base = crate::styler::apply_class_list(gpui::div(), "shadow-md");
+        let mut ctx = TemplateContext::new();
+        ctx.set("variant", "shadow-none ring-4");
+        let actual = element_state_style(element, &ctx, "hover", Some(base.style()));
+        let mut expected = gpui::div();
+        expected.style().box_shadow = base.style().box_shadow.clone();
+        let mut expected = crate::styler::apply_class_list(expected, "shadow-none ring-4");
+        assert_eq!(actual.box_shadow, expected.style().box_shadow);
+    }
+}
+
+#[cfg(test)]
+mod include_depth_tests {
+    use super::*;
+
+    #[test]
+    fn guard_accepts_64_levels_and_resets_after_drop() {
+        let guards: Vec<_> = (0..64).map(|_| IncludeGuard::enter().unwrap()).collect();
+        assert!(IncludeGuard::enter().is_none());
+        drop(guards);
+        assert_eq!(INCLUDE_DEPTH.with(std::cell::Cell::get), 0);
+        assert!(IncludeGuard::enter().is_some());
+    }
+
+    #[test]
+    fn include_cycles_return_and_restore_the_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("self.crepus"), "include self.crepus").unwrap();
+        std::fs::write(
+            dir.path().join("named.crepus"),
+            "--- Card\ninclude named.crepus#Card",
+        )
+        .unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        for source in [
+            "include self.crepus",
+            "include named.crepus#Card",
+            "include missing.crepus",
+            "div",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let _ = render_nodes(&nodes, &ctx);
+            assert_eq!(INCLUDE_DEPTH.with(std::cell::Cell::get), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod virtual_include_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_includes_and_slots_keep_distinct_animation_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        ctx.virtual_files = Arc::new(
+            [
+                (
+                    "animated.crepus".into(),
+                    "div animate:opacity={100ms linear}".into(),
+                ),
+                ("outer.crepus".into(), "include animated.crepus".into()),
+                (
+                    "named.crepus".into(),
+                    "--- Card\ninclude outer.crepus".into(),
+                ),
+                ("slot.crepus".into(), "slot".into()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        for source in [
+            "include animated.crepus\ninclude animated.crepus",
+            "include outer.crepus\ninclude outer.crepus",
+            "include named.crepus#Card\ninclude named.crepus#Card",
+            "include slot.crepus\n  div animate:opacity={100ms linear}\ninclude slot.crepus\n  div animate:opacity={100ms linear}",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let ids = || render_siblings_with_ctx(&nodes, &ctx, "root",None, &mut IncludeCache::default()).iter_mut().map(|element| {
+                let animation = element.downcast_mut::<gpui::AnimationElement<gpui::Div>>().unwrap();
+                gpui::Element::id(animation).unwrap()
+            }).collect::<Vec<_>>();
+            let first = ids();
+            assert_eq!(first.len(), 2);
+            assert_ne!(first[0], first[1], "{source}");
+            assert_eq!(first, ids(), "{source}");
+        }
+    }
+
+    #[test]
+    fn virtual_includes_use_filename_frontends_and_preserve_nested_bundles() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = TemplateContext::new();
+        ctx.base_dir = Some(dir.path().to_path_buf());
+        ctx.virtual_files = Arc::new(
+            [
+                (
+                    "child.svelte".into(),
+                    r#"<script>let ignored = 1;</script><div id="virtual" />"#.into(),
+                ),
+                ("outer.crepus".into(), "include child.svelte".into()),
+                (
+                    "named.crepus".into(),
+                    "--- Card\ninclude outer.crepus".into(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let nodes = include_nodes(&ctx, &dir.path().join("child.svelte")).unwrap();
+        let Node::Element(element) = &nodes[0] else {
+            panic!("expected element")
+        };
+        assert_eq!(element.id.as_deref(), Some("virtual"));
+        let child_ctx = include_context(&ctx, &dir.path().join("outer.crepus"));
+        assert!(Arc::ptr_eq(&ctx.virtual_files, &child_ctx.virtual_files));
+        assert!(include_nodes(&child_ctx, &dir.path().join("child.svelte")).is_ok());
+        for source in ["include outer.crepus", "include named.crepus#Card"] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let _ = render_nodes(&nodes, &ctx);
+        }
+    }
+}
+
+#[cfg(test)]
+mod target_context_tests {
+    use super::*;
+
+    fn assert_same_vars(left: &TemplateContext, right: &TemplateContext) {
+        assert_eq!(left.vars.len(), right.vars.len());
+        for (key, value) in &left.vars {
+            assert_eq!(
+                format!("{value:?}"),
+                format!("{:?}", right.vars.get(key).unwrap())
+            );
+        }
+    }
+
+    #[test]
+    fn gpui_target_defaults_are_available_without_mutating_caller_values() {
+        let mut original = TemplateContext::new();
+        let defaults = with_gpui_target(&original);
+        assert!(eval_condition_bool(&defaults, "is_gui"));
+        assert!(!eval_condition_bool(&defaults, "is_tui || is_web"));
+        assert_eq!(value_to_str(defaults.get("crepus_target").unwrap()), "gpui");
+        assert!(original.get("is_gui").is_none());
+        original.set("is_gui", false);
+        original.set("crepus_target", "custom");
+        let overridden = with_gpui_target(&original);
+        assert!(!eval_condition_bool(&overridden, "is_gui"));
+        assert_eq!(
+            value_to_str(overridden.get("crepus_target").unwrap()),
+            "custom"
+        );
+        let nodes =
+            crepuscularity_core::parse_template("if is_gui\n  div #gui\nelse\n  div #other")
+                .unwrap();
+        let _ = render_nodes(&nodes, &TemplateContext::new());
+        let _ = render_node(&nodes[0], &TemplateContext::new());
+    }
+    #[test]
+    fn in_place_defaults_restore_all_caller_data_and_reuse_payloads() {
+        let mut ctx = TemplateContext::new();
+        ctx.set(
+            "items",
+            TemplateValue::List(vec![TemplateContext::new(); 256]),
+        );
+        let mut scope = TemplateContext::new();
+        scope.set("text", "large".repeat(1024));
+        ctx.set("scope", TemplateValue::Scope(scope));
+        ctx.set("is_gui", TemplateValue::Null);
+        ctx.set("crepus_target", "custom");
+        Arc::make_mut(&mut ctx.virtual_files).insert("child.crepus".into(), "span".into());
+        ctx.slot = Some((Vec::new(), Arc::new(TemplateContext::new())));
+        let before = ctx.clone();
+        let Some(TemplateValue::List(items)) = ctx.get("items") else {
+            panic!("items");
+        };
+        let items_pointer = items.as_ptr();
+        let Some(TemplateValue::Scope(scope)) = ctx.get("scope") else {
+            panic!("scope");
+        };
+        let Some(TemplateValue::Str(text)) = scope.get("text") else {
+            panic!("text");
+        };
+        let text_pointer = text.as_ptr();
+        for panic in [false, true] {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_gpui_target_in_place(&mut ctx, |current| {
+                    assert!(has_gpui_target_defaults(current));
+                    assert!(matches!(current.get("is_gui"), Some(TemplateValue::Null)));
+                    assert_eq!(current.get_str("crepus_target"), "custom");
+                    let Some(TemplateValue::List(items)) = current.get("items") else {
+                        panic!("items");
+                    };
+                    assert_eq!(items.as_ptr(), items_pointer);
+                    let Some(TemplateValue::Scope(scope)) = current.get("scope") else {
+                        panic!("scope");
+                    };
+                    let Some(TemplateValue::Str(text)) = scope.get("text") else {
+                        panic!("text");
+                    };
+                    assert_eq!(text.as_ptr(), text_pointer);
+                    assert!(!eval_condition_bool(current, "is_tui || is_web"));
+                    assert!(!panic, "deliberate render panic");
+                });
+            }));
+            assert_eq!(result.is_err(), panic);
+            assert_same_vars(&ctx, &before);
+            assert_eq!(ctx.base_dir, before.base_dir);
+            assert!(Arc::ptr_eq(&ctx.virtual_files, &before.virtual_files));
+            assert!(Arc::ptr_eq(
+                &ctx.slot.as_ref().unwrap().1,
+                &before.slot.as_ref().unwrap().1
+            ));
+        }
+        ctx.set("is_gui", true);
+        assert!(with_gpui_target_in_place(&mut ctx, |current| {
+            eval_condition_bool(current, "is_gui")
+        }));
+        ctx.vars.remove("is_gui");
+        assert!(with_gpui_target_in_place(&mut ctx, |current| {
+            eval_condition_bool(current, "is_gui")
+        }));
+        assert!(ctx.get("is_gui").is_none());
+    }
+
+    #[test]
+    fn complete_in_place_context_preserves_every_override_type() {
+        let mut ctx = TemplateContext::new();
+        for (key, value) in GPUI_TARGET_KEYS.into_iter().zip([
+            TemplateValue::Null,
+            TemplateValue::Bool(false),
+            TemplateValue::Int(42),
+            TemplateValue::Float(1.5),
+            TemplateValue::Str("custom".into()),
+            TemplateValue::List(Vec::new()),
+            TemplateValue::Scope(TemplateContext::new()),
+            TemplateValue::Bool(true),
+        ]) {
+            ctx.set(key, value);
+        }
+        let before = ctx.clone();
+        let pointer = &ctx as *const TemplateContext;
+        with_gpui_target_in_place(&mut ctx, |current| {
+            assert_eq!(current as *const TemplateContext, pointer);
+            assert_same_vars(current, &before);
+            assert!(matches!(with_gpui_target(current), Cow::Borrowed(_)));
+        });
+        assert_same_vars(&ctx, &before);
+    }
+}
+
+#[cfg(test)]
+mod include_target_tests {
+    use super::*;
+
+    #[test]
+    fn includes_preserve_target_overrides_without_leaking_parent_variables() {
+        let mut parent = with_gpui_target(&TemplateContext::new()).into_owned();
+        parent.set("is_gui", false);
+        parent.set("crepus_target", "custom");
+        parent.set("crepus_platform", "preview");
+        parent.set("private_parent_value", "secret");
+        let child = with_gpui_target(&include_context(
+            &parent,
+            std::path::Path::new("child.crepus"),
+        ))
+        .into_owned();
+        assert!(!eval_condition_bool(&child, "is_gui"));
+        assert_eq!(value_to_str(child.get("crepus_target").unwrap()), "custom");
+        assert_eq!(
+            value_to_str(child.get("crepus_platform").unwrap()),
+            "preview"
+        );
+        assert!(child.get("private_parent_value").is_none());
+        assert_eq!(child.get_bool("is_macos"), parent.get_bool("is_macos"));
+    }
+}
+
+#[cfg(test)]
+mod loop_expression_tests {
+    use super::*;
+
+    #[test]
+    fn iterator_expressions_resolve_lists_and_preserve_iteration_scopes() {
+        let mut first = TemplateContext::new();
+        first.set("value", 7_i64);
+        first.set("temporary", "first");
+        let mut second = TemplateContext::new();
+        second.set("value", 9_i64);
+        let mut data = TemplateContext::new();
+        data.set("items", TemplateValue::List(vec![first, second]));
+        let mut ctx = TemplateContext::new();
+        ctx.set("data", TemplateValue::Scope(data));
+        ctx.set("temporary", "parent");
+        let nodes = crepuscularity_core::parse_template("for item in data.items\n  div").unwrap();
+        let Node::For(block) = &nodes[0] else {
+            panic!("expected loop")
+        };
+        let mut actual = Vec::new();
+        for_each_loop_context(block, &ctx, |child| {
+            actual.push((
+                value_to_str(child.get("item").unwrap()),
+                value_to_str(child.get("temporary").unwrap()),
+            ))
+        });
+        assert_eq!(
+            actual,
+            [("7".into(), "first".into()), ("9".into(), "parent".into())]
+        );
+        assert!(ctx.get("item").is_none());
+        let _ = render_for(block, &ctx, "root", None, &mut IncludeCache::default());
+    }
+}
+
+#[cfg(test)]
+mod include_cache_tests {
+    use super::*;
+
+    fn element_id(nodes: &[Node]) -> Option<&str> {
+        match &nodes[0] {
+            Node::Element(element) => element.id.as_deref(),
+            _ => panic!("expected element"),
+        }
+    }
+
+    #[test]
+    fn shared_includes_render_distinct_evaluated_props() {
+        let mut ctx = TemplateContext::new();
+        Arc::make_mut(&mut ctx.virtual_files).extend([
+            ("child.crepus".into(), "div id={name}".into()),
+            ("named.crepus".into(), "--- Card\ndiv id={name}".into()),
+        ]);
+        let nodes = crepuscularity_core::parse_template(
+            "include child.crepus name=\"first\"\ninclude child.crepus name=\"second\"\ninclude named.crepus#Card name=\"third\"\ninclude named.crepus#Card name=\"fourth\"",
+        ).unwrap();
+        let mut cache = IncludeCache::default();
+        let mut elements = render_siblings_with_ctx(&nodes, &ctx, "root", None, &mut cache);
+        let ids: Vec<_> = elements
+            .iter_mut()
+            .map(|element| {
+                gpui::Element::id(element.downcast_mut::<gpui::Stateful<gpui::Div>>().unwrap())
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            ["first", "second", "third", "fourth"].map(|id| ElementId::Name(id.into()))
+        );
+        assert_eq!(cache.bundles.len(), 1);
+        assert_eq!(cache.bundles[0].nodes.len(), 1);
+        assert_eq!(cache.bundles[0].components.len(), 1);
+    }
+
+    #[test]
+    fn repeated_virtual_and_named_includes_share_parsed_snapshots() {
+        let mut ctx = TemplateContext::new();
+        Arc::make_mut(&mut ctx.virtual_files).extend([
+            ("child.svelte".into(), "<div id=\"first\" />".into()),
+            ("named.crepus".into(), "--- Card\ndiv #first".into()),
+        ]);
+        let path = std::path::Path::new("child.svelte");
+        let named_path = std::path::Path::new("named.crepus");
+        let mut cache = IncludeCache::default();
+        let one = cache.nodes(&ctx, path).unwrap();
+        let two = cache.nodes(&ctx, path).unwrap();
+        assert!(Arc::ptr_eq(&one, &two));
+        assert_eq!(element_id(&one), Some("first"));
+        let named_one = cache.components(&ctx, named_path).unwrap();
+        let named_two = cache.components(&ctx, named_path).unwrap();
+        assert!(Arc::ptr_eq(&named_one, &named_two));
+        assert!(std::ptr::eq(
+            &named_one.components["Card"].nodes,
+            &named_two.components["Card"].nodes
+        ));
+
+        // Slot contexts can supply another bundle for the same resolved path.
+        let mut slot_ctx = ctx.clone();
+        Arc::make_mut(&mut slot_ctx.virtual_files).extend([
+            ("child.svelte".into(), "<div id=\"other\" />".into()),
+            ("named.crepus".into(), "--- Card\ndiv #other".into()),
+        ]);
+        let other = cache.nodes(&slot_ctx, path).unwrap();
+        let named_other = cache.components(&slot_ctx, named_path).unwrap();
+        assert!(!Arc::ptr_eq(&one, &other));
+        assert_eq!(element_id(&other), Some("other"));
+        assert_eq!(
+            element_id(&named_other.components["Card"].nodes),
+            Some("other")
+        );
+        assert!(Arc::ptr_eq(&one, &cache.nodes(&ctx, path).unwrap()));
+        let mut next_render = IncludeCache::default();
+        assert!(!Arc::ptr_eq(&one, &next_render.nodes(&ctx, path).unwrap()));
+        assert!(!Arc::ptr_eq(
+            &named_one,
+            &next_render.components(&ctx, named_path).unwrap()
+        ));
+    }
+
+    #[test]
+    fn next_render_observes_file_and_virtual_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let ordinary = dir.path().join("ordinary.crepus");
+        let named = dir.path().join("named.crepus");
+        std::fs::write(&ordinary, "div #first").unwrap();
+        std::fs::write(&named, "--- Card\ndiv #first").unwrap();
+        let mut ctx = TemplateContext::new();
+        let mut cache = IncludeCache::default();
+        let original = cache.nodes(&ctx, &ordinary).unwrap();
+        let original_named = cache.components(&ctx, &named).unwrap();
+        let modified = std::fs::metadata(&ordinary).unwrap().modified().unwrap();
+        // Reload must observe equal-length edits even when timestamps are restored.
+        std::fs::write(&ordinary, "div #later").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&ordinary)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        std::fs::write(&named, "--- Card\ndiv #later").unwrap();
+        assert!(Arc::ptr_eq(
+            &original,
+            &cache.nodes(&ctx, &ordinary).unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            &original_named,
+            &cache.components(&ctx, &named).unwrap()
+        ));
+        let mut next_render = IncludeCache::default();
+        assert_eq!(
+            element_id(&next_render.nodes(&ctx, &ordinary).unwrap()),
+            Some("later")
+        );
+        assert_eq!(
+            element_id(&next_render.components(&ctx, &named).unwrap().components["Card"].nodes),
+            Some("later")
+        );
+        Arc::make_mut(&mut ctx.virtual_files)
+            .insert("ordinary.crepus".into(), "div #virtual_one".into());
+        assert_eq!(
+            element_id(&next_render.nodes(&ctx, &ordinary).unwrap()),
+            Some("virtual_one")
+        );
+        Arc::make_mut(&mut ctx.virtual_files)
+            .insert("ordinary.crepus".into(), "div #virtual_two".into());
+        assert_eq!(
+            element_id(&IncludeCache::default().nodes(&ctx, &ordinary).unwrap()),
+            Some("virtual_two")
+        );
+    }
+
+    #[test]
+    fn failed_named_parses_do_not_poison_the_render_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("named.crepus");
         let ctx = TemplateContext::new();
-        let first = node_id("instance:a", 0, &nodes[0], &ctx);
-        assert_eq!(first, node_id("instance:a", 9, &nodes[0], &ctx));
-        assert_ne!(first, node_id("instance:b", 0, &nodes[0], &ctx));
-        assert_ne!(
-            scoped_id("root", "a/b"),
-            scoped_id(&scoped_id("root", "a"), "b")
+        let mut cache = IncludeCache::default();
+        assert!(cache
+            .components(&ctx, &path)
+            .unwrap_err()
+            .starts_with("include error:"));
+        std::fs::write(&path, "--- Card\nif {").unwrap();
+        assert!(cache
+            .components(&ctx, &path)
+            .unwrap_err()
+            .starts_with("component file parse error:"));
+        std::fs::write(&path, "--- Card\ndiv #recovered").unwrap();
+        assert_eq!(
+            element_id(&cache.components(&ctx, &path).unwrap().components["Card"].nodes),
+            Some("recovered")
         );
     }
 }
 
 #[cfg(test)]
-mod image_mapping_tests {
+mod context_borrow_tests {
+    use super::*;
+
+    fn id(element: &mut AnyElement) -> ElementId {
+        gpui::Element::id(element.downcast_mut::<gpui::Stateful<gpui::Div>>().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn complete_target_context_is_borrowed_and_missing_defaults_are_owned() {
+        let mut original = TemplateContext::new();
+        original.set("is_gui", false);
+        assert!(matches!(with_gpui_target(&original), Cow::Owned(_)));
+        let complete = with_gpui_target(&original).into_owned();
+        assert!(!complete.get_bool("is_gui"));
+        let Cow::Borrowed(borrowed) = with_gpui_target(&complete) else {
+            panic!("complete context was copied")
+        };
+        assert!(std::ptr::eq(borrowed, &complete));
+        let Node::Element(slot) =
+            &crepuscularity_core::parse_template("slot\n  if is_gui\n    div #gui").unwrap()[0]
+        else {
+            panic!("slot")
+        };
+        let mut slot_parent = complete.clone();
+        slot_parent.slot = Some((
+            crepuscularity_core::parse_template("if is_gui\n  div #slot_gui").unwrap(),
+            Arc::new(TemplateContext::new()),
+        ));
+        let mut rendered = render_element(
+            slot,
+            &slot_parent,
+            "root",
+            None,
+            &mut IncludeCache::default(),
+        );
+        assert_eq!(id(&mut rendered), ElementId::Name("slot_gui".into()));
+    }
+
+    #[test]
+    fn declaration_scopes_are_local_and_visible_to_following_siblings() {
+        let mut original = TemplateContext::new();
+        original.set("name", "parent");
+        let nodes = crepuscularity_core::parse_template(
+            "$: default name = \"ignored\"\ndiv id={name}\n$: let name = \"outer\"\nif true\n  $: let name = \"inner\"\n  div id={name}\ndiv id={name}",
+        ).unwrap();
+        let mut rendered = render_siblings_with_ctx(
+            &nodes,
+            &original,
+            "root",
+            None,
+            &mut IncludeCache::default(),
+        );
+        let ids: Vec<_> = rendered.iter_mut().map(id).collect();
+        assert_eq!(
+            ids,
+            ["parent", "inner", "outer"].map(|name| ElementId::Name(name.into()))
+        );
+        assert_eq!(original.get_str("name"), "parent");
+        let sibling = crepuscularity_core::parse_template("div id={name}").unwrap();
+        assert_eq!(
+            id(&mut render_node(&sibling[0], &original)),
+            ElementId::Name("parent".into())
+        );
+    }
+
+    #[test]
+    fn loop_overlays_restore_duplicate_aliases_and_reuse_large_parent_values() {
+        let mut first = TemplateContext::new();
+        first.set("item", "field collides with alias");
+        first.set("value", 7_i64);
+        first.set("temporary", "row");
+        let mut second = TemplateContext::new();
+        second.set("value", 9_i64);
+        let mut third = TemplateContext::new();
+        third.set("value", 11_i64);
+        let mut ctx = TemplateContext::new();
+        ctx.set("items", TemplateValue::List(vec![first, second, third]));
+        ctx.set("item", "parent alias");
+        ctx.set("temporary", "parent");
+        ctx.set(
+            "large",
+            TemplateValue::List(vec![TemplateContext::new(); 256]),
+        );
+        let nodes = crepuscularity_core::parse_template("for item in items\n  div").unwrap();
+        let Node::For(block) = &nodes[0] else {
+            panic!("loop")
+        };
+        let mut list_pointer = None;
+        let mut rows = Vec::new();
+        for_each_loop_context(block, &ctx, |child| {
+            let Some(TemplateValue::List(large)) = child.get("large") else {
+                panic!("large")
+            };
+            assert_eq!(*list_pointer.get_or_insert(large.as_ptr()), large.as_ptr());
+            rows.push((
+                value_to_str(child.get("item").unwrap()),
+                child.get_str("temporary"),
+            ));
+            let row_nodes = crepuscularity_core::parse_template("div id={item}").unwrap();
+            let mut row_elements = render_siblings_with_ctx(
+                &row_nodes,
+                child,
+                "row",
+                None,
+                &mut IncludeCache::default(),
+            );
+            assert_eq!(
+                id(&mut row_elements[0]),
+                ElementId::Name(value_to_str(child.get("item").unwrap()).into())
+            );
+            let nested = crepuscularity_core::parse_template(
+                "$: let temporary = \"nested\"\ndiv id={temporary}",
+            )
+            .unwrap();
+            let mut rendered = render_siblings_with_ctx(
+                &nested,
+                child,
+                "nested",
+                None,
+                &mut IncludeCache::default(),
+            );
+            assert_eq!(id(&mut rendered[0]), ElementId::Name("nested".into()));
+        });
+        assert_eq!(
+            rows,
+            [
+                ("7".into(), "row".into()),
+                ("9".into(), "parent".into()),
+                ("11".into(), "parent".into())
+            ]
+        );
+        assert_eq!(ctx.get_str("item"), "parent alias");
+        assert_eq!(ctx.get_str("temporary"), "parent");
+    }
+}
+
+#[cfg(test)]
+mod attribute_id_tests {
     use super::*;
 
     #[test]
-    fn image_dimensions_move_to_the_real_image_without_forcing_intrinsic_axes() {
-        let mut wrapper = gpui::div()
-            .id("wrapper")
-            .w(gpui::px(24.))
-            .max_h(gpui::px(48.));
-        let expected_width = wrapper.style().size.width.clone();
-        let expected_max_height = wrapper.style().max_size.height.clone();
-        let mut image = gpui::img("embedded.png").id("image");
-        transfer_image_size(&mut wrapper, &mut image);
-        assert_eq!(image.style().size.width, expected_width);
-        assert_eq!(image.style().max_size.height, expected_max_height);
-        assert!(image.style().size.height.is_none());
-        assert!(wrapper.style().size.width.is_none());
-        assert!(gpui::Element::id(&image).is_some());
+    fn attribute_id_names_follow_html_case_insensitivity() {
+        let mut nodes = crepuscularity_core::parse_template("div").unwrap();
+        let Node::Element(element) = &mut nodes[0] else {
+            panic!("expected element")
+        };
+        element.bindings.push(crepuscularity_core::ast::Binding {
+            origin: BindingOrigin::Attribute,
+            prop: "ID".into(),
+            value: "42".into(),
+        });
+        assert_eq!(
+            element_id(element, &TemplateContext::new()).as_deref(),
+            Some("42")
+        );
+        element.bindings[0].origin = BindingOrigin::Expression;
+        assert!(element_id(element, &TemplateContext::new()).is_none());
+    }
+
+    #[test]
+    fn attribute_ids_use_null_omission_and_scalar_string_coercion() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "Attribute 雪");
+        for (expression, expected) in [
+            ("null", None),
+            ("undefined", None),
+            ("false", Some("false")),
+            ("42", Some("42")),
+            ("title", Some("Attribute 雪")),
+            ("\"\"", None),
+            ("1 +", None),
+        ] {
+            let mut nodes = crepuscularity_core::parse_template("div").unwrap();
+            let Node::Element(element) = &mut nodes[0] else {
+                panic!("expected element")
+            };
+            element.bindings.push(crepuscularity_core::ast::Binding {
+                origin: crepuscularity_core::ast::BindingOrigin::Attribute,
+                prop: "id".into(),
+                value: expression.into(),
+            });
+            assert_eq!(
+                element_id(element, &ctx).as_deref(),
+                expected,
+                "{expression}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod borrowed_slot_tests {
+    use super::*;
+
+    fn id(element: &mut AnyElement) -> ElementId {
+        gpui::Element::id(element.downcast_mut::<gpui::Stateful<gpui::Div>>().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn ordinary_named_and_prepared_forwarding_preserve_caller_locals_and_styles() {
+        for (path, prefix) in [("shell.crepus", ""), ("shell.crepus#Card", "--- Card\n")] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("name", "CALLER");
+            ctx.set("color", "bg-red-500");
+            Arc::make_mut(&mut ctx.virtual_files).extend([
+                (
+                    "shell.crepus".into(),
+                    format!("{prefix}$: default name = 'DEFAULT'\ninclude inner.crepus\n  slot"),
+                ),
+                ("inner.crepus".into(), "slot".into()),
+            ]);
+            let nodes = crepuscularity_core::parse_template(&format!("$: let local = name\ninclude {path} name=\"CALLEE\"\n  if is_gui\n    div id={{local}} class={{color}}" )).unwrap();
+            let expected = apply_class_with_ctx(div(), "bg-red-500", Some(&ctx))
+                .style()
+                .background
+                .clone();
+            let prepared = prepare_includes(&nodes, &ctx);
+            for mut element in [
+                render_nodes(&nodes, &ctx),
+                render_nodes_prepared(&nodes, &ctx, prepared),
+            ] {
+                assert_eq!(id(&mut element), ElementId::Name("CALLER".into()));
+                let node = element.downcast_mut::<gpui::Stateful<gpui::Div>>().unwrap();
+                assert_eq!(
+                    format!("{:?}", node.style().background),
+                    format!("{expected:?}")
+                );
+            }
+            assert!(ctx.get("local").is_none());
+        }
+    }
+
+    #[test]
+    fn forwarded_owned_slot_retains_foreign_bundle_directory_and_target_defaults() {
+        let mut captured = TemplateContext::new();
+        captured.base_dir = Some("foreign".into());
+        Arc::make_mut(&mut captured.virtual_files).insert(
+            "foreign/label.crepus".into(),
+            "if is_gui\n  div #FOREIGN bg-blue-500".into(),
+        );
+        let mut ctx = TemplateContext::new();
+        ctx.slot = Some((
+            crepuscularity_core::parse_template("include label.crepus").unwrap(),
+            Arc::new(captured),
+        ));
+        Arc::make_mut(&mut ctx.virtual_files).extend([
+            ("shell.crepus".into(), "slot".into()),
+            ("label.crepus".into(), "div #WRONG".into()),
+        ]);
+        let nodes = crepuscularity_core::parse_template("include shell.crepus\n  slot").unwrap();
+        let prepared = prepare_includes(&nodes, &ctx);
+        for mut element in [
+            render_nodes(&nodes, &ctx),
+            render_nodes_prepared(&nodes, &ctx, prepared),
+        ] {
+            assert_eq!(id(&mut element), ElementId::Name("FOREIGN".into()));
+        }
+    }
+
+    #[test]
+    fn borrowed_slots_keep_autogenerated_id_paths_and_loop_aliases() {
+        let mut ctx = with_gpui_target(&TemplateContext::new()).into_owned();
+        Arc::make_mut(&mut ctx.virtual_files).insert("shell.crepus".into(), "slot".into());
+        let nodes = crepuscularity_core::parse_template(
+            "include shell.crepus\n  div hover:bg-red-500 active:bg-blue-500",
+        )
+        .unwrap();
+        let mut element = render_nodes(&nodes, &ctx);
+        assert_eq!(
+            id(&mut element),
+            ElementId::Name("crepus-node-root/0/0/0".into())
+        );
+        let mut first = TemplateContext::new();
+        first.set("value", "FIRST");
+        let mut second = TemplateContext::new();
+        second.set("value", "SECOND");
+        ctx.set("rows", TemplateValue::List(vec![first, second]));
+        let nodes = crepuscularity_core::parse_template(
+            "for row in rows\n  include shell.crepus\n    div id={row}",
+        )
+        .unwrap();
+        let Node::For(block) = &nodes[0] else {
+            panic!("loop")
+        };
+        let mut ids = Vec::new();
+        for_each_loop_context(block, &ctx, |child| {
+            let mut element = render_nodes(&block.body, child);
+            ids.push(id(&mut element));
+        });
+        assert_eq!(
+            ids,
+            ["FIRST", "SECOND"].map(|id| ElementId::Name(id.into()))
+        );
+        assert!(ctx.get("row").is_none());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn forwarded_slot_paints_caller_color_instead_of_component_prop() {
+        let _guard = super::identity_tests::METAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use gpui::AppContext;
+        struct SlotView(Vec<Node>, TemplateContext);
+        impl gpui::Render for SlotView {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .bg(rgb(0xffffff))
+                    .child(render_nodes(&self.0, &self.1))
+            }
+        }
+        let platform = gpui_platform::current_platform(true);
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            platform.text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        for (path, prefix) in [("shell.crepus", ""), ("shell.crepus#Card", "--- Card\n")] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("color", "bg-[#ff0000]");
+            Arc::make_mut(&mut ctx.virtual_files).extend([
+                (
+                    "shell.crepus".into(),
+                    format!("{prefix}include inner.crepus\n  slot"),
+                ),
+                ("inner.crepus".into(), "slot".into()),
+            ]);
+            let nodes = crepuscularity_core::parse_template(&format!(
+                "include {path} color=\"bg-[#0000ff]\"\n  div w-[40px] h-[40px] class={{color}}"
+            ))
+            .unwrap();
+            let window = app
+                .open_window(gpui::size(gpui::px(60.0), gpui::px(60.0)), move |_, app| {
+                    app.new(|_| SlotView(nodes, ctx))
+                })
+                .unwrap()
+                .into();
+            app.update_window(window, |_, window, app| {
+                window.draw(app).clear(app);
+            })
+            .unwrap();
+            let image = app.capture_screenshot(window).unwrap();
+            let scale = image.width() / 60;
+            assert_eq!(image.get_pixel(10 * scale, 10 * scale).0, [255, 0, 0, 255]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod retained_input_identity_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_input_state_is_scoped_without_changing_public_id() {
+        let nodes = crepuscularity_core::parse_template("input #shared value=\"seed\"").unwrap();
+        let context = TemplateContext::new();
+        let Node::Element(input) = &nodes[0] else {
+            panic!("input")
+        };
+        assert_eq!(element_id(input, &context), Some("shared".into()));
+        let first = node_identity("instance-one", 0, &nodes[0], &context);
+        assert_ne!(first, node_identity("instance-two", 0, &nodes[0], &context));
+        assert_eq!(first, node_identity("instance-one", 3, &nodes[0], &context));
     }
 }

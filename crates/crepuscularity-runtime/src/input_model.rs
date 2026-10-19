@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(input.text(), "e\u{301}👨‍👩‍👧‍👦");
         input.delete(false);
         assert_eq!(input.text(), "e\u{301}");
-        input.select_utf16(2..0);
+        input.select_utf16(std::ops::Range { start: 2, end: 0 });
         assert!(input.reversed());
         input.replace_utf16(None, "好");
         assert_eq!(input.text(), "好");

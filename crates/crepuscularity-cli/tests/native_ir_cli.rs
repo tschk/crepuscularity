@@ -213,7 +213,8 @@ fn native_codegen_writes_swiftui_source() {
 
     let generated = std::fs::read_to_string(out_dir.join("GreetingScreen.swift")).unwrap();
     assert!(generated.contains("public struct GreetingScreen: View"));
-    assert!(generated.contains("Text(\"Hello Ada\")"));
+    // Supported mixed text stays live through the native state store.
+    assert!(generated.contains("Text(\"Hello \" + CrepusActions.model.text(\"name\"))"));
     assert!(generated.contains("Button(action: { CrepusActions.perform(\"tap\") })"));
     assert!(generated.contains(".padding(16)"));
 }
@@ -258,7 +259,7 @@ fn native_codegen_writes_compose_source() {
     let generated = std::fs::read_to_string(out_dir.join("GreetingScreen.kt")).unwrap();
     assert!(generated.contains("@Composable"));
     assert!(generated.contains("fun GreetingScreen(modifier: Modifier = Modifier)"));
-    assert!(generated.contains("Text(\"Hello Ada\""));
+    assert!(generated.contains("Text(\"Hello \" + CrepusStateStore.text(\"name\")"));
     assert!(generated.contains("Button(onClick = { CrepusActions.perform(\"tap\") })"));
     assert!(generated.contains("modifier.padding(8.dp)"));
 }
@@ -1631,12 +1632,12 @@ fn mobile_codegen_writes_swiftui_and_compose_source() {
     assert!(
         std::fs::read_to_string(swift_out.join("GreetingScreen.swift"))
             .unwrap()
-            .contains("Hello Ada")
+            .contains("Text(\"Hello \" + CrepusActions.model.text(\"name\"))")
     );
     assert!(
         std::fs::read_to_string(compose_out.join("GreetingScreen.kt"))
             .unwrap()
-            .contains("Hello Ada")
+            .contains("Text(\"Hello \" + CrepusStateStore.text(\"name\")")
     );
 }
 

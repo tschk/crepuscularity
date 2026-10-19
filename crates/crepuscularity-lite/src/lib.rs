@@ -51,7 +51,9 @@ pub use bridge::{Bridge, BridgeError, Capability, NativePlugin};
 pub use download_plugin::DownloadPlugin;
 #[cfg(feature = "oxc")]
 pub use guest_compiler::prepare_guest_source;
-pub use host::{HostEventRecord, HostNode, HostRoute, HostSnapshot, HostState, HostStyle};
+pub use host::{
+    HostEventRecord, HostNode, HostRenderTree, HostRoute, HostSnapshot, HostState, HostStyle,
+};
 pub use host_queue::{DeferredWindowDecorations, HostCommandQueue, HostDeferred};
 pub use inauguration_plugin::InaugurationPlugin;
 pub use plugins::{AppPlugin, ClipboardPlugin, CorePlugin, FsPlugin, HostPlugin, WindowPlugin};
@@ -62,13 +64,17 @@ pub use v8_thread::{V8ThreadHandle, V8ThreadRequest, V8ThreadRuntime};
 #[cfg(feature = "v8")]
 pub use worker::{WorkerHandle, WorkerRuntime};
 
+/// Parse CSS hex colors, including shorthand and trailing alpha digits.
 pub fn parse_hex_color(raw: &str) -> Option<gpui::Hsla> {
     use palette::IntoColor;
-    let hex = raw.trim().trim_start_matches('#');
+    let normalized = crepuscularity_core::tailwind::parse_css_hex_color(raw)?;
+    let hex = normalized.strip_prefix('#')?;
+    let value = u32::from_str_radix(hex, 16).ok()?;
     let parsed = match hex.len() {
-        6 => u32::from_str_radix(hex, 16).ok().map(gpui::rgb),
-        _ => None,
-    }?;
+        6 => gpui::rgb(value),
+        8 => gpui::rgba(value),
+        _ => return None,
+    };
     Some(parsed.into_color())
 }
 
@@ -77,12 +83,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn css_hex_alpha_reaches_gpui_without_unicode_panics() {
+        for (color, alpha) in [
+            ("#1234", 68.0_f32 / 255.0),
+            ("#11223344", 68.0_f32 / 255.0),
+            ("#f00", 1.0),
+            ("#ff000000", 0.0),
+        ] {
+            assert!((parse_hex_color(color).unwrap().alpha - alpha).abs() < 0.00001);
+        }
+        for color in ["#aé1234", "#12345é", "#zzzzzz", "##123456"] {
+            assert!(parse_hex_color(color).is_none());
+        }
+    }
+
+    #[test]
     fn test_parse_hex_color() {
         assert!(parse_hex_color("#ff0000").is_some());
         assert!(parse_hex_color("00ff00").is_some());
         assert!(parse_hex_color(" #0000ff ").is_some());
 
-        assert!(parse_hex_color("#ff0").is_none());
+        assert!(parse_hex_color("#ff0").is_some());
         assert!(parse_hex_color("ff00000").is_none());
         assert!(parse_hex_color("#xyz123").is_none());
         assert!(parse_hex_color("").is_none());

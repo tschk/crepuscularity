@@ -2,22 +2,37 @@
 //!
 //! [`Walker`] is parameterised by an emit mode: in plain mode it writes bare HTML and
 //! tracks include nesting through a threaded depth counter; in SSR mode it additionally
-//! allocates `data-crepus-id` bindings, wraps dynamic regions in `display:contents`
-//! markers, and defers include-depth accounting to [`crate::ssr::IncludeDepthGuard`].
+//! allocates `data-crepus-id` bindings, wraps dynamic regions in spans or comment
+//! ranges for restricted HTML parents, and defers include-depth accounting to [`crate::ssr::IncludeDepthGuard`].
 
 use std::cell::Cell;
-use std::sync::Arc;
 
-use crepuscularity_core::analysis::{classify_node, Region};
+use crepuscularity_core::analysis::{classify_regions, Region, RegionMap};
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
-use crepuscularity_core::eval::eval_expr;
+use crepuscularity_core::eval::{eval_binding, eval_expr};
 use crepuscularity_core::parser::parse_component_file;
 use crepuscularity_core::preprocess::{slot_rotate_child_phrases, slot_rotate_words_json_attr};
 use crepuscularity_core::CrepusError;
 use serde_json::{json, Value};
 
+// A span is not a valid region wrapper in these HTML insertion contexts.
+fn restricted_marker_parent(tag: &str) -> bool {
+    [
+        "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "option",
+    ]
+    .iter()
+    .any(|parent| tag.eq_ignore_ascii_case(parent))
+}
+
 pub type BindMap = serde_json::Map<String, Value>;
+
+struct SlotFrame<'a> {
+    nodes: &'a [Node],
+    context: &'a TemplateContext,
+    caller_slot: Option<&'a SlotFrame<'a>>,
+    regions: Option<&'a RegionMap<'a>>,
+}
 
 pub(crate) struct SsrState<'a> {
     counter: &'a Cell<u32>,
@@ -28,11 +43,18 @@ pub(crate) struct SsrState<'a> {
 pub(crate) struct Walker<'a> {
     ssr: Option<SsrState<'a>>,
     depth: usize,
+    range_markers: bool,
+    virtual_only: bool,
 }
 
 impl<'a> Walker<'a> {
     pub(crate) fn plain(depth: usize) -> Self {
-        Self { ssr: None, depth }
+        Self {
+            ssr: None,
+            depth,
+            range_markers: false,
+            virtual_only: false,
+        }
     }
 
     #[cfg(feature = "ssr")]
@@ -44,7 +66,52 @@ impl<'a> Walker<'a> {
                 root_pending,
             }),
             depth: 0,
+            range_markers: false,
+            virtual_only: false,
         }
+    }
+
+    pub(crate) fn with_virtual_only(mut self, virtual_only: bool) -> Self {
+        self.virtual_only = virtual_only;
+        self
+    }
+
+    fn read_include(
+        &self,
+        ctx: &TemplateContext,
+        path: &str,
+    ) -> Result<(std::path::PathBuf, String), CrepusError> {
+        if !self.virtual_only {
+            let resolved = crate::resolve_include_path(ctx.base_dir.as_deref(), path)?;
+            let content = crate::read_file(ctx, &resolved)?;
+            return Ok((resolved, content));
+        }
+        let requested = std::path::Path::new(path);
+        if requested.has_root()
+            || requested.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(CrepusError::include_path(format!(
+                "include path outside base dir: {path}"
+            )));
+        }
+        // Virtual bundles are resolved lexically: disk symlinks must not affect them.
+        let resolved = ctx
+            .base_dir
+            .as_deref()
+            .map_or_else(|| requested.to_path_buf(), |base| base.join(requested));
+        let content = crepuscularity_core::virtual_files::lookup_virtual_file(ctx, &resolved)
+            .ok_or_else(|| {
+                CrepusError::render(format!(
+                    "include error: file not in virtual bundle: {}",
+                    resolved.display()
+                ))
+            })?;
+        Ok((resolved, content))
     }
 
     fn is_ssr(&self) -> bool {
@@ -73,9 +140,21 @@ impl<'a> Walker<'a> {
         Some(id)
     }
 
-    /// Wrap `inner` in the hydration marker span when an id was allocated.
-    fn finish(kind: &str, id: Option<u32>, inner: String) -> String {
+    /// Wrap `inner` in a marker span or restricted-parent comment range.
+    fn finish(&mut self, kind: &str, id: Option<u32>, inner: String) -> String {
         match id {
+            Some(id) if self.range_markers => {
+                if let Some(descriptor) = self
+                    .ssr
+                    .as_mut()
+                    .and_then(|state| state.bind.get_mut(&id.to_string()))
+                {
+                    descriptor["marker"] = json!("range");
+                }
+                // HTML can insert implicit table bodies between these endpoints;
+                // ranges do not promise that the two comments share a parent.
+                format!("<!--crepus:{kind}:c{id}:start-->{inner}<!--crepus:{kind}:c{id}:end-->")
+            }
             Some(id) => format!(
                 r#"<span style="display:contents" data-crepus-kind="{kind}" data-crepus-id="c{id}">{inner}</span>"#
             ),
@@ -87,6 +166,17 @@ impl<'a> Walker<'a> {
         &mut self,
         nodes: &[Node],
         base: &TemplateContext,
+    ) -> Result<String, CrepusError> {
+        let regions = self.is_ssr().then(|| classify_regions(nodes));
+        self.nodes_with_slot(nodes, base, None, regions.as_ref())
+    }
+
+    fn nodes_with_slot(
+        &mut self,
+        nodes: &[Node],
+        base: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
     ) -> Result<String, CrepusError> {
         let _span = (!self.is_ssr())
             .then(|| tracing::debug_span!("render_html", node_count = nodes.len()).entered());
@@ -106,29 +196,62 @@ impl<'a> Walker<'a> {
                 continue;
             }
             let cur = overlay.as_ref().unwrap_or(base);
-            html.push_str(&self.node(node, cur)?);
+            html.push_str(&self.node_with_slot(node, cur, slot, regions)?);
         }
 
         Ok(html)
     }
 
     /// Render a nested node list that can never carry the document root marker.
-    fn nested(&mut self, nodes: &[Node], ctx: &TemplateContext) -> Result<String, CrepusError> {
+    fn nested(
+        &mut self,
+        nodes: &[Node],
+        ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
+    ) -> Result<String, CrepusError> {
         let saved = self.set_root_pending(false);
-        let out = self.nodes(nodes, ctx);
+        let out = self.nodes_with_slot(nodes, ctx, slot, regions);
         self.set_root_pending(saved);
         out
     }
 
+    #[cfg(feature = "hydration")]
     pub(crate) fn node(
         &mut self,
         node: &Node,
         ctx: &TemplateContext,
     ) -> Result<String, CrepusError> {
+        let regions = self
+            .is_ssr()
+            .then(|| classify_regions(std::slice::from_ref(node)));
+        self.node_with_slot(node, ctx, None, regions.as_ref())
+    }
+
+    fn node_with_slot(
+        &mut self,
+        node: &Node,
+        ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
+    ) -> Result<String, CrepusError> {
         match node {
-            Node::Element(el) => self.element(el, ctx),
+            Node::Element(el) => {
+                let inject_id = self.is_ssr()
+                    && !matches!(el.tag.as_str(), "slot" | "slot-rotate")
+                    && regions
+                        .and_then(|index| index.get(node))
+                        .expect("SSR AST node is indexed")
+                        == &Region::Dynamic;
+                self.element(el, ctx, slot, regions, inject_id)
+            }
             Node::Text(parts) => {
-                let id = if self.is_ssr() && classify_node(node) == Region::Dynamic {
+                let id = if self.is_ssr()
+                    && regions
+                        .and_then(|index| index.get(node))
+                        .expect("SSR AST node is indexed")
+                        == &Region::Dynamic
+                {
                     self.alloc(|| {
                         json!({
                             "kind": "text",
@@ -139,7 +262,7 @@ impl<'a> Walker<'a> {
                     None
                 };
                 let inner = crate::escape_html(&crate::render_text(parts, ctx)?);
-                Ok(Self::finish("text", id, inner))
+                Ok(self.finish("text", id, inner))
             }
             Node::If(block) => {
                 let id = self.alloc(|| {
@@ -149,13 +272,13 @@ impl<'a> Walker<'a> {
                     })
                 });
                 let inner = if ctx.eval_condition(&block.condition)? {
-                    self.nested(&block.then_children, ctx)?
+                    self.nested(&block.then_children, ctx, slot, regions)?
                 } else if let Some(else_children) = &block.else_children {
-                    self.nested(else_children, ctx)?
+                    self.nested(else_children, ctx, slot, regions)?
                 } else {
                     String::new()
                 };
-                Ok(Self::finish("if", id, inner))
+                Ok(self.finish("if", id, inner))
             }
             Node::For(block) => {
                 let id = self.alloc(|| {
@@ -165,8 +288,8 @@ impl<'a> Walker<'a> {
                         "iterator": block.iterator,
                     })
                 });
-                let inner = self.for_body(block, ctx)?;
-                Ok(Self::finish("for", id, inner))
+                let inner = self.for_body(block, ctx, slot, regions)?;
+                Ok(self.finish("for", id, inner))
             }
             Node::Match(block) => {
                 let id = self.alloc(|| {
@@ -175,50 +298,68 @@ impl<'a> Walker<'a> {
                         "expr": block.expr,
                     })
                 });
-                let inner = self.match_body(block, ctx)?;
-                Ok(Self::finish("match", id, inner))
+                let inner = self.match_body(block, ctx, slot, regions)?;
+                Ok(self.finish("match", id, inner))
             }
             Node::LetDecl(_) => Ok(String::new()),
-            Node::Include(inc) => self.include(inc, ctx),
+            Node::Include(inc) => self.include(inc, ctx, slot, regions),
             Node::Embed(embed) => crate::render_embed(embed, ctx),
             Node::RawText(expr) => {
                 let id = self.alloc(|| json!({ "kind": "raw", "expr": expr }));
                 let inner = crate::escape_html(&value_to_str(&eval_expr(expr, ctx)?));
-                Ok(Self::finish("raw", id, inner))
+                Ok(self.finish("raw", id, inner))
             }
             Node::RawHtml(expr) => {
                 let id = self.alloc(|| json!({ "kind": "raw", "expr": expr }));
                 let inner = ammonia::clean(&value_to_str(&eval_expr(expr, ctx)?));
-                Ok(Self::finish("raw", id, inner))
+                Ok(self.finish("raw", id, inner))
             }
         }
     }
 
-    fn for_body(&mut self, block: &ForBlock, ctx: &TemplateContext) -> Result<String, CrepusError> {
-        let items = ctx.get_list_ref(&block.iterator);
+    fn for_body(
+        &mut self,
+        block: &ForBlock,
+        ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
+    ) -> Result<String, CrepusError> {
+        let TemplateValue::List(items) = eval_expr(&block.iterator, ctx)? else {
+            return Ok(String::new());
+        };
         let mut out = String::new();
         let pattern = block.pattern.trim();
         let has_pattern = !pattern.is_empty();
         let mut child_ctx = ctx.clone();
 
+        let mut overwritten = Vec::new();
         for item_ctx in items {
-            child_ctx.vars.clone_from(&ctx.vars);
             for (k, v) in &item_ctx.vars {
-                child_ctx.vars.insert(k.clone(), v.clone());
+                overwritten.push((k.clone(), child_ctx.vars.insert(k.clone(), v.clone())));
             }
             if has_pattern {
-                let item_str = item_ctx.get_str("value");
-                if !item_str.is_empty() {
-                    child_ctx
-                        .vars
-                        .insert(pattern.to_string(), TemplateValue::Str(item_str));
-                } else {
-                    child_ctx
-                        .vars
-                        .insert(pattern.to_string(), TemplateValue::Scope(item_ctx.clone()));
+                let value = item_ctx
+                    .get("value")
+                    .cloned()
+                    .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()));
+                overwritten.push((
+                    pattern.to_string(),
+                    child_ctx.vars.insert(pattern.to_string(), value),
+                ));
+            }
+            let rendered = self.nested(&block.body, &child_ctx, slot, regions);
+            // Reverse restores duplicate writes (an item field can also be the alias).
+            for (key, value) in overwritten.drain(..).rev() {
+                match value {
+                    Some(value) => {
+                        child_ctx.vars.insert(key, value);
+                    }
+                    None => {
+                        child_ctx.vars.remove(&key);
+                    }
                 }
             }
-            out.push_str(&self.nested(&block.body, &child_ctx)?);
+            out.push_str(&rendered?);
         }
 
         Ok(out)
@@ -228,6 +369,8 @@ impl<'a> Walker<'a> {
         &mut self,
         block: &MatchBlock,
         ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
     ) -> Result<String, CrepusError> {
         let val = eval_expr(&block.expr, ctx)?;
         let value = value_to_str(&val);
@@ -235,28 +378,39 @@ impl<'a> Walker<'a> {
         for arm in &block.arms {
             let pattern = arm.pattern.trim();
             if pattern == "_" {
-                return self.nested(&arm.body, ctx);
+                return self.nested(&arm.body, ctx, slot, regions);
             }
-            if pattern.starts_with('"') && pattern.ends_with('"') {
-                let lit = &pattern[1..pattern.len() - 1];
+            if let Some(literal) = pattern.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                let lit = crepuscularity_core::parser::unescape_crepus_text_literal(literal);
                 if value == lit {
-                    return self.nested(&arm.body, ctx);
+                    return self.nested(&arm.body, ctx, slot, regions);
                 }
-            }
-            if value == pattern {
-                return self.nested(&arm.body, ctx);
+            } else if value == pattern {
+                return self.nested(&arm.body, ctx, slot, regions);
             }
         }
 
         Ok(String::new())
     }
 
-    fn element(&mut self, el: &Element, ctx: &TemplateContext) -> Result<String, CrepusError> {
+    fn element(
+        &mut self,
+        el: &Element,
+        ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
+        inject_id: bool,
+    ) -> Result<String, CrepusError> {
+        crate::void_html::validate_children(el)?;
         if el.tag == "slot" {
+            if let Some(frame) = slot {
+                return self.nested(frame.nodes, frame.context, frame.caller_slot, frame.regions);
+            }
             return if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
-                self.nested(slot_nodes, slot_ctx)
+                let regions = self.is_ssr().then(|| classify_regions(slot_nodes));
+                self.nested(slot_nodes, slot_ctx, None, regions.as_ref())
             } else {
-                self.nested(&el.children, ctx)
+                self.nested(&el.children, ctx, slot, regions)
             };
         }
 
@@ -264,8 +418,6 @@ impl<'a> Walker<'a> {
             return self.slot_rotate(el, ctx);
         }
 
-        let inject_id =
-            self.is_ssr() && classify_node(&Node::Element(el.clone())) == Region::Dynamic;
         let inject_root = inject_id && self.root_pending();
         if inject_id {
             self.set_root_pending(false);
@@ -282,7 +434,7 @@ impl<'a> Walker<'a> {
 
         if let Some(dom_id) = &el.id {
             out.push_str(" id=\"");
-            out.push_str(&crate::escape_html(dom_id));
+            out.push_str(&crate::escape_html_attribute(dom_id));
             out.push('"');
         }
         if inject_root {
@@ -303,7 +455,7 @@ impl<'a> Walker<'a> {
         }
 
         push_bindings(&mut out, el, ctx, false)?;
-        push_handlers_and_animations(&mut out, el);
+        push_handlers_and_animations(&mut out, el)?;
 
         if crate::void_html::is_void_html_tag(&el.tag) {
             out.push_str(" />");
@@ -311,9 +463,27 @@ impl<'a> Walker<'a> {
         }
 
         out.push('>');
-        for child in &el.children {
-            out.push_str(&self.node(child, ctx)?);
-        }
+        let previous =
+            std::mem::replace(&mut self.range_markers, restricted_marker_parent(&el.tag));
+        let children = (|| -> Result<(), CrepusError> {
+            if el.tag.eq_ignore_ascii_case("title") {
+                // Title is RCDATA: region wrappers would become visible title text.
+                out.push_str(
+                    &Walker::plain(self.depth)
+                        .with_virtual_only(self.virtual_only)
+                        .nodes_with_slot(&el.children, ctx, slot, None)?,
+                );
+            } else if let Some(value) =
+                textarea_content_with_slot(el, ctx, self.depth, slot, self.virtual_only)?
+            {
+                out.push_str(&value);
+            } else {
+                out.push_str(&self.nested(&el.children, ctx, slot, regions)?);
+            }
+            Ok(())
+        })();
+        self.range_markers = previous;
+        children?;
         out.push_str("</");
         out.push_str(&el.tag);
         out.push('>');
@@ -329,10 +499,14 @@ impl<'a> Walker<'a> {
         }
         let mut interval_ms = 3200u64;
         for b in &el.bindings {
-            if b.prop == "interval" {
+            if b.prop == "interval" && b.origin != BindingOrigin::Attribute {
                 let v = value_to_str(&eval_expr(&b.value, ctx)?);
                 let v = v.trim_matches('"').trim();
-                interval_ms = v.parse().unwrap_or(3200);
+                interval_ms = v
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|ms| (1..=i32::MAX as u64).contains(ms))
+                    .unwrap_or(3200);
             }
         }
         let words_json = slot_rotate_words_json_attr(&phrases);
@@ -358,42 +532,56 @@ impl<'a> Walker<'a> {
         }
         if let Some(dom_id) = &el.id {
             out.push_str(" id=\"");
-            out.push_str(&crate::escape_html(dom_id));
+            out.push_str(&crate::escape_html_attribute(dom_id));
             out.push('"');
         }
         if let Some(id) = id_opt {
             out.push_str(&format!(r#" data-crepus-id="c{id}""#));
             out.push_str(" data-crepus-kind=\"slot-rotate\"");
         }
-        if let Some(class_attr) =
-            crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
-        {
+        let mut class_attr = crate::build_class_attr(&class_names, &el.conditional_classes, ctx)?
+            .unwrap_or_default();
+        for binding in &el.bindings {
+            if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
+                if let Some(value) = eval_binding(binding, ctx)? {
+                    class_attr.push(' ');
+                    class_attr.push_str(&crate::escape_html_attribute(&value_to_str(&value)));
+                }
+            }
+        }
+        if !class_attr.is_empty() {
             out.push_str(" class=\"");
             out.push_str(&class_attr);
             out.push('"');
         }
         out.push_str(" data-slot-words=\"");
-        out.push_str(&crate::escape_html(&words_json));
+        out.push_str(&crate::escape_html_attribute(&words_json));
         out.push('"');
         out.push_str(" data-slot-interval=\"");
-        out.push_str(&crate::escape_html(&interval_ms.to_string()));
+        out.push_str(&crate::escape_html_attribute(&interval_ms.to_string()));
         out.push('"');
         out.push_str(" aria-live=\"polite\"");
 
         push_bindings(&mut out, el, ctx, true)?;
-        push_handlers_and_animations(&mut out, el);
+        push_handlers_and_animations(&mut out, el)?;
 
         out.push_str("></span>");
         Ok(out)
     }
 
-    fn include(&mut self, inc: &IncludeNode, ctx: &TemplateContext) -> Result<String, CrepusError> {
+    fn include(
+        &mut self,
+        inc: &IncludeNode,
+        ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
+    ) -> Result<String, CrepusError> {
         #[cfg(feature = "ssr")]
         if self.is_ssr() {
             let _depth_guard = crate::ssr::IncludeDepthGuard::enter(&inc.path)?;
             let id = self.alloc(|| json!({ "kind": "include", "path": inc.path }));
-            let inner = self.include_body(inc, ctx)?;
-            return Ok(Self::finish("include", id, inner));
+            let inner = self.include_body(inc, ctx, slot, regions)?;
+            return Ok(self.finish("include", id, inner));
         }
 
         if self.depth >= crate::MAX_INCLUDE_DEPTH {
@@ -403,35 +591,27 @@ impl<'a> Walker<'a> {
                 inc.path
             )));
         }
-        self.include_body(inc, ctx)
+        self.include_body(inc, ctx, slot, regions)
     }
 
     fn include_body(
         &mut self,
         inc: &IncludeNode,
         ctx: &TemplateContext,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
     ) -> Result<String, CrepusError> {
         if let Some((file_part, comp_name)) = inc.path.split_once('#') {
-            return self.named_component(inc, ctx, file_part, comp_name);
+            return self.named_component(inc, ctx, file_part, comp_name, slot, regions);
         }
 
-        let file_path = crate::resolve_include_path(ctx.base_dir.as_deref(), &inc.path)?;
-        let content = crate::read_file(ctx, &file_path)?;
+        let (file_path, content) = self.read_include(ctx, &inc.path)?;
 
-        // The SSR path shares the process-wide AST cache; the plain path keeps the source
-        // path so parse diagnostics stay attributable to the included file.
-        let cached;
-        let owned;
-        let nodes: &[Node] = if self.is_ssr() {
-            cached = crepuscularity_core::ast_cache::parse_content(&content)
+        let frontend_path =
+            crepuscularity_core::include_paths::include_frontend_path(&file_path, &inc.path);
+        let nodes =
+            crepuscularity_core::ast_cache::parse_content_with_path(&content, Some(&frontend_path))
                 .map_err(|e| CrepusError::render(format!("include parse error: {e}")))?;
-            &cached
-        } else {
-            owned =
-                crepuscularity_core::parser::parse_template_with_path(&content, Some(&file_path))
-                    .map_err(|e| CrepusError::render(format!("include parse error: {e}")))?;
-            &owned
-        };
 
         let mut child_ctx = TemplateContext::new();
         child_ctx.base_dir = file_path.parent().map(|p| p.to_path_buf());
@@ -439,12 +619,18 @@ impl<'a> Walker<'a> {
         for (key, expr) in &inc.props {
             child_ctx.vars.insert(key.clone(), eval_expr(expr, ctx)?);
         }
-        if !inc.slot.is_empty() {
-            child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-        }
+        // Rendering is synchronous: borrow the caller until this include finishes.
+        let frame = SlotFrame {
+            nodes: &inc.slot,
+            context: ctx,
+            caller_slot: slot,
+            regions,
+        };
+        let slot = (!inc.slot.is_empty()).then_some(&frame);
 
         self.depth += 1;
-        let out = self.nested(nodes, &child_ctx);
+        let regions = self.is_ssr().then(|| classify_regions(&nodes));
+        let out = self.nested(&nodes, &child_ctx, slot, regions.as_ref());
         self.depth -= 1;
         out
     }
@@ -455,6 +641,8 @@ impl<'a> Walker<'a> {
         ctx: &TemplateContext,
         file_part: &str,
         comp_name: &str,
+        slot: Option<&SlotFrame<'_>>,
+        regions: Option<&RegionMap<'_>>,
     ) -> Result<String, CrepusError> {
         if !self.is_ssr() && self.depth >= crate::MAX_INCLUDE_DEPTH {
             return Err(CrepusError::render(format!(
@@ -463,8 +651,7 @@ impl<'a> Walker<'a> {
             )));
         }
 
-        let file_path = crate::resolve_include_path(ctx.base_dir.as_deref(), file_part)?;
-        let content = crate::read_file(ctx, &file_path)?;
+        let (file_path, content) = self.read_include(ctx, file_part)?;
         let comp_file = parse_component_file(&content)
             .map_err(|e| CrepusError::render(format!("component file parse error: {e}")))?;
         let comp = comp_file.components.get(comp_name).ok_or_else(|| {
@@ -485,29 +672,95 @@ impl<'a> Walker<'a> {
         for (key, expr) in &inc.props {
             child_ctx.vars.insert(key.clone(), eval_expr(expr, ctx)?);
         }
-        if !inc.slot.is_empty() {
-            child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-        }
+        // Rendering is synchronous: borrow the caller until this include finishes.
+        let frame = SlotFrame {
+            nodes: &inc.slot,
+            context: ctx,
+            caller_slot: slot,
+            regions,
+        };
+        let slot = (!inc.slot.is_empty()).then_some(&frame);
 
         self.depth += 1;
-        let out = self.nested(&comp.nodes, &child_ctx);
+        let regions = self.is_ssr().then(|| classify_regions(&comp.nodes));
+        let out = self.nested(&comp.nodes, &child_ctx, slot, regions.as_ref());
         self.depth -= 1;
         out
     }
 }
 
-fn push_bindings(
+#[cfg(feature = "hydration")]
+pub(crate) fn textarea_content(
+    el: &Element,
+    ctx: &TemplateContext,
+    depth: usize,
+) -> Result<Option<String>, CrepusError> {
+    textarea_content_with_slot(el, ctx, depth, None, false)
+}
+
+fn textarea_content_with_slot(
+    el: &Element,
+    ctx: &TemplateContext,
+    depth: usize,
+    slot: Option<&SlotFrame<'_>>,
+    virtual_only: bool,
+) -> Result<Option<String>, CrepusError> {
+    if !el.tag.eq_ignore_ascii_case("textarea") {
+        return Ok(None);
+    }
+    let mut content = if let Some(binding) = el.bindings.iter().find(|binding| {
+        binding.prop.eq_ignore_ascii_case("value") && binding.origin != BindingOrigin::Attribute
+    }) {
+        crate::escape_html(&value_to_str(&eval_expr(&binding.value, ctx)?))
+    } else {
+        // Textarea content is raw text in HTML; SSR spans would become visible text.
+        Walker::plain(depth)
+            .with_virtual_only(virtual_only)
+            .nodes_with_slot(&el.children, ctx, slot, None)?
+    };
+    // Character references keep CR intact through HTML newline preprocessing.
+    content = content.replace('\r', "&#13;");
+    // HTML parsing consumes one newline immediately after the textarea opening tag.
+    if content.starts_with('\n') {
+        content.insert(0, '\n');
+    }
+    Ok(Some(content))
+}
+
+pub(crate) fn push_bindings(
     out: &mut String,
     el: &Element,
     ctx: &TemplateContext,
     skip_interval: bool,
 ) -> Result<(), CrepusError> {
     for binding in &el.bindings {
-        if skip_interval && binding.prop == "interval" {
+        if el.tag == "slot-rotate"
+            && binding.origin == BindingOrigin::Attribute
+            && binding.prop.eq_ignore_ascii_case("class")
+        {
             continue;
         }
-        let evaluated = eval_expr(&binding.value, ctx)?;
+        if el.tag.eq_ignore_ascii_case("textarea")
+            && binding.prop.eq_ignore_ascii_case("value")
+            && binding.origin != BindingOrigin::Attribute
+        {
+            continue;
+        }
+        if skip_interval && binding.prop == "interval" && binding.origin != BindingOrigin::Attribute
+        {
+            continue;
+        }
+        let Some(evaluated) = crepuscularity_core::eval::eval_binding(binding, ctx)? else {
+            continue;
+        };
         let value = match evaluated {
+            TemplateValue::Null
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("hidden")
+                    || binding.prop.eq_ignore_ascii_case("download") =>
+            {
+                continue
+            }
             TemplateValue::Bool(false)
                 if is_boolean_html_attribute(&binding.prop)
                     || binding.prop.eq_ignore_ascii_case("hidden") =>
@@ -517,7 +770,13 @@ fn push_bindings(
             TemplateValue::Bool(true) if binding.prop.eq_ignore_ascii_case("hidden") => {
                 "hidden".to_string()
             }
-            TemplateValue::Bool(true) if is_boolean_html_attribute(&binding.prop) => String::new(),
+            TemplateValue::Bool(true)
+                if is_boolean_html_attribute(&binding.prop)
+                    || binding.prop.eq_ignore_ascii_case("download") =>
+            {
+                String::new()
+            }
+            TemplateValue::Bool(false) if binding.prop.eq_ignore_ascii_case("download") => continue,
             value => value_to_str(&value),
         };
         if crate::is_url_attr(&binding.prop) && !crate::is_safe_url_value(&binding.prop, &value) {
@@ -526,7 +785,7 @@ fn push_bindings(
         out.push(' ');
         out.push_str(&binding.prop);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&value));
+        out.push_str(&crate::escape_html_attribute(&value));
         out.push('"');
     }
     Ok(())
@@ -564,14 +823,70 @@ fn is_boolean_html_attribute(name: &str) -> bool {
     )
 }
 
-fn push_handlers_and_animations(out: &mut String, el: &Element) {
-    for handler in &el.event_handlers {
+pub(crate) fn push_handlers_and_animations(
+    out: &mut String,
+    el: &Element,
+) -> Result<(), CrepusError> {
+    for (index, handler) in el.event_handlers.iter().enumerate() {
+        for modifier in &handler.modifiers {
+            if matches!(
+                modifier.as_str(),
+                "prevent" | "stop" | "immediate" | "trusted" | "self" | "once" | "capture"
+            ) {
+                continue;
+            }
+            let lower = modifier.to_lowercase();
+            let parts: Vec<_> = lower.split('+').collect();
+            if !matches!(
+                handler.event.to_ascii_lowercase().as_str(),
+                "keydown" | "keyup"
+            ) || parts.last().is_none_or(|key| key.is_empty())
+                || parts[..parts.len() - 1]
+                    .iter()
+                    .any(|part| !matches!(*part, "ctrl" | "cmd" | "shift" | "alt" | "opt"))
+            {
+                return Err(CrepusError::Parse(format!(
+                    "Unsupported web event modifier `{modifier}` on `{}`",
+                    handler.event
+                )));
+            }
+        }
+        if el.event_handlers[..index]
+            .iter()
+            .any(|previous| previous.event.eq_ignore_ascii_case(&handler.event))
+        {
+            continue;
+        }
         out.push(' ');
         out.push_str("data-on");
         out.push_str(&handler.event);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&handler.handler));
+        out.push_str(&crate::escape_html_attribute(&handler.handler));
         out.push('"');
+        let handlers: Vec<_> = el
+            .event_handlers
+            .iter()
+            .filter(|entry| entry.event.eq_ignore_ascii_case(&handler.event))
+            .map(|entry| json!({ "handler": entry.handler, "modifiers": entry.modifiers }))
+            .collect();
+        if handlers.len() > 1 {
+            out.push_str(" data-crepus-handlers-");
+            out.push_str(&handler.event);
+            out.push_str("=\"");
+            out.push_str(&crate::escape_html_attribute(
+                &serde_json::to_string(&handlers).expect("event handlers serialize"),
+            ));
+            out.push('"');
+        }
+        if !handler.modifiers.is_empty() {
+            out.push_str(" data-crepus-modifiers-");
+            out.push_str(&handler.event);
+            out.push_str("=\"");
+            let modifiers = serde_json::to_string(&handler.modifiers)
+                .expect("event modifiers contain only strings");
+            out.push_str(&crate::escape_html_attribute(&modifiers));
+            out.push('"');
+        }
     }
 
     for animation in &el.animations {
@@ -579,12 +894,16 @@ fn push_handlers_and_animations(out: &mut String, el: &Element) {
         out.push_str("data-animate-");
         out.push_str(&animation.property);
         out.push_str("=\"");
-        out.push_str(&crate::escape_html(&format!(
+        out.push_str(&crate::escape_html_attribute(&format!(
             "{} {}",
             animation.duration_expr, animation.easing
         )));
+        if animation.repeat {
+            out.push_str(" repeat");
+        }
         out.push('"');
     }
+    Ok(())
 }
 
 fn text_parts_manifest(parts: &[TextPart]) -> Value {

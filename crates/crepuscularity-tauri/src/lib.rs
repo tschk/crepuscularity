@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use std::any::{Any, TypeId};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::marker::PhantomData;
 use std::path::{Component, Path, PathBuf};
@@ -94,6 +94,14 @@ impl TauriProject {
     }
 
     pub fn metadata(&self) -> TauriMetadata {
+        let (product_path, version_path, identifier_path) = match self.version {
+            TauriVersion::V1 => (
+                "/package/productName",
+                "/package/version",
+                "/tauri/bundle/identifier",
+            ),
+            TauriVersion::V2 => ("/productName", "/version", "/identifier"),
+        };
         let windows = self
             .config_value
             .pointer("/app/windows")
@@ -102,17 +110,17 @@ impl TauriProject {
         TauriMetadata {
             product_name: self
                 .config_value
-                .get("productName")
+                .pointer(product_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             version: self
                 .config_value
-                .get("version")
+                .pointer(version_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             identifier: self
                 .config_value
-                .get("identifier")
+                .pointer(identifier_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             window_title: windows
@@ -380,10 +388,32 @@ impl Builder {
 }
 
 impl App {
+    /// Invoke a command on the calling thread, blocking until it returns.
+    ///
+    /// Async macro commands cannot be driven synchronously from an async task;
+    /// use [`Self::invoke_async`] there to keep the caller's runtime progressing.
     pub fn invoke(&self, command: &str, payload: Value) -> Result<Value, String> {
         self.commands
             .get(command)
             .ok_or_else(|| format!("unknown command {command:?}"))?(self, payload)
+    }
+
+    /// Invoke a command on the adapter's blocking pool without blocking the caller.
+    ///
+    /// Both sync and async macro handlers run on a worker, without host-thread
+    /// affinity. Command errors are preserved; worker panics become errors.
+    /// Once dispatched, dropping this future does not cancel the handler.
+    pub async fn invoke_async(&self, command: &str, payload: Value) -> Result<Value, String> {
+        let handler = self
+            .commands
+            .get(command)
+            .ok_or_else(|| format!("unknown command {command:?}"))?
+            .clone();
+        let app = self.clone();
+        runtime()
+            .spawn_blocking(move || handler(&app, payload))
+            .await
+            .map_err(|error| format!("command {command:?} task failed: {error}"))?
     }
 
     pub fn state<T: Send + Sync + 'static>(&self) -> Result<State<'static, T>, String> {
@@ -500,16 +530,26 @@ impl Manager for Window {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let mut events = self
-            .events
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(listeners) = events.listeners.get_mut(&self.name) {
-            listeners.remove(&self.id);
-            if listeners.is_empty() {
+        let removed = {
+            let mut events = self
+                .events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let removed = events
+                .listeners
+                .get_mut(&self.name)
+                .and_then(|listeners| listeners.remove(&self.id));
+            if events
+                .listeners
+                .get(&self.name)
+                .is_some_and(BTreeMap::is_empty)
+            {
                 events.listeners.remove(&self.name);
             }
-        }
+            removed
+        };
+        // Captured resources may reenter event registration during destruction.
+        drop(removed);
     }
 }
 
@@ -577,7 +617,11 @@ fn read_config(path: &Path) -> Result<Value, String> {
 }
 
 fn validate_bundle(bundle: &Bundle) -> Result<(), String> {
-    if !bundle.files.contains_key(&bundle.entry) {
+    let entry_path = bundle
+        .entry
+        .split_once('#')
+        .map_or(bundle.entry.as_str(), |(path, _)| path);
+    if !bundle.files.contains_key(entry_path) {
         return Err(format!("bundle entry {:?} is missing", bundle.entry));
     }
     for path in bundle.files.keys() {
@@ -625,8 +669,15 @@ fn config_uses(config: &Value, config_path: &Path) -> Vec<ApiUse> {
 
 fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
     let mut files_to_read = Vec::new();
+    let mut visited = HashSet::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
+        let Ok(identity) = dir.canonicalize() else {
+            continue;
+        };
+        if !visited.insert(identity) {
+            continue;
+        }
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -656,7 +707,7 @@ fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
             match extension {
                 "rs" => {
                     if let Ok(text) = fs::read_to_string(&path) {
-                        if text.contains("#[tauri::command]") || text.contains("#[command]") {
+                        if contains_command_attribute(&text) {
                             file_uses.push(api_use(&source, "command", Coverage::Backend));
                         }
                         if text.contains(".emit(") || text.contains(".listen(") {
@@ -692,6 +743,29 @@ fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
         .collect();
 
     uses.extend(local_uses);
+}
+
+// This audit is a source scanner, not a Rust parser. Match the attribute's
+// complete name while allowing ordinary formatting and command options.
+fn contains_command_attribute(text: &str) -> bool {
+    text.match_indices('#').any(|(offset, _)| {
+        let Some(attribute) = text[offset + 1..].trim_start().strip_prefix('[') else {
+            return false;
+        };
+        let attribute = attribute.trim_start();
+        let attribute = if let Some(rest) = attribute.strip_prefix("tauri") {
+            let Some(rest) = rest.trim_start().strip_prefix("::") else {
+                return false;
+            };
+            rest.trim_start()
+        } else {
+            attribute
+        };
+        let Some(rest) = attribute.strip_prefix("command") else {
+            return false;
+        };
+        matches!(rest.trim_start().chars().next(), Some('(' | ']'))
+    })
 }
 
 fn frontend_apis(text: &str) -> Vec<&'static str> {
@@ -807,6 +881,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn named_bundle_entries_preserve_the_selector_and_validate_file_paths() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"}}"#,
+            "dist",
+        );
+        let path = root.path().join("dist/crepus-bundle.json");
+        let mut bundle = serde_json::json!({
+            "entry": "ui.crepus#Card",
+            "files": { "ui.crepus": "--- Card\nspan \"SelectedCard\"\n--- Unused\nspan \"UnusedCard\"" }
+        });
+        fs::write(&path, bundle.to_string()).unwrap();
+        let project = TauriProject::open(root.path()).unwrap();
+        assert_eq!(project.bundle().unwrap().entry, "ui.crepus#Card");
+        #[cfg(feature = "native")]
+        {
+            let ir = project.native_ir().unwrap();
+            let json = crepuscularity_native::to_json(&ir).unwrap();
+            assert!(json.contains("SelectedCard"), "{json}");
+            assert!(!json.contains("UnusedCard"), "{json}");
+        }
+        bundle["entry"] = serde_json::json!("missing.crepus#Card");
+        fs::write(&path, bundle.to_string()).unwrap();
+        assert!(project.bundle().unwrap_err().contains("missing"));
+        bundle["entry"] = serde_json::json!("ui.crepus#Card");
+        bundle["files"]["../unsafe.crepus"] = serde_json::json!("span");
+        fs::write(&path, bundle.to_string()).unwrap();
+        assert!(project.bundle().unwrap_err().contains("unsafe path"));
+    }
+
     #[cfg(feature = "native")]
     #[test]
     fn renders_native_ir_from_static_bundle() {
@@ -859,6 +964,30 @@ mod tests {
     }
 
     #[test]
+    fn metadata_uses_version_specific_paths() {
+        for (build, expected) in [("distDir", "V1"), ("frontendDist", "V2")] {
+            let mut config = serde_json::json!({
+                "productName": "V2", "version": "2.0.0", "identifier": "dev.example.v2",
+                "package": {"productName": "V1", "version": "1.0.0"},
+                "tauri": {"bundle": {"identifier": "dev.example.v1"}, "windows": [{"title": "Window"}]},
+                "build": {}
+            });
+            config["build"][build] = serde_json::json!("../dist");
+            let root = project("tauri.conf.json", &config.to_string(), "dist");
+            let metadata = TauriProject::open(root.path()).unwrap().metadata();
+            assert_eq!(metadata.product_name.as_deref(), Some(expected));
+            let (version, identifier) = if expected == "V1" {
+                ("1.0.0", "dev.example.v1")
+            } else {
+                ("2.0.0", "dev.example.v2")
+            };
+            assert_eq!(metadata.version.as_deref(), Some(version));
+            assert_eq!(metadata.identifier.as_deref(), Some(identifier));
+            assert_eq!(metadata.window_title.as_deref(), Some("Window"));
+        }
+    }
+
+    #[test]
     fn rejects_unsafe_bundle_paths() {
         let root = project(
             "tauri.conf.json",
@@ -871,6 +1000,50 @@ mod tests {
         )
         .unwrap();
         assert!(TauriProject::open(root.path()).unwrap().bundle().is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn audit_visits_linked_directories_once_and_keeps_external_sources() {
+        use std::os::unix::fs::symlink;
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"}}"#,
+            "dist",
+        );
+        let source = root.path().join("src");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("command.rs"), "#[tauri::command] fn local() {}").unwrap();
+        symlink(".", source.join("again")).unwrap();
+        symlink(&source, root.path().join("alias")).unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(
+            external.path().join("command.rs"),
+            "#[tauri::command] fn external() {}",
+        )
+        .unwrap();
+        symlink(external.path(), root.path().join("linked-external")).unwrap();
+        fs::create_dir_all(root.path().join("target")).unwrap();
+        fs::write(
+            root.path().join("target/ignored.rs"),
+            "#[tauri::command] fn ignored() {}",
+        )
+        .unwrap();
+        let report = TauriProject::open(root.path()).unwrap().audit();
+        let commands: Vec<_> = report
+            .uses
+            .iter()
+            .filter(|usage| usage.api == "command")
+            .collect();
+        assert_eq!(
+            commands.len(),
+            2,
+            "each physical source directory must be scanned once"
+        );
+        assert!(commands
+            .iter()
+            .any(|usage| usage.source.contains("linked-external")));
+        assert!(!commands.iter().any(|usage| usage.source.contains("target")));
     }
 
     #[test]
@@ -904,6 +1077,41 @@ mod tests {
             .iter()
             .any(|use_| use_.api == "command" && use_.coverage == Coverage::Backend));
         assert!(report.native_ready().is_err());
+    }
+
+    #[test]
+    fn dropping_a_listener_can_drop_another_subscription() {
+        let app = Builder::default().build();
+        let child = app.listen("child", |_| {});
+        let parent = app.listen("parent", move |_| {
+            let _keep_alive = &child;
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            drop(parent);
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("listener cleanup deadlocked while dropping its captured subscription");
+        worker.join().unwrap();
+        assert!(app.events.lock().unwrap().listeners.is_empty());
+        let seen = Arc::new(Mutex::new(false));
+        let observed = seen.clone();
+        let _listener = app.listen("ready", move |_| *observed.lock().unwrap() = true);
+        app.emit("ready", Value::Null);
+        assert!(*seen.lock().unwrap());
+    }
+
+    #[test]
+    fn emit_all_payload_passing() {
+        let app = Builder::default().build();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let observed = seen.clone();
+        let _listener = app.listen("test_event", move |event| {
+            observed.lock().unwrap().push(event.payload.clone())
+        });
+        app.emit_all("test_event", serde_json::json!(42)).unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![serde_json::json!(42)]);
     }
 
     #[test]

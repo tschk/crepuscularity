@@ -30,6 +30,41 @@ pub enum Region {
     Dynamic,
 }
 
+/// Per-node classifications borrowing one AST ownership scope.
+///
+/// Keys use node identity rather than structural equality. The borrowed input
+/// keeps those addresses alive; nodes outside that input return `None`.
+pub struct RegionMap<'a> {
+    regions: std::collections::HashMap<*const Node, Region>,
+    _nodes: std::marker::PhantomData<&'a [Node]>,
+}
+
+/// Classify all nodes in one borrowed AST ownership scope.
+pub fn classify_regions(nodes: &[Node]) -> RegionMap<'_> {
+    RegionMap::new(nodes)
+}
+
+impl<'a> RegionMap<'a> {
+    /// Classify every node once, including authored include-slot children.
+    pub fn new(nodes: &'a [Node]) -> Self {
+        let mut regions = std::collections::HashMap::new();
+        for node in nodes {
+            classify_node_with::<true>(node, &mut |node, region| {
+                regions.insert(node as *const Node, region.clone());
+            });
+        }
+        Self {
+            regions,
+            _nodes: std::marker::PhantomData,
+        }
+    }
+
+    /// Return a classification only for the exact indexed node.
+    pub fn get(&self, node: &Node) -> Option<&Region> {
+        self.regions.get(&(node as *const Node))
+    }
+}
+
 // ── BindingMap ───────────────────────────────────────────────────────────────
 
 /// A flat summary of the static vs dynamic regions in a template.
@@ -72,7 +107,14 @@ pub fn classify_node(node: &Node) -> Region {
 }
 
 fn classify_node_inner(node: &Node) -> (Region, usize) {
-    match node {
+    classify_node_with::<false>(node, &mut |_, _| {})
+}
+
+fn classify_node_with<const INDEX: bool>(
+    node: &Node,
+    visit: &mut impl FnMut(&Node, &Region),
+) -> (Region, usize) {
+    let result = match node {
         Node::Text(parts) => {
             let expr_count = parts
                 .iter()
@@ -85,17 +127,17 @@ fn classify_node_inner(node: &Node) -> (Region, usize) {
             }
         }
 
-        Node::Element(el) => classify_element(el),
+        Node::Element(el) => classify_element::<INDEX>(el, visit),
 
         // Control flow and dynamic node types are always dynamic.
         Node::If(block) => {
             let mut count = 1; // the condition itself
             for n in &block.then_children {
-                count += classify_node_inner(n).1;
+                count += classify_node_with::<INDEX>(n, visit).1;
             }
             if let Some(els) = &block.else_children {
                 for n in els {
-                    count += classify_node_inner(n).1;
+                    count += classify_node_with::<INDEX>(n, visit).1;
                 }
             }
             (Region::Dynamic, count)
@@ -104,7 +146,7 @@ fn classify_node_inner(node: &Node) -> (Region, usize) {
         Node::For(block) => {
             let mut count = 1; // the iterator expression
             for n in &block.body {
-                count += classify_node_inner(n).1;
+                count += classify_node_with::<INDEX>(n, visit).1;
             }
             (Region::Dynamic, count)
         }
@@ -113,24 +155,41 @@ fn classify_node_inner(node: &Node) -> (Region, usize) {
             let mut count = 1; // the match expression
             for arm in &block.arms {
                 for n in &arm.body {
-                    count += classify_node_inner(n).1;
+                    count += classify_node_with::<INDEX>(n, visit).1;
                 }
             }
             (Region::Dynamic, count)
         }
 
         Node::LetDecl(_) => (Region::Dynamic, 1),
-        Node::Include(inc) => (Region::Dynamic, inc.props.len().max(1)),
+        Node::Include(inc) => {
+            if INDEX {
+                for child in &inc.slot {
+                    classify_node_with::<INDEX>(child, visit);
+                }
+            }
+            (Region::Dynamic, inc.props.len().max(1))
+        }
         Node::Embed(embed) => (Region::Dynamic, embed.props.len().max(1)),
         Node::RawText(_) | Node::RawHtml(_) => (Region::Dynamic, 1),
-    }
+    };
+    visit(node, &result.0);
+    result
 }
 
-fn classify_element(el: &Element) -> (Region, usize) {
+fn classify_element<const INDEX: bool>(
+    el: &Element,
+    visit: &mut impl FnMut(&Node, &Region),
+) -> (Region, usize) {
     let mut expr_count = 0;
     let mut is_dynamic = false;
 
     if el.tag == "slot-rotate" {
+        if INDEX {
+            for child in &el.children {
+                classify_node_with::<INDEX>(child, visit);
+            }
+        }
         return (Region::Dynamic, 1);
     }
 
@@ -165,7 +224,7 @@ fn classify_element(el: &Element) -> (Region, usize) {
 
     // Recurse into children.
     for child in &el.children {
-        let (child_region, child_count) = classify_node_inner(child);
+        let (child_region, child_count) = classify_node_with::<INDEX>(child, visit);
         expr_count += child_count;
         if child_region == Region::Dynamic {
             is_dynamic = true;
@@ -176,6 +235,80 @@ fn classify_element(el: &Element) -> (Region, usize) {
         (Region::Dynamic, expr_count)
     } else {
         (Region::Static, 0)
+    }
+}
+
+#[cfg(test)]
+mod region_map_tests {
+    use super::*;
+
+    fn check(nodes: &[Node], regions: &RegionMap<'_>) -> usize {
+        let mut count = 0;
+        for node in nodes {
+            assert_eq!(regions.get(node), Some(&classify_node(node)));
+            count += 1;
+            count += match node {
+                Node::Element(el) => check(&el.children, regions),
+                Node::If(block) => {
+                    check(&block.then_children, regions)
+                        + check(block.else_children.as_deref().unwrap_or_default(), regions)
+                }
+                Node::For(block) => check(&block.body, regions),
+                Node::Match(block) => block.arms.iter().map(|arm| check(&arm.body, regions)).sum(),
+                Node::Include(include) => check(&include.slot, regions),
+                _ => 0,
+            };
+        }
+        count
+    }
+
+    #[test]
+    fn indexed_regions_match_existing_rules_and_include_caller_slots() {
+        let nodes = crate::parser::parse_template(
+            "div\n  if {ok}\n    \"{name}\"\n  else\n    \"static\"\n  for item in {items}\n    span\n      \"{item}\"\n  match {kind}\n    _ =>\n      \"fallback\"\n  include child.crepus value={value}\n    div\n      \"{slot_only}\"\n  slot-rotate\n    \"first\"\n    \"second\"",
+        ).unwrap();
+        let before = analyze_template(&nodes);
+        let regions = classify_regions(&nodes);
+        assert_eq!(check(&nodes, &regions), regions.regions.len());
+        let after = analyze_template(&nodes);
+        assert_eq!(before.expr_count, after.expr_count);
+        assert_eq!(before.static_indices, after.static_indices);
+        assert_eq!(before.dynamic_indices, after.dynamic_indices);
+        let foreign = Node::RawText("outside".into());
+        assert_eq!(regions.get(&foreign), None);
+    }
+
+    #[test]
+    fn include_slot_expressions_do_not_change_legacy_expression_counts() {
+        let nodes = vec![Node::Include(IncludeNode {
+            path: "child.crepus".into(),
+            props: vec![],
+            slot: vec![Node::RawText("a".into()), Node::RawHtml("b".into())],
+        })];
+        let regions = classify_regions(&nodes);
+        assert_eq!(check(&nodes, &regions), 3);
+        assert_eq!(analyze_template(&nodes).expr_count, 1);
+    }
+
+    #[test]
+    fn indexing_visits_nested_nodes_exactly_once() {
+        for depth in [32, 64] {
+            let source = format!(
+                "{}{{value}}{}",
+                "<div>".repeat(depth),
+                "</div>".repeat(depth)
+            );
+            let nodes = crate::parser::parse_template(&source).unwrap();
+            let mut visits = std::collections::HashMap::new();
+            for node in &nodes {
+                classify_node_with::<true>(node, &mut |node, _| {
+                    *visits.entry(node as *const Node).or_insert(0) += 1;
+                });
+            }
+            assert_eq!(visits.len(), depth + 1);
+            assert!(visits.values().all(|count| *count == 1));
+            assert_eq!(classify_regions(&nodes).regions.len(), depth + 1);
+        }
     }
 }
 
@@ -285,6 +418,7 @@ mod tests {
         // test bindings
         let mut el = dummy_element();
         el.bindings.push(Binding {
+            origin: crate::ast::BindingOrigin::Expression,
             prop: "src".to_string(),
             value: "url".to_string(),
         });
@@ -316,6 +450,7 @@ mod tests {
         // test event handlers
         let mut el = dummy_element();
         el.event_handlers.push(EventHandler {
+            model_before_listener: None,
             event: "click".to_string(),
             modifiers: vec![],
             handler: "on_click".to_string(),
@@ -418,6 +553,7 @@ mod tests {
             Node::Element({
                 let mut el = dummy_element();
                 el.bindings.push(Binding {
+                    origin: crate::ast::BindingOrigin::Expression,
                     prop: "src".to_string(),
                     value: "url".to_string(),
                 });
@@ -429,5 +565,31 @@ mod tests {
         assert_eq!(map.static_indices, vec![0, 2]);
         assert_eq!(map.dynamic_indices, vec![1, 3]);
         assert_eq!(map.expr_count, 2);
+    }
+
+    #[test]
+    fn test_classify_node_inner_match_arms() {
+        let match_node = Node::Match(MatchBlock {
+            expr: "value".to_string(),
+            arms: vec![
+                MatchArm {
+                    pattern: "Some(x)".to_string(),
+                    body: vec![Node::LetDecl(LetDecl {
+                        name: "y".to_string(),
+                        expr: "x + 1".to_string(),
+                        is_default: false,
+                    })],
+                },
+                MatchArm {
+                    pattern: "None".to_string(),
+                    body: vec![Node::RawText("empty".to_string())],
+                },
+            ],
+        });
+
+        let (region, count) = classify_node_inner(&match_node);
+        assert_eq!(region, Region::Dynamic);
+        // 1 for the match expression + 1 for LetDecl + 1 for RawText = 3
+        assert_eq!(count, 3);
     }
 }

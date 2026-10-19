@@ -61,6 +61,10 @@ impl RuntimeBindings {
         Self::default()
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.handlers.is_empty() && self.elements.is_empty()
+    }
+
     /// Register a handler referenced by `@click=name` (and other event names).
     /// The callback can update retained GPUI entities and control propagation.
     pub fn on(

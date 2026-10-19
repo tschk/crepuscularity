@@ -1,8 +1,16 @@
 # CE retained-input candidate: contract, gaps and validation
 
-This is source work awaiting a build slot. No Cargo compilation, test run,
-dependency installation, native UI or device operation has been performed.
-Do not merge, publish, or describe it as full GPUI-CE declarative coverage yet.
+The reconciled candidate was compiled and validated on 19–20 October 2026.
+The normal GPUI/runtime suite passed 198 tests, including seven dispatch tests;
+the seven dispatch tests also passed after the native Tab fix. Strict all-target
+Clippy and 21 Metal rendering checks passed. Real macOS acceptance covered Unicode
+paste/editing, emoji selection/deletion, retained drafts across parent redraws,
+undo/redo, change/submit callbacks, external value replacement, Tab/Shift+Tab,
+readonly/disabled restrictions and permission transitions.
+
+OS IME composition/candidate placement and a copy/cut clipboard roundtrip remain
+unverified. These results do not establish full GPUI-CE declarative parity or
+cross-platform acceptance.
 
 ## Input contract
 
@@ -88,8 +96,8 @@ not general argument support. No absence of a wrapper is counted as parity.
 | Images | Pixel/intrinsic dimension transfer has a fixture. Percentage sizing, padding, state-dependent dimensions, async failures, animation frame retention and actual paint output remain unverified. |
 | Styling | Utility coverage is incomplete. CSS-only utilities and unknown static classes still include legacy silent no-ops; nested selectors, group state and general StyleRefinement arguments require native code. This is a coverage gap, not claimed support. |
 | Actions, drags, lists, canvas | Typed action/drag payloads, drag-source lifecycle, tooltips, list virtualization, custom drawing and host services still require native code. File-drop shorthand is only ExternalPaths. |
-| Animation | Runtime supports the documented limited properties; scale is rejected. Compiled animate attributes diagnose missing lowering. Arbitrary easing/duration expressions, Transition and new CE Git Motion features have no built-in template mapping. |
-| Targets | No macOS/Windows/Linux/FreeBSD/wasm build matrix has run. Kit/gpui-pre remains a separate backend. |
+| Animation | Runtime retains its limited animation properties and legacy scale approximation. Compiled animate attributes diagnose missing lowering. Arbitrary easing/duration expressions, Transition and new CE Git Motion features have no built-in template mapping. |
+| Targets | Native acceptance above is macOS-only; full Windows/Linux/FreeBSD/wasm feature acceptance remains unverified. Kit/gpui-pre remains a separate backend. |
 
 ## Validation gate
 
@@ -98,27 +106,14 @@ The immutable foundation is the external patch with SHA-256
 The new candidate gets a separate patch/hash after source review. Canonical
 `~/projects/crepuscularity` and its WIP are not validation targets.
 
-Prerequisites before any Cargo command:
+The validated lock includes the runtime `unicode-segmentation` edge and five
+optional packages required by the exposed CE feature forwarders. Existing
+package versions and checksums were preserved. The reconciled candidate also
+preserves the desktop font defaults, prepared include/worker paths and public
+explicit element IDs. The original seven history commits remain intact.
 
-1. The parent explicitly allocates one build slot and approves a target directory.
-2. The integration/Kit lock owner adds **only the required runtime dependency
-   edge** for `unicode-segmentation`, then reviews/freezes the combined lock.
-   The baseline already contains 1.13.3 with checksum
-   `c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8`.
-   This lane has not changed the root lock. Running `--locked` before this update
-   is expected to fail; do not drop the flag or resolve concurrently with Kit.
-3. Dependencies must already be cached. All commands use `--offline`; a missing
-   cache is a blocker to report, not permission to download/install.
-4. Use a Rust toolchain compatible with the pinned CE source. This host reports
-   `rustc 1.98.1 (48a229cea 2026-09-01)`; unicode-segmentation declares MSRV 1.85.
-   On macOS, native builds need the selected Xcode SDK/toolchain. CE's pinned
-   macOS build script can fall back to runtime shader compilation when the Metal
-   command-line component is unavailable; do not install or switch toolchains
-   automatically. Linux/FreeBSD need existing target-native X11/Wayland/font and
-   graphics development libraries; Windows needs an existing native toolchain/SDK.
-
-Run serially from the isolated checkout, after substituting the approved target
-directory. These commands have **not** been executed:
+The commands below remain useful for scoped revalidation; the completed results
+above describe the actual gates, rather than claiming every feature combination:
 
 ```sh
 export CARGO_BUILD_JOBS=1
@@ -141,9 +136,8 @@ Fixtures explicitly draw before dispatch. A focused native-bridge fixture checks
 the terminal composition event on a runtime permission change.
 
 TestPlatform uses CE's NoopTextSystem. Passing these tests cannot verify real
-font shaping, pixel output or OS accessibility/IME. Native GPU/headless rendering
-and real UI acceptance are separate future runs, requiring their own authorized
-slot and environment. The pinned platform's `current_headless_renderer` is
+font shaping, pixel output or OS accessibility/IME. The 21 Metal checks and real macOS interaction acceptance are separate evidence
+from TestPlatform. Remaining native platform checks need their own environment. The pinned platform's `current_headless_renderer` is
 macOS-only. Do not substitute newer Zed headless APIs or silently skip a failing
 native gate. Native acceptance must include constrained/intrinsic images, IME
 candidate positioning after horizontal scrolling, composition commit/cancel,
