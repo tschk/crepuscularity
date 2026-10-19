@@ -22,8 +22,10 @@ mod void_html;
 /// Enable the `reactive` feature to use signals, memos, and effects in WASM.
 #[cfg(all(target_arch = "wasm32", feature = "reactive"))]
 pub mod reactive {
-    pub use crepuscularity_reactive::dom::{bind_attr, bind_class, bind_text};
-    pub use crepuscularity_reactive::{batch_begin, batch_end, flush, Effect, Memo, Signal};
+    pub use crepuscularity_reactive::{
+        batch_begin, batch_end, bind_attr, bind_bool_attr, bind_checked, bind_class, bind_text,
+        bind_value, flush, hydrate_root, Effect, Memo, Signal,
+    };
 }
 
 pub use bundle::{parse_bundle, render_bundle, render_bundle_with_context, Bundle};
