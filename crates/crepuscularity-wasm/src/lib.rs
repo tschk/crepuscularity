@@ -102,9 +102,10 @@ mod tests {
 
     #[test]
     fn test_parse_template_json_inner_filename_dispatch() {
-        let src = "<div>Hello</div>";
-        let res = parse_template_json_inner(src, Some("test.vue"), None);
-        assert!(res.is_ok());
+        let src = "<template><div>Hello {{name}}</div></template>";
+        let ir = parse_template_json_inner(src, Some("test.vue"), Some(r#"{"name":"World"}"#))
+            .expect("filename dispatch must accept a Vue SFC and evaluate Vue interpolation");
+        assert!(ir.contains("Hello World"), "{ir}");
     }
 
     #[test]
