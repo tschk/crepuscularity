@@ -734,7 +734,10 @@ pub(crate) fn push_bindings(
     skip_interval: bool,
 ) -> Result<(), CrepusError> {
     for binding in &el.bindings {
-        if el.tag == "slot-rotate"
+        // Only the specialized slot-rotate renderer has already merged attribute classes.
+        // Generic hydration still emits them through this binding pass.
+        if skip_interval
+            && el.tag == "slot-rotate"
             && binding.origin == BindingOrigin::Attribute
             && binding.prop.eq_ignore_ascii_case("class")
         {
