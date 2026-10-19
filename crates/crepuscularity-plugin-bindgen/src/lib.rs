@@ -271,8 +271,10 @@ import "C"
 }
 
 fn generate_v_imports(header: &Path, package_dir: Option<&Path>) -> Result<String, String> {
-    if header.to_str().is_none() {
-        return Err("V ABI header path must be UTF-8".into());
+    let authored_path = header.to_str().ok_or("V ABI header path must be UTF-8")?;
+    // Resolve output locations without normalizing away rejected directive text.
+    if authored_path.contains("//") {
+        return Err(format!("unsupported V ABI directive path: {authored_path}"));
     }
     let header = std::path::absolute(header)
         .map_err(|error| format!("resolve V ABI header path: {error}"))?;
