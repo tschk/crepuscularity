@@ -168,32 +168,41 @@ mod tests {
 
     #[test]
     fn parses_linux_window_button_layout() {
-        let layout = WindowButtonLayout::parse(":minimize,maximize,close").unwrap();
+        let layout_result = WindowButtonLayout::parse(":minimize,maximize,close");
+        assert!(layout_result.is_ok());
 
-        assert_eq!(layout, WindowButtonLayout::linux_default());
+        if let Ok(layout) = layout_result {
+            assert_eq!(layout, WindowButtonLayout::linux_default());
+        }
     }
 
     #[test]
     fn parses_left_and_right_window_button_layout() {
-        let layout = WindowButtonLayout::parse("close:minimize,maximize").unwrap();
+        let layout_result = WindowButtonLayout::parse("close:minimize,maximize");
+        assert!(layout_result.is_ok());
 
-        assert_eq!(
-            layout,
-            WindowButtonLayout {
-                left: [Some(WindowButton::Close), None, None],
-                right: [
-                    Some(WindowButton::Minimize),
-                    Some(WindowButton::Maximize),
-                    None,
-                ],
-            }
-        );
+        if let Ok(layout) = layout_result {
+            assert_eq!(
+                layout,
+                WindowButtonLayout {
+                    left: [Some(WindowButton::Close), None, None],
+                    right: [
+                        Some(WindowButton::Minimize),
+                        Some(WindowButton::Maximize),
+                        None,
+                    ],
+                }
+            );
+        }
     }
 
     #[test]
     fn rejects_unknown_window_button_layout_tokens() {
-        let error = WindowButtonLayout::parse(":minimize,fullscreen").unwrap_err();
+        let error_result = WindowButtonLayout::parse(":minimize,fullscreen");
+        assert!(error_result.is_err());
 
-        assert!(error.to_string().contains("unknown window button"));
+        if let Err(error) = error_result {
+            assert!(error.to_string().contains("unknown window button"));
+        }
     }
 }
