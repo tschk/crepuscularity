@@ -91,7 +91,7 @@ pub struct WidgetChild {
 }
 
 /// Parameters needed to build a `Block` widget (borders + optional title + padding).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BlockSpec {
     borders: Borders,
     border_type: BorderType,
@@ -99,9 +99,39 @@ pub struct BlockSpec {
     title: Option<String>,
     title_alignment: Alignment,
     padding: Padding,
+    // An empty block retains bare-text sizing provenance without changing public tree constructors.
+    auto_height: bool,
+    // Visibility metadata does not change the block's layout overhead.
+    invisible: bool,
 }
 
 impl BlockSpec {
+    fn overhead(&self, axis: Direction) -> u16 {
+        let inner = self.to_block().inner(Rect::new(0, 0, u16::MAX, u16::MAX));
+        u16::MAX
+            - match axis {
+                Direction::Horizontal => inner.width,
+                Direction::Vertical => inner.height,
+            }
+    }
+
+    fn render_clipped(&self, style: Style, buf: &mut Buffer, area: Rect) {
+        let visible = area.intersection(buf.area);
+        if visible.is_empty() {
+            return;
+        }
+        // Block clips its geometry before drawing, so hide edges outside the original window.
+        let mut spec = self.clone();
+        if visible.y > area.y {
+            spec.borders.remove(Borders::TOP);
+            spec.title = None;
+        }
+        if visible.bottom() < area.bottom() {
+            spec.borders.remove(Borders::BOTTOM);
+        }
+        spec.to_block().style(style).render(visible, buf);
+    }
+
     fn to_block(&self) -> Block<'static> {
         let mut b = Block::default()
             .borders(self.borders)
@@ -1922,6 +1952,45 @@ impl<'a> Scrollable<'a> {
             }
         }
     }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+fn element_is_hidden(
+    el: &Element,
+    ctx: &TemplateContext,
+    classes: &[String],
+) -> Result<bool, CrepusError> {
+    if classes.iter().any(|class| class == "hidden") {
+        return Ok(true);
+    }
+    for binding in &el.bindings {
+        if binding.prop.eq_ignore_ascii_case("hidden")
+            && !matches!(
+                crepuscularity_core::eval::eval_binding(binding, ctx)?,
+                None | Some(TemplateValue::Bool(false) | TemplateValue::Null)
+            )
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn element_is_statically_unfocusable(el: &Element) -> bool {
+    el.classes
+        .iter()
+        .any(|class| matches!(class.as_str(), "hidden" | "invisible"))
+        || el.bindings.iter().any(|binding| {
+            binding.prop.eq_ignore_ascii_case("hidden")
+                && eval_literal(&binding.value).is_some_and(|value| {
+                    if binding.origin == BindingOrigin::Attribute {
+                        !matches!(value, TemplateValue::Null)
+                    } else {
+                        !matches!(value, TemplateValue::Bool(false) | TemplateValue::Null)
+                    }
+                })
+        })
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
