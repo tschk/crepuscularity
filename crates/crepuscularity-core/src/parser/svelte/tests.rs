@@ -8,6 +8,30 @@ fn parse(src: &str) -> Vec<Node> {
     parse_template_with_path(src, Some(Path::new("Comp.svelte"))).expect("svelte should parse")
 }
 
+#[test]
+fn test_parse_svelte_component_raw() {
+    // 1. Happy path: valid component with script, style, and nodes
+    let src = "<script>let x = 1;</script><style>p { color: red; }</style><p>{x}</p>";
+    let comp = parse_svelte_component_raw(src).expect("should parse valid component");
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "p");
+    assert_eq!(comp.script.as_deref().unwrap(), "let x = 1;");
+    assert_eq!(comp.style.as_deref().unwrap(), "p { color: red; }");
+    assert!(comp.module_script.is_none());
+
+    // 2. Trailing markup error
+    let err = parse_svelte_component_raw("<p>valid</p> </span>").unwrap_err();
+    assert!(err.message.contains("unexpected trailing markup"));
+
+    // 3. Just markup
+    let comp = parse_svelte_component_raw("<div>Hello</div>").unwrap();
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "div");
+    assert!(comp.script.is_none());
+    assert!(comp.style.is_none());
+    assert!(comp.module_script.is_none());
+}
+
 fn parse_err(src: &str) -> String {
     parse_template_with_path(src, Some(Path::new("Comp.svelte")))
         .expect_err("expected a parse error")
