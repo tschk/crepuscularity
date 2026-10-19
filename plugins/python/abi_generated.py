@@ -29,6 +29,27 @@ class CrepusAbiSession:
         if not self._ptr:
             raise RuntimeError("crepus_session_new failed")
 
+    def close(self) -> None:
+        if getattr(self, "_ptr", None):
+            self._lib.crepus_session_free(self._ptr)
+            self._ptr = None
+            self._callback_ref = None
+
+    def __copy__(self) -> "CrepusAbiSession":
+        raise TypeError("native ABI sessions cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "CrepusAbiSession":
+        raise TypeError("native ABI sessions cannot be copied")
+
+    def __enter__(self) -> "CrepusAbiSession":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
     def _configure(self) -> None:
         self._lib.crepus_session_new.restype = ctypes.c_void_p
         self._lib.crepus_session_free.argtypes = [ctypes.c_void_p]
