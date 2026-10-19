@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-native"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "crepuscularity-core",
  "serde",
