@@ -1644,10 +1644,42 @@ fn build_include(
 
 /// Recursively render a `WidgetNode` tree into `frame` at `area`.
 pub fn paint_node(node: &WidgetNode, frame: &mut Frame, area: Rect) {
-    paint_node_buf(node, frame.buffer_mut(), area);
+    paint_node_buf(node, frame.buffer_mut(), area, false, false);
 }
 
-fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
+fn paint_node_buf(
+    node: &WidgetNode,
+    buf: &mut Buffer,
+    area: Rect,
+    natural_height: bool,
+    wrap_text: bool,
+) {
+    if matches!(node,
+        WidgetNode::Content { block: Some(spec), .. }
+            | WidgetNode::Container { block: Some(spec), .. } if spec.invisible
+    ) {
+        return;
+    }
+    let visible = area.intersection(buf.area);
+    if visible.is_empty() {
+        return;
+    }
+    if visible.width != area.width {
+        // Preserve logical wrapping, alignment and borders before cropping horizontally.
+        let mut scratch = Buffer::empty(Rect::new(area.x, visible.y, area.width, visible.height));
+        for y in visible.y..visible.bottom() {
+            for x in visible.x..visible.right() {
+                scratch[(x, y)] = buf[(x, y)].clone();
+            }
+        }
+        paint_node_buf(node, &mut scratch, area, natural_height, wrap_text);
+        for y in visible.y..visible.bottom() {
+            for x in visible.x..visible.right() {
+                buf[(x, y)] = std::mem::take(&mut scratch[(x, y)]);
+            }
+        }
+        return;
+    }
     match node {
         WidgetNode::Container {
             direction,
@@ -1661,9 +1693,8 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
         } => {
             // Fill background / draw border, then recurse into the inner area.
             let inner = if let Some(spec) = block {
-                let b = spec.to_block().style(*style);
-                let inner = b.inner(area);
-                b.render(area, buf);
+                let inner = spec.to_block().inner(area);
+                spec.render_clipped(*style, buf, area);
                 inner
             } else if *style != Style::default() {
                 // Background colour only — no border.
@@ -1682,9 +1713,17 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
                     *scroll_bottom,
                     inner,
                 )
-                .paint(buf);
+                .paint(buf, natural_height);
             } else {
-                paint_children_buf(children, buf, inner, *direction, *gap);
+                paint_children_buf(
+                    children,
+                    buf,
+                    inner,
+                    *direction,
+                    *gap,
+                    natural_height,
+                    wrap_text,
+                );
             }
         }
 
@@ -1694,16 +1733,23 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
             block,
             alignment,
         } => {
-            let text = Text::from(lines.clone());
-            let para = Paragraph::new(text)
+            let inner = if let Some(spec) = block {
+                let inner = spec.to_block().inner(area);
+                spec.render_clipped(*style, buf, area);
+                inner
+            } else {
+                area
+            };
+            let visible = inner.intersection(buf.area);
+            if visible.is_empty() {
+                return;
+            }
+            Paragraph::new(Text::from(lines.clone()))
                 .style(*style)
                 .alignment(*alignment)
-                .wrap(Wrap { trim: false });
-            if let Some(spec) = block {
-                para.block(spec.to_block()).render(area, buf);
-            } else {
-                para.render(area, buf);
-            }
+                .wrap(Wrap { trim: false })
+                .scroll((visible.y - inner.y, 0))
+                .render(visible, buf);
         }
 
         WidgetNode::Empty => {}
