@@ -6,7 +6,7 @@ Run from this folder:
 bun publish.ts --login --publish
 ```
 
-`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun handles package checks, packing and publishing. The batch submits packages in dependency order and records every accepted upload before beginning availability verification, so npm processing does not stall submission of the remaining packages. Existing registry versions are skipped and their tarball availability is checked. Accepted uploads are saved before verification; reruns do not submit them again. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
+`--login` opens npm's browser login. No token is embedded, printed or requested in chat. Bun runs the helper, checks and packing. The installed npm client, executed under Bun, handles uploads so npm’s temporary IP authentication exemption is honored. The batch submits packages in dependency order and records every accepted upload before beginning availability verification, so npm processing does not stall submission of the remaining packages. Existing registry versions are skipped and their tarball availability is checked. Accepted uploads are saved before verification; reruns do not submit them again. A failing package blocks consumers requiring its unavailable version; independent validated packages can still publish. The command exits nonzero if any candidate remains blocked.
 
 To inspect the live plan without logging in, building or publishing:
 
@@ -51,3 +51,5 @@ Frozen Moonshine package proofs are recorded in `moonshine-frozen-artifacts.json
 The parser tarball can be reproduced from the reviewed release worktree using `bun pm pack --ignore-scripts --filename /absolute/path/tschk-crepuscularity-wasm-0.1.4.tgz` in its `crates/crepuscularity-wasm/npm` directory. Do not replace the frozen artifact or its checksum with an untested rebuild. Registry uploads cannot be overwritten; successful earlier uploads remain published if a later upload fails, and rerunning skips existing versions.
 
 Documentation: [Bun packing/publishing](https://bun.com/docs/pm/cli/publish), [npm browser login](https://docs.npmjs.com/cli/v11/commands/npm-login/).
+
+Observed authentication fix: Bun 1.4.0 repeatedly requested web challenges during the same five-minute npm IP exemption. The installed npm client accepted the same pending artifact without another challenge. Only the upload client changed; tarballs, checksums and receipt safeguards are unchanged. No installed runtime or authentication setting was rewritten.

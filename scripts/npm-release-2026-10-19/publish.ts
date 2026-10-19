@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -134,7 +134,7 @@ function checkRepo(root:string, projects:string, checked:Set<string>) {
 async function main() {
   const args=process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('bun publish.ts [--login] [--prepare | --publish | --verify] [--only NAME_SUBSTRING] [--projects DIR]\nDefault: live read-only public-package inventory. --prepare checks/packs; --publish also uploads.\n--login uses npm browser authentication; uploads use Bun. Existing versions are skipped.');return;
+    console.log('bun publish.ts [--login] [--prepare | --publish | --verify] [--only NAME_SUBSTRING] [--projects DIR]\nDefault: live read-only public-package inventory. --prepare checks/packs; --publish also uploads.\n--login uses npm browser authentication; uploads use the installed npm client under Bun. Existing versions are skipped.');return;
   }
   let publish=false,prepare=false,verify=false,login=false,only='',projects=join(homedir(),'projects');
   for(let i=0;i<args.length;i++) {
@@ -227,7 +227,9 @@ async function main() {
     const fresh=await metadata(p.manifest.name);
     if(!receipt&&!Object.hasOwn(fresh.versions,p.manifest.version)) {
       const tag=p.manifest.version.includes('-')?'next':'latest';
-      run(['bun','publish',p.artifact!,'--access','public','--registry',registryURL,'--tag',tag,'--auth-type','web'],base,true);
+      const npm=Bun.which('npm');
+      if(!npm)throw new Error('The installed npm client is required for its IP-based authentication exemption');
+      run(['bun',realpathSync(npm),'publish',p.artifact!,'--access','public','--registry',registryURL,'--tag',tag,'--auth-type','web','--ignore-scripts'],base,true);
       // Persist acceptance before polling: retry must never resubmit a processing upload.
       saveReceipt(key,{state:'accepted',sha512:digest,observedAt:new Date().toISOString()});
     } else console.log(`Upload already accepted/registered: ${key}; verifying without resubmitting`);
