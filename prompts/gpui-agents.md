@@ -25,7 +25,7 @@ my-app/
 ```toml
 [dependencies]
 gpui = { version = "0.2", default-features = false, features = ["font-kit"] }
-crepuscularity-gpui = { version = "0.4.1" }
+crepuscularity-gpui = { version = "0.6.0" }
 ```
 
 ## Template syntax (inline in Rust)

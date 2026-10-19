@@ -12,7 +12,7 @@ Render `.crepus` templates into a fixed-size **RGB565 framebuffer** for microcon
 
 ```toml
 [dependencies]
-crepuscularity-embedded = "0.1.9"
+crepuscularity-embedded = "0.2.0"
 ```
 
 Default features include parsing and `include` (via `crepuscularity-core`). For layout/paint only on device, use `default-features = false` and construct trees on the host (advanced).
@@ -58,7 +58,7 @@ Same crate, feature-gated modules under [`panel`](../crates/crepuscularity-embed
 | `esp-idf` | `esp_lcd_panel_draw_bitmap` wrapper |
 
 ```toml
-crepuscularity-embedded = { version = "0.1.9", default-features = false, features = ["embassy-stm32"] }
+crepuscularity-embedded = { version = "0.2.0", default-features = false, features = ["embassy-stm32"] }
 ```
 
 ```rust,ignore

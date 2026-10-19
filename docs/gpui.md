@@ -225,7 +225,7 @@ GPUI supports advanced text styling when using the vendored GPUI build:
 
 ```toml
 [dependencies]
-crepuscularity-gpui = { version = "0.4.1", features = ["gpui-text-extras"] }
+crepuscularity-gpui = { version = "0.6.0", features = ["gpui-text-extras"] }
 ```
 
 ```text

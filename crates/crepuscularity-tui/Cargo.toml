@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-tui"
-version = "0.4.24"
+version = "0.5.0"
 edition = "2021"
 license = "ISC"
 description = "Ratatui backend for the Crepuscularity .crepus DSL — write full-screen terminal UIs with nested div layouts."
@@ -8,8 +8,8 @@ repository = "https://github.com/tschk/crepuscularity"
 readme = "../../README.md"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0", features = ["notify"] }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.13" }
 crossterm = "0.29"
 notify = { workspace = true }
 ratatui = { workspace = true }

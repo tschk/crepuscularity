@@ -1,4 +1,4 @@
-# Crepuscularity → ZPUI 0.2.0 (experimental)
+# Crepuscularity → ZPUI 0.2.1 (experimental)
 
 This optional Zig adapter consumes Crepuscularity View IR v7 and constructs
 ZPUI elements. Compile `.crepus` templates with the existing Rust compiler:

@@ -17,7 +17,7 @@ use crate::ui;
 /// Caret-style version requirement injected into scaffolded TUI apps for
 /// `crepuscularity-tui`. Keep this aligned with the published `crepuscularity-tui`
 /// minor; pre-1.0 caret on `0.x.y` resolves to `>=0.x.y, <0.(x+1).0`.
-const SCAFFOLD_TUI_VERSION: &str = "0.4";
+const SCAFFOLD_TUI_VERSION: &str = "0.5.0";
 
 pub fn execute(cmd: TuiCommands) {
     match cmd {

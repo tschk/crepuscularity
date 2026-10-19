@@ -81,7 +81,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-webext = { version = "0.2.7" }
+crepuscularity-webext = { version = "0.4.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde-wasm-bindgen = "0.6"

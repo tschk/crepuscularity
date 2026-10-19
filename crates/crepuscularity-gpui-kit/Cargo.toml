@@ -21,8 +21,8 @@ tree-sitter-languages = ["tree-sitter", "gpui-kit/tree-sitter-languages"]
 [dependencies]
 # Kit owns the matching gpui-pre =0.3.7 family. Never substitute the CE workspace dependency.
 gpui-kit = { version = "=0.7.0", default-features = false }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.13" }
 
 [[example]]
 name = "kit-counter"

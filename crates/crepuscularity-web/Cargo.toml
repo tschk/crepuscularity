@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-web"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 license = "ISC"
 description = "Web / SSR / DOM integration for Crepuscularity (UNSTABLE; in active development)."
@@ -26,8 +26,8 @@ reactive = ["dep:crepuscularity-reactive", "crepuscularity-reactive/dom"]
 ammonia = "4.1.8"
 axum = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.13" }
 crepuscularity-reactive = { path = "../crepuscularity-reactive", version = "0.1.12", optional = true }
 http = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }

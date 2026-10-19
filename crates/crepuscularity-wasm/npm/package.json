@@ -1,6 +1,6 @@
 {
   "name": "@tschk/crepuscularity-wasm",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "scripts": {
     "prepublishOnly": "bash ../build.sh"
   },
