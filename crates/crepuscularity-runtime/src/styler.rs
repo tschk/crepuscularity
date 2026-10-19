@@ -1927,6 +1927,88 @@ mod class_list_tests {
 }
 
 #[cfg(test)]
+mod alpha_color_tests {
+    use super::*;
+
+    #[test]
+    fn alpha_colors_style_the_requested_property() {
+        for (class, expected) in [
+            ("text-[#ff000080]", gpui::div().text_color(rgba(0xff000080))),
+            (
+                "border-[#ff000080]",
+                gpui::div().border_color(rgba(0xff000080)),
+            ),
+            (
+                "text-red-500/50",
+                gpui::div().text_color(rgba((tailwind_color("red", "500").unwrap() << 8) | 127)),
+            ),
+            (
+                "border-red-500/50",
+                gpui::div().border_color(rgba((tailwind_color("red", "500").unwrap() << 8) | 127)),
+            ),
+        ] {
+            let mut actual = apply_class(gpui::div(), class);
+            let mut expected = expected;
+            assert_eq!(
+                format!("{:?}", actual.style()),
+                format!("{:?}", expected.style()),
+                "{class}"
+            );
+        }
+    }
+
+    #[test]
+    fn excessive_alpha_clamps_without_overflow_or_color_corruption() {
+        let mut actual = apply_class(gpui::div(), "bg-red-500/4294967295");
+        let mut expected = apply_class(gpui::div(), "bg-red-500/100");
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+        let mut ctx = TemplateContext::new();
+        ctx.set("color", "#ff0000");
+        let mut actual = apply_class_with_ctx(gpui::div(), "bg-{color}/4294967295", Some(&ctx));
+        let mut expected = gpui::div().bg(rgba(0xff0000ff));
+        assert_eq!(
+            format!("{:?}", actual.style()),
+            format!("{:?}", expected.style())
+        );
+    }
+}
+
+#[cfg(test)]
+mod opacity_tests {
+    use super::*;
+
+    #[test]
+    fn static_and_context_opacity_use_the_same_bounds() {
+        for (source, expected) in [
+            ("-10", Some(0.0)),
+            ("150", Some(1.0)),
+            ("NaN", None),
+            ("inf", None),
+        ] {
+            let mut ctx = TemplateContext::new();
+            ctx.set("opacity", source);
+            for mut actual in [
+                apply_class(gpui::div(), &format!("opacity-{source}")),
+                apply_class_with_ctx(gpui::div(), "opacity-{opacity}", Some(&ctx)),
+            ] {
+                let mut expected_style = gpui::div();
+                if let Some(opacity) = expected {
+                    expected_style = expected_style.opacity(opacity);
+                }
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    format!("{:?}", expected_style.style()),
+                    "{source}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod definite_length_tests {
     use super::*;
 
@@ -1958,6 +2040,38 @@ mod state_list_tests {
         let actual = class_list_state_style("hover:p-2 active:p-4", "active");
         let mut expected = apply_class_list(gpui::div(), "p-4");
         assert_eq!(format!("{actual:?}"), format!("{:?}", expected.style()));
+    }
+}
+
+#[cfg(test)]
+mod hsla_tests {
+    use super::*;
+
+    #[test]
+    fn hsla_values_are_finite_and_use_color_bounds() {
+        for prefix in ["bg", "text", "border"] {
+            let mut actual = apply_class(gpui::div(), &format!("{prefix}-[hsla(720,150,-20,2)]"));
+            let mut expected = apply_class(gpui::div(), &format!("{prefix}-[hsla(0,100,0,1)]"));
+            assert_eq!(
+                format!("{:?}", actual.style()),
+                format!("{:?}", expected.style())
+            );
+            for color in [
+                "hsla(NaN,50,50,1)",
+                "hsla(0,inf,50,1)",
+                "hsla(0,50,-inf,1)",
+                "hsla(0,50,50,NaN)",
+                "hsla(0,50%%,50%,1)",
+                "hsla(0,50%,50%%,1)",
+            ] {
+                let mut actual = apply_class(gpui::div(), &format!("{prefix}-[{color}]"));
+                let mut empty = gpui::div();
+                assert_eq!(
+                    format!("{:?}", actual.style()),
+                    format!("{:?}", empty.style())
+                );
+            }
+        }
     }
 }
 
