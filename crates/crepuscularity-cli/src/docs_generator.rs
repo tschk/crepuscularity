@@ -350,7 +350,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
       for(var i=0;i<scored.length;i++){{
         var item=scored[i].item;
         var path=String(item&&item.path?item.path:'');
-        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf('\')!==-1||path.indexOf('..')!==-1)continue;
+        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf(String.fromCharCode(92))!==-1||path.indexOf('..')!==-1)continue;
         var a=document.createElement('a');
         a.setAttribute('href',path);
         a.textContent=String(item.title||'');
@@ -454,6 +454,58 @@ mod tests {
         );
         assert!(html.contains("textContent"));
         assert!(html.contains("createElement('a')"));
+    }
+
+    #[test]
+    #[ignore = "requires installed Bun to execute the actual emitted docs script"]
+    fn emitted_search_script_executes_and_rejects_unsafe_paths() {
+        let html = render_shell("body", "Title", "<nav></nav>", &ThemeCss::default(), "Site");
+        let script = html
+            .split_once("<script>")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let fixture = tempfile::tempdir().unwrap();
+        let harness = r#"
+const handlers = {};
+const input = {value: 'Guide', addEventListener(name, fn) { handlers[name] = fn; }};
+const results = {children: [], replaceChildren() { this.children = []; }, appendChild(el) { this.children.push(el); }};
+globalThis.document = {
+  getElementById(id) { return id === 'doc-search-input' ? input : results; },
+  querySelectorAll() { return []; }, addEventListener() {},
+  createElement() { return {setAttribute(name, value) { this[name] = value; }}; }
+};
+let fetched = false;
+globalThis.fetch = async () => { fetched = true; return {json: async () => [
+  {title: 'Guide valid', path: 'guide.html'},
+  {title: 'Guide backslash', path: 'folder\\evil.html'},
+  {title: 'Guide traversal', path: '../evil.html'},
+  {title: 'Guide scheme', path: 'javascript:alert(1)'},
+  {title: 'Guide absolute', path: '/evil.html'},
+  {title: 'Guide network', path: '//evil.example'}
+]}; };
+"#;
+        let checks = r#"
+await new Promise(resolve => setTimeout(resolve, 0));
+if (!fetched) throw new Error('search index was not fetched');
+handlers.input.call(input);
+if (results.children.length !== 1 || results.children[0].href !== 'guide.html' || results.children[0].textContent !== 'Guide valid') {
+  throw new Error('search results failed safe-path filtering: ' + JSON.stringify(results.children));
+}
+"#;
+        let path = fixture.path().join("search.mjs");
+        std::fs::write(&path, format!("{harness}\n{script}\n{checks}")).unwrap();
+        let output = std::process::Command::new("bun")
+            .arg(&path)
+            .output()
+            .expect("run installed Bun");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
