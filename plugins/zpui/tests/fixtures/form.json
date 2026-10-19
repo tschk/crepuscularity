@@ -244,6 +244,9 @@
             {
               "kind": "stack",
               "axis": "column",
+              "style": {
+                "htmlDisplayContents": true
+              },
               "children": [
                 {
                   "kind": "stack",
