@@ -1515,17 +1515,28 @@ fn prepare_include_context(
     inc: &IncludeNode,
     ctx: &TemplateContext,
     full_path: &std::path::Path,
-) -> TemplateContext {
+) -> Result<TemplateContext, CrepusError> {
     let mut child_ctx = TemplateContext::new();
     child_ctx.base_dir = full_path.parent().map(|p| p.to_path_buf());
     child_ctx.virtual_files = ctx.virtual_files.clone();
+    for key in [
+        "crepus_target",
+        "is_tui",
+        "is_gui",
+        "is_web",
+        "crepus_platform",
+        "is_macos",
+        "is_windows",
+        "is_linux",
+    ] {
+        if let Some(value) = ctx.get(key) {
+            child_ctx.vars.insert(key.into(), value.clone());
+        }
+    }
     for (key, expr) in &inc.props {
-        child_ctx.vars.insert(key.clone(), eval_value(expr, ctx));
+        child_ctx.vars.insert(key.clone(), eval_expr(expr, ctx)?);
     }
-    if !inc.slot.is_empty() {
-        child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-    }
-    child_ctx
+    Ok(child_ctx)
 }
 
 fn build_include(
@@ -1534,7 +1545,11 @@ fn build_include(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
+    if renderer.include_depth >= 64 {
+        return error_children("include nesting limit exceeded (64)");
+    }
     // Split `path#ComponentName` if present.
     let (file_path, component_name) = if let Some((f, c)) = inc.path.split_once('#') {
         (f, Some(c))
@@ -1552,16 +1567,47 @@ fn build_include(
         Ok(c) => c,
         Err(e) => return error_children(&e.to_string()),
     };
-    let child_ctx = prepare_include_context(inc, ctx, &full_path);
+    let child_ctx = match prepare_include_context(inc, ctx, &full_path) {
+        Ok(child_ctx) => child_ctx,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
 
     // Pull the cached parsed nodes (or parse + cache on miss / re-parse on
     // invalidation). Missing or invalid includes retain the existing inline
     // warning-node behaviour and MUST NOT be cached.
-    let cached_nodes = match renderer.load_include(&full_path, component_name, &content) {
+    let cached_nodes = match renderer.load_include(
+        &full_path,
+        &if component_name.is_some() {
+            full_path.clone()
+        } else {
+            include_frontend_path(&full_path, file_path)
+        },
+        component_name,
+        &content,
+    ) {
         Ok(nodes) => nodes,
         Err(error_nodes) => return error_nodes,
     };
-    build_children(&cached_nodes, &child_ctx, parent_dir, inherited, renderer)
+    let frame = SlotFrame {
+        nodes: &inc.slot,
+        context: ctx,
+        caller_slot: slot,
+    };
+    let child_slot = (!inc.slot.is_empty()).then_some(&frame);
+    renderer.include_depth += 1;
+    let children = build_children(
+        &cached_nodes,
+        &child_ctx,
+        parent_dir,
+        inherited,
+        renderer,
+        child_slot,
+    );
+    renderer.include_depth -= 1;
+    children
 }
 
 // ─── Phase 2: Paint ───────────────────────────────────────────────────────────
