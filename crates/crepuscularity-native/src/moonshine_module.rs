@@ -980,6 +980,15 @@ pub fn compile_moonshine_module_with_resolver(
     )
 }
 
+pub(crate) fn compile_moonshine_module_with_hints(
+    source: &str,
+    path: &Path,
+    target: MoonshineModuleTarget,
+    hints: ModuleHints<'_>,
+) -> Result<MoonshineModule, String> {
+    compile_module(source, path, target, false, hints)
+}
+
 pub(crate) fn compile_moonshine_svelte_module(
     source: &str,
     path: &Path,
@@ -2693,7 +2702,7 @@ fn component_getters(
             MoonshineModuleTarget::Ssr => ("@tschk/moonshine-dom/ssr", "SSRChild"),
         };
         let helpers = format!(
-            "\nfunction {props_alias}Descriptors<D>(value:D):{types}.NoInfer<D>{{return value;}}\nfunction {props_alias}<P extends object>(component:(props:P)=>import({host:?}).{child},descriptors:{{[K in keyof P]:{{enumerable?:boolean,get:()=>P[K]}}}}):import({host:?}).{child}{{return {alias}(component,{realm}.Object.create({realm}.Object.prototype,descriptors));}}\n"
+            "\nfunction {props_alias}Descriptors<D>(value:D):{{[K in keyof {types}.NoInfer<D> as K extends symbol ? never : K]:{types}.NoInfer<D>[K]}}{{return value;}}\nfunction {props_alias}<P extends object>(component:(props:P)=>import({host:?}).{child},descriptors:{{[K in keyof P]:{{enumerable?:boolean,get:()=>P[K]}}}}):import({host:?}).{child}{{return {alias}(component,{realm}.Object.create({realm}.Object.prototype,descriptors));}}\n"
         );
         output.insert_str(module_preamble_end(&parsed.program), &helpers);
     }
@@ -3335,6 +3344,33 @@ mod svelte_component_prop_tests {
         assert!(output.contains("get: cached("), "{output}");
         assert!(output.contains("[referenceSymbol]:"), "{output}");
         assert!(!output.contains("get: () => cached"));
+    }
+    #[test]
+    fn vue_property_keys_rewrite_intrinsic_and_typed_component_markers() {
+        let source = "import Child from \"./child.vue\";\nexport default function C(){return <div><input elMarker={cb}/><Child compMarker={binding} label={text}/></div>}";
+        let compiled = compile_moonshine_module_with_hints(
+            source,
+            Path::new("refs.tsx"),
+            MoonshineModuleTarget::Dom,
+            ModuleHints {
+                property_keys: &[("elMarker", "\"ref\""), ("compMarker", "referenceSymbol")],
+                ..ModuleHints::default()
+            },
+        )
+        .unwrap();
+        assert!(compiled.source.contains("[\"ref\"]: cb"), "{}", compiled.source);
+        assert!(
+            compiled.source.contains("[referenceSymbol]: {"),
+            "{}",
+            compiled.source
+        );
+        assert!(
+            compiled
+                .source
+                .contains("as K extends symbol ? never : K"),
+            "{}",
+            compiled.source
+        );
     }
 }
 

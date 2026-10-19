@@ -842,9 +842,20 @@ their own bindings; namespace and type-only imports are excluded. Ordinary JS/TS
 modules still need native reactive helpers rather than an automatic Vue bridge.
 Authored Vue templates can render explicit PascalCase default or named value
 imports as native components, including `.vue` and `.tsx` children. Static and
-bound declared props use the existing native component getters. Component slots,
-children, model/ref/key bindings, fallthrough class/id/style attributes,
-hyphenated prop names, namespaces, and dynamic component selection remain errors.
+bound declared props use the existing native component getters. Top-level
+unshadowed `defineExpose()` and `defineExpose(object)` statements lower in DOM
+to `exposeComponent(exposeRefs(...))` (and components without `defineExpose`
+expose an empty null-prototype object in DOM so `createApp().mount()` and
+component refs always receive a bounded exposed instance). SSR erases runtime
+exposure while preserving `ComponentView` return-type branding in both targets.
+Static `ref="name"` and `:ref="'name'"` template attributes on intrinsic
+elements and imported PascalCase components bind top-level `const` `ref` /
+`shallowRef` setup declarations in DOM via `bindRef` and `componentRef` (with
+synchronous `commit` cleanup on disposal) and are validated then omitted in SSR;
+combining `ref` with `v-model` on the same intrinsic control, function/dynamic
+`:ref` expressions, and `useTemplateRef` remain explicit errors. Named/scoped
+slots, key bindings, undeclared fallthrough class/id/style attributes,
+namespaces, and dynamic component selection remain errors.
 Component event listeners use stable handler identifiers for declared typed
 `defineEmits` events. Imported ref-valued handlers unwrap inside live getters,
 including each callback in fused listener arrays; ordinary functions remain callable.
@@ -852,8 +863,6 @@ DOM `.once` listeners retain their separate once key; SSR fuses listeners in sou
 order. Other component event modifiers remain errors.
 This uses the native props helper's coalesced updates; nested update ordering is
 not full Vue renderer scheduling.
-The native Vue props helper currently matches incoming names exactly; kebab-case
-names are not normalized to camelCase declarations. Use exact declared names.
 Local Vue setup type aliases and interfaces are preserved at module scope, including
 finite props aliases, intersections, and interface inheritance. Hoisted types may
 reference imports, other hoisted types, and their own type parameters, but cannot
