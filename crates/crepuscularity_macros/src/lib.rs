@@ -1873,16 +1873,30 @@ fn generate_match_arm(arm: &MatchArm) -> Result<TokenStream2, String> {
     Ok(quote! { #pattern => { #body } })
 }
 
+fn event_callback_expression(source: &str) -> Result<Option<syn::Expr>, String> {
+    let source = source.trim();
+    if syn::parse_str::<syn::Ident>(source).is_ok() {
+        return Ok(None);
+    }
+    syn::parse_str::<syn::Expr>(source)
+        .map(Some)
+        .map_err(|error| format!("Invalid event callback expression: {error}"))
+}
+
 fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String> {
+    if !handler.modifiers.is_empty() && !matches!(handler.event.as_str(), "keydown" | "keyup") {
+        return Err(format!(
+            "GPUI does not support modifiers on `{}` events",
+            handler.event
+        ));
+    }
     let handler_expr = &handler.handler;
-    let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
+    let closure = event_callback_expression(handler_expr)?;
 
     // Helper: parse closure or method reference
-    let make_listener = |event_type: &str| -> Result<TokenStream2, String> {
-        if is_closure {
-            let closure: syn::Expr = syn::parse_str(&handler_expr[1..handler_expr.len() - 1])
-                .map_err(|e| format!("Invalid {event_type} closure: {e}"))?;
-            Ok(closure.into_token_stream())
+    let make_listener = || -> Result<TokenStream2, String> {
+        if let Some(closure) = &closure {
+            Ok(quote! { #closure })
         } else {
             let method: syn::Ident = syn::parse_str(handler_expr)
                 .map_err(|e| format!("Invalid method name `{handler_expr}`: {e}"))?;
@@ -1892,16 +1906,16 @@ fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String
 
     match handler.event.as_str() {
         "click" => {
-            let listener = make_listener("click")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_click(#listener) })
         }
         "input" | "change" => {
-            let listener = make_listener("input")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_input(#listener) })
         }
         "keydown" => {
             if handler.modifiers.is_empty() {
-                let listener = make_listener("keydown")?;
+                let listener = make_listener()?;
                 Ok(quote! { .on_key_down(#listener) })
             } else {
                 generate_keydown_with_modifiers(handler)
@@ -1909,89 +1923,164 @@ fn generate_event_handler(handler: &EventHandler) -> Result<TokenStream2, String
         }
         "keyup" => {
             if handler.modifiers.is_empty() {
-                let listener = make_listener("keyup")?;
+                let listener = make_listener()?;
                 Ok(quote! { .on_key_up(#listener) })
             } else {
                 generate_keyup_with_modifiers(handler)
             }
         }
         "hover" => {
-            let listener = make_listener("hover")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_hover(#listener) })
         }
         "mousedown" => {
-            let listener = make_listener("mousedown")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_mouse_down(::gpui::MouseButton::Left, #listener) })
         }
         "mouseup" => {
-            let listener = make_listener("mouseup")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_mouse_up(::gpui::MouseButton::Left, #listener) })
         }
         "mousemove" => {
-            let listener = make_listener("mousemove")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_mouse_move(#listener) })
         }
         "scroll" => {
-            let listener = make_listener("scroll")?;
+            let listener = make_listener()?;
             Ok(quote! { .on_scroll_wheel(#listener) })
         }
-        _ => Ok(quote! {}),
+        _ => Err(format!("Unsupported GPUI event `{}`", handler.event)),
+    }
+}
+
+fn key_conditions(handler: &EventHandler) -> Result<Vec<TokenStream2>, String> {
+    handler
+        .modifiers
+        .iter()
+        .filter(|modifier| modifier.as_str() != "capture")
+        .map(|chord| {
+            if matches!(
+                chord.as_str(),
+                "prevent" | "stop" | "immediate" | "trusted" | "self" | "once"
+            ) {
+                return Err(format!("GPUI does not support `{chord}` event modifiers"));
+            }
+            let lower = chord.to_lowercase();
+            let parts: Vec<&str> = lower.split('+').collect();
+            let key = match *parts.last().expect("split always has one part") {
+                "" => return Err(format!("Key chord `{chord}` requires a key")),
+                "esc" => "escape",
+                "arrowup" => "up",
+                "arrowdown" => "down",
+                "arrowleft" => "left",
+                "arrowright" => "right",
+                key => key,
+            };
+            let mut conditions = vec![quote! { __ev.keystroke.key == #key }];
+            for modifier in &parts[..parts.len() - 1] {
+                conditions.push(match *modifier {
+                    "ctrl" => quote! { __ev.keystroke.modifiers.control },
+                    "cmd" => quote! { __ev.keystroke.modifiers.platform },
+                    "shift" => quote! { __ev.keystroke.modifiers.shift },
+                    "alt" | "opt" => quote! { __ev.keystroke.modifiers.alt },
+                    _ => return Err(format!("Unknown key modifier `{modifier}` in `{chord}`")),
+                });
+            }
+            Ok(quote! { (#(#conditions)&&*) })
+        })
+        .collect()
+}
+
+fn infer_key_callback_parameters(expression: &mut syn::Expr, event: &syn::Type) {
+    // Stored closures need explicit reference types to accept every event lifetime.
+    let infer_block = |block: &mut syn::Block| {
+        if let Some(syn::Stmt::Expr(value, None)) = block.stmts.last_mut() {
+            infer_key_callback_parameters(value, event);
+        }
+    };
+    match expression {
+        syn::Expr::Closure(closure) => {
+            let types: [syn::Type; 3] = [
+                syn::parse_quote!(&#event),
+                syn::parse_quote!(&mut ::gpui::Window),
+                syn::parse_quote!(&mut ::gpui::Context<_>),
+            ];
+            for (parameter, ty) in closure.inputs.iter_mut().zip(types) {
+                match parameter {
+                    syn::Pat::Type(pattern) if matches!(*pattern.ty, syn::Type::Infer(_)) => {
+                        *pattern.ty = ty
+                    }
+                    syn::Pat::Type(_) => {}
+                    _ => {
+                        *parameter = syn::Pat::Type(syn::PatType {
+                            attrs: Vec::new(),
+                            pat: Box::new(parameter.clone()),
+                            colon_token: Default::default(),
+                            ty: Box::new(ty),
+                        });
+                    }
+                }
+            }
+        }
+        syn::Expr::Block(block) => infer_block(&mut block.block),
+        syn::Expr::If(branch) => {
+            infer_block(&mut branch.then_branch);
+            if let Some((_, otherwise)) = &mut branch.else_branch {
+                infer_key_callback_parameters(otherwise, event);
+            }
+        }
+        syn::Expr::Match(branch) => {
+            for arm in &mut branch.arms {
+                infer_key_callback_parameters(&mut arm.body, event);
+            }
+        }
+        // shortcut: infer Box::new wrappers; extend when other wrappers need callback inference.
+        syn::Expr::Call(call)
+            if matches!(call.func.as_ref(), syn::Expr::Path(path)
+            if path.path.segments.iter().rev().take(2).map(|segment| segment.ident.to_string()).eq(["new", "Box"])) =>
+        {
+            if call.args.len() == 1 {
+                infer_key_callback_parameters(call.args.first_mut().unwrap(), event);
+            }
+        }
+        syn::Expr::Paren(paren) => infer_key_callback_parameters(&mut paren.expr, event),
+        syn::Expr::Group(group) => infer_key_callback_parameters(&mut group.expr, event),
+        _ => {}
     }
 }
 
 fn generate_keydown_with_modifiers(handler: &EventHandler) -> Result<TokenStream2, String> {
     let handler_expr = &handler.handler;
-    let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
+    let closure = event_callback_expression(handler_expr)?;
 
-    // Build key filter from modifiers
-    // Modifiers can be: "Enter", "Escape", "ctrl+s", "shift+Tab", etc.
-    let key_conditions: Vec<TokenStream2> = handler
-        .modifiers
-        .iter()
-        .map(|modifier| {
-            let lower = modifier.to_lowercase();
-            if lower.contains('+') {
-                // ctrl+s, shift+tab, etc.
-                let parts: Vec<&str> = lower.split('+').collect();
-                let key = parts.last().unwrap_or(&"");
-                let mut conds = vec![quote! { __ev.keystroke.key == #key }];
-                for part in &parts[..parts.len() - 1] {
-                    match *part {
-                        "ctrl" | "cmd" => conds.push(quote! { __ev.keystroke.modifiers.command }),
-                        "shift" => conds.push(quote! { __ev.keystroke.modifiers.shift }),
-                        "alt" | "opt" => conds.push(quote! { __ev.keystroke.modifiers.alt }),
-                        _ => {}
-                    }
-                }
-                quote! { (#(#conds)&&*) }
-            } else {
-                // Simple key: Enter, Escape, Tab, etc.
-                let key = match lower.as_str() {
-                    "enter" => "enter",
-                    "escape" | "esc" => "escape",
-                    "tab" => "tab",
-                    "backspace" => "backspace",
-                    "delete" => "delete",
-                    "space" => "space",
-                    "arrowup" | "up" => "up",
-                    "arrowdown" | "down" => "down",
-                    "arrowleft" | "left" => "left",
-                    "arrowright" | "right" => "right",
-                    other => other,
-                };
-                quote! { __ev.keystroke.key == #key }
-            }
-        })
-        .collect();
+    let key_conditions = key_conditions(handler)?;
+    let event_method = syn::Ident::new(
+        if handler
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == "capture")
+        {
+            "capture_key_down"
+        } else {
+            "on_key_down"
+        },
+        Span::call_site(),
+    );
 
-    let call_body = if is_closure {
-        let closure: syn::Expr = syn::parse_str(&handler_expr[1..handler_expr.len() - 1])
-            .map_err(|e| format!("Invalid keydown closure: {e}"))?;
-        quote! { (#closure)(__ev, __window, __cx) }
+    let listener = syn::Ident::new("__crepus_key_handler", Span::mixed_site());
+    let (setup, call_body) = if let Some(mut closure) = closure {
+        infer_key_callback_parameters(&mut closure, &syn::parse_quote!(::gpui::KeyDownEvent));
+        (
+            quote! { let #listener = #closure; },
+            quote! { #listener(__ev, __window, __cx) },
+        )
     } else {
         let method: syn::Ident = syn::parse_str(handler_expr)
             .map_err(|e| format!("Invalid method name `{handler_expr}`: {e}"))?;
-        quote! { Self::#method(this, __ev, __window, __cx) }
+        (
+            quote! {},
+            quote! { Self::#method(this, __ev, __window, __cx) },
+        )
     };
 
     let condition = if key_conditions.is_empty() {
@@ -2001,41 +2090,49 @@ fn generate_keydown_with_modifiers(handler: &EventHandler) -> Result<TokenStream
     };
 
     Ok(quote! {
-        .on_key_down(cx.listener(|this, __ev: &::gpui::KeyDownEvent, __window, __cx| {
-            if #condition {
-                #call_body
-            }
-        }))
+        .#event_method({
+            #setup
+            cx.listener(move |this, __ev: &::gpui::KeyDownEvent, __window, __cx| {
+                if #condition {
+                    #call_body
+                }
+            })
+        })
     })
 }
 
 fn generate_keyup_with_modifiers(handler: &EventHandler) -> Result<TokenStream2, String> {
     let handler_expr = &handler.handler;
-    let is_closure = handler_expr.starts_with('{') && handler_expr.ends_with('}');
+    let closure = event_callback_expression(handler_expr)?;
 
-    let key_conditions: Vec<TokenStream2> = handler
-        .modifiers
-        .iter()
-        .map(|modifier| {
-            let lower = modifier.to_lowercase();
-            let key = match lower.as_str() {
-                "enter" => "enter",
-                "escape" | "esc" => "escape",
-                "tab" => "tab",
-                other => other,
-            };
-            quote! { __ev.keystroke.key == #key }
-        })
-        .collect();
+    let key_conditions = key_conditions(handler)?;
+    let event_method = syn::Ident::new(
+        if handler
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == "capture")
+        {
+            "capture_key_up"
+        } else {
+            "on_key_up"
+        },
+        Span::call_site(),
+    );
 
-    let call_body = if is_closure {
-        let closure: syn::Expr = syn::parse_str(&handler_expr[1..handler_expr.len() - 1])
-            .map_err(|e| format!("Invalid keyup closure: {e}"))?;
-        quote! { (#closure)(__ev, __window, __cx) }
+    let listener = syn::Ident::new("__crepus_key_handler", Span::mixed_site());
+    let (setup, call_body) = if let Some(mut closure) = closure {
+        infer_key_callback_parameters(&mut closure, &syn::parse_quote!(::gpui::KeyUpEvent));
+        (
+            quote! { let #listener = #closure; },
+            quote! { #listener(__ev, __window, __cx) },
+        )
     } else {
         let method: syn::Ident = syn::parse_str(handler_expr)
             .map_err(|e| format!("Invalid method name `{handler_expr}`: {e}"))?;
-        quote! { Self::#method(this, __ev, __window, __cx) }
+        (
+            quote! {},
+            quote! { Self::#method(this, __ev, __window, __cx) },
+        )
     };
 
     let condition = if key_conditions.is_empty() {
@@ -2045,11 +2142,14 @@ fn generate_keyup_with_modifiers(handler: &EventHandler) -> Result<TokenStream2,
     };
 
     Ok(quote! {
-        .on_key_up(cx.listener(|this, __ev: &::gpui::KeyUpEvent, __window, __cx| {
-            if #condition {
-                #call_body
-            }
-        }))
+        .#event_method({
+            #setup
+            cx.listener(move |this, __ev: &::gpui::KeyUpEvent, __window, __cx| {
+                if #condition {
+                    #call_body
+                }
+            })
+        })
     })
 }
 
@@ -2524,6 +2624,137 @@ mod bound_id_tests {
 }
 
 #[cfg(test)]
+mod key_chord_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_chords_error_and_key_aliases_normalize() {
+        for chord in [
+            "ctl+s",
+            "ctrl+",
+            "ctrl++s",
+            "+s",
+            "",
+            "prevent",
+            "stop",
+            "immediate",
+            "trusted",
+            "self",
+            "once",
+        ] {
+            let handler = EventHandler {
+                event: "keydown".into(),
+                handler: "handle_key".into(),
+                modifiers: vec![chord.into()],
+            };
+            assert!(
+                generate_keydown_with_modifiers(&handler).is_err(),
+                "{chord}"
+            );
+            assert!(generate_keyup_with_modifiers(&handler).is_err(), "{chord}");
+        }
+        let handler = EventHandler {
+            event: "keyup".into(),
+            handler: "handle_key".into(),
+            modifiers: vec!["ctrl+Esc".into()],
+        };
+        let code = generate_keyup_with_modifiers(&handler).unwrap().to_string();
+        assert!(code.contains("\"escape\""), "{code}");
+    }
+
+    #[test]
+    fn keydown_and_keyup_use_the_same_chord_conditions() {
+        for (chord, field) in [
+            ("ctrl+s", "control"),
+            ("cmd+s", "platform"),
+            ("shift+tab", "shift"),
+        ] {
+            let handler = EventHandler {
+                event: "keydown".into(),
+                handler: "handle_key".into(),
+                modifiers: vec![chord.into()],
+            };
+            for code in [
+                generate_keydown_with_modifiers(&handler).unwrap(),
+                generate_keyup_with_modifiers(&handler).unwrap(),
+            ] {
+                let code = code.to_string();
+                assert!(code.contains(&format!("modifiers . {field}")), "{code}");
+                assert!(!code.contains("modifiers . command"), "{code}");
+                assert!(!code.contains(&format!("\"{chord}\"")), "{code}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod event_validation_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_events_and_non_key_modifiers_are_errors() {
+        for (event, modifiers) in [
+            ("unknown", vec![]),
+            ("click", vec!["once".into()]),
+            ("hover", vec!["ctrl".into()]),
+        ] {
+            let handler = EventHandler {
+                event: event.into(),
+                handler: "handle_event".into(),
+                modifiers,
+            };
+            assert!(generate_event_handler(&handler).is_err(), "{event}");
+        }
+    }
+
+    #[test]
+    fn hover_gets_a_stateful_id_before_its_handler() {
+        let nodes =
+            crepuscularity_core::parse_template(r#"<div @hover={handle_hover}>Hover</div>"#)
+                .unwrap();
+        let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+            panic!("expected element");
+        };
+        let code = generate_element(&element).unwrap().to_string();
+        assert_eq!(code.matches(". id (").count(), 1, "{code}");
+        assert!(
+            code.find(". id (").unwrap() < code.find(". on_hover").unwrap(),
+            "{code}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod event_closure_tests {
+    use super::*;
+
+    #[test]
+    fn jsx_and_indentation_closures_reach_event_generation() {
+        for (source, method) in [
+            (
+                r#"<button @click={|_, _, _| {}}>Press</button>"#,
+                "on_click",
+            ),
+            (r#"button @click={|_, _, _| {}}"#, "on_click"),
+            (
+                r#"<div @keyup|ctrl+s={move |_, _, _| {}}>Key</div>"#,
+                "on_key_up",
+            ),
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+                panic!("expected element");
+            };
+            let code = generate_element(&element).unwrap().to_string();
+            assert!(code.contains(method), "{code}");
+        }
+        assert!(event_callback_expression("handle_click").unwrap().is_none());
+        assert!(event_callback_expression("{| invalid}").is_err());
+        assert!(event_callback_expression("factory(").is_err());
+    }
+}
+
+#[cfg(test)]
 mod default_declaration_tests {
     use super::*;
     #[test]
@@ -2535,6 +2766,24 @@ mod default_declaration_tests {
         }
         let nodes = crepuscularity_core::parse_template("$: let count = 1").unwrap();
         assert!(core_node_to_macro(&nodes[0]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod keyboard_focus_generation_tests {
+    use super::*;
+    #[test]
+    fn indentation_key_handlers_generate_focus_setup() {
+        let nodes = crepuscularity_core::parse_template(r#"div w-[100px] h-[40px] @keydown|ctrl+s={move |_, _, _| { hits.fetch_add(1, Ordering::SeqCst); }}"#).unwrap();
+        let crepuscularity_core::ast::Node::Element(element) = &nodes[0] else {
+            panic!("expected element: {nodes:?}")
+        };
+        assert_eq!(element.event_handlers.len(), 1, "{nodes:?}");
+        let Node::Element(element) = core_node_to_macro(&nodes[0]).unwrap() else {
+            panic!("expected element")
+        };
+        let code = generate_element(&element).unwrap().to_string();
+        assert!(code.contains("focusable"), "{code}");
     }
 }
 
