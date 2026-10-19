@@ -2099,3 +2099,74 @@ fn filtered_callbacks_accept_app_contexts(cx: &mut gpui::TestAppContext) {
     }
     assert_eq!(hits.load(Ordering::SeqCst), 22);
 }
+
+#[gpui::test]
+fn react_keyboard_and_mouse_aliases_dispatch_in_gpui(cx: &mut gpui::TestAppContext) {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Aliases(Arc<AtomicUsize>);
+    impl Aliases {
+        fn key(&mut self, _: &KeyDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.fetch_add(10, Ordering::SeqCst);
+        }
+        fn mouse(&mut self, _: &gpui::MouseDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    impl gpui::Render for Aliases {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            view! {r#"<div class="w-[100px] h-[40px]" onKeyDown={key} onMouseDown={mouse}>Press</div>"#}
+        }
+    }
+    let hits = Arc::new(AtomicUsize::new(0));
+    let alias_hits = hits.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| Aliases(alias_hits));
+    cx.simulate_click(
+        gpui::point(gpui::px(10.0), gpui::px(10.0)),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_keystrokes("ctrl-s s");
+    assert_eq!(hits.load(Ordering::SeqCst), 21);
+}
+
+#[gpui::test]
+fn react_keyboard_capture_aliases_run_before_bubbling(cx: &mut gpui::TestAppContext) {
+    use std::sync::{Arc, Mutex};
+    struct Capture(Arc<Mutex<Vec<&'static str>>>);
+    impl Capture {
+        fn before_down(&mut self, _: &KeyDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.lock().unwrap().push("capture-down");
+        }
+        fn after_down(&mut self, _: &KeyDownEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.lock().unwrap().push("bubble-down");
+        }
+        fn before_up(&mut self, _: &gpui::KeyUpEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.lock().unwrap().push("capture-up");
+        }
+        fn after_up(&mut self, _: &gpui::KeyUpEvent, _: &mut Window, _: &mut Context<Self>) {
+            self.0.lock().unwrap().push("bubble-up");
+        }
+    }
+    impl gpui::Render for Capture {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            view! {r#"<div class="w-[100px] h-[40px]" onKeyDownCapture={before_down} onKeyUpCapture={before_up}><div class="w-[100px] h-[40px]" onKeyDown={after_down} onKeyUp={after_up}>Press</div></div>"#}
+        }
+    }
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let view_events = events.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| Capture(view_events));
+    cx.update(|window, app| {
+        window.focus_next(app);
+        window.focus_next(app);
+    });
+    cx.simulate_keystrokes("s");
+    cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("s").unwrap(),
+    });
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["capture-down", "bubble-down", "capture-up", "bubble-up"]
+    );
+}
