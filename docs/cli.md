@@ -49,6 +49,15 @@ Creates:
 
 Dump AST / HTML / View IR / context, or open a live GPUI preview for one `.crepus` file.
 Replaces the old `crepus-dev` binary.
+Render and IR modes resolve relative includes from the inspected file's parent
+directory, independently of the caller's working directory.
+IR mode accepts flat templates and selects their frontend from the filename.
+For a DSL file with named component sections, it selects the section matching the
+filename stem; a missing section remains an error.
+
+Use `--bool key=true|false` for booleans and `--int key=N` for signed 64-bit
+integers. Invalid values, including integer overflow, exit with an error before
+producing inspection output.
 
 ```bash
 crepus inspect app.crepus --mode ast
@@ -70,14 +79,24 @@ crepus dev --emit-events  # IDE integration
 ```
 
 Options:
-- `--bin NAME` — specify which binary to run (for workspaces)
+- `--bin NAME` — specify which binary to run (for workspaces). Otherwise, selection uses `package.default-run`, then the first named `[[bin]]`, then the package name. Only the package-name fallback may use Cargo's sole reported binary when no matching package binary exists; multiple candidates require `--bin`.
 - `--debug`, `--dev`, `--release` — choose the build mode; default is `--debug`
 - `--opt-level none|fast|size|aggressive` — shared optimization level; release defaults to `fast`, debug/dev default to `none`
 - `--emit-events` — emit structured JSON events to stdout
 
+The dev loop launches the requested binary from Cargo's reported executable
+artifact, including `CARGO_TARGET_DIR` and Cargo configuration overrides. Missing
+or ambiguous binary artifacts produce an error instead of launching a guessed
+path. Compilation and launch events report that same executable path.
+The dev loop watches `src/` recursively, `Cargo.toml`, existing explicit
+`[[bin]].path` and `[lib].path` files, and the configured build script
+(`package.build`, or `build.rs` unless disabled). Registrations refresh after
+debounced changes. This does not cover arbitrary sibling modules or promise
+atomic file-replacement handling for separately watched files.
+
 ### `crepus build`
 
-If the current directory or a parent has `crepus.toml` with `[[targets]]`, build all targets by default. Pass a target type or target id as the positional selector to build a subset. The existing `--target ID` selector remains supported. With no manifest targets, this falls back to the Cargo build wrapper.
+If the current directory or a parent has `crepus.toml` with `[[targets]]`, build all targets by default. Pass a target type or target id as the positional selector to build a subset. The existing `--target ID` selector remains supported. With no manifest targets, this falls back to the Cargo build wrapper. A discovered manifest that cannot be read or parsed stops the build with an error.
 
 ```bash
 crepus build
@@ -122,11 +141,24 @@ device = "STM32F411"
 
 Supported manifest target types today: `web`, `webext`, `native` / `ir`, `lvgl`, and `embedded`. Build mode flags are shared across all target types. `web` and `webext` map `--release` to Cargo release WASM builds and run post-build WASM optimization when the effective optimization level is not `none`; render-only targets accept the same flags for manifest consistency.
 
-Rust code can use the same manifest path for render-output targets (`web`, `native`, `lvgl`):
+A named target selection must match a unique ID. Duplicate matching IDs produce an
+ambiguity error; selecting all targets retains the manifest order.
+
+Manifest builds reject colliding primary output files before starting a target.
+This covers web `index.html` and native, LVGL, and embedded outputs, including
+existing symlink aliases. Distinct files may share an output directory. Extension
+asset collisions, hard links, and concurrent filesystem changes are not covered.
+
+Rust code can select a render-output target (`web`, `native`, `lvgl`) from the same manifest:
 
 ```rust
-let artifacts = crepuscularity::target::write_manifest_file("crepus.toml")?;
+let artifacts = crepuscularity::target::write_manifest_file_target("crepus.toml", Some("site"))?;
 ```
+
+The Rust API renders HTML for `web` to `out/index.html`; it does not build the WASM
+package or copy site assets. Native and LVGL targets treat `out` as an output file.
+These paths are relative to the manifest directory. Without `out`, the API returns
+the rendered artifact without writing it.
 
 ### `crepus preview <file.crepus>`
 
@@ -151,12 +183,31 @@ logged_in = true
 
 Author pages in `.crepus` (same virtual-file semantics as `crepus web serve`). **`crepus web build`** compiles the site’s `runtime/` crate to **`wasm32-unknown-unknown`**, runs **wasm-bindgen**, and writes a **`dist/`** folder: thin **`index.html`**, **`app.js`**, **`crepus-bundle.json`** (all `*.crepus` sources), **`vendor/unocss.js`**, and **`pkg/runtime.js`** + **`runtime_bg.wasm`**. Copy and dynamic data live in **`.crepus`** (quoted text nodes) and, when you need typed Rust context, in **`runtime/src/lib.rs`** via **`crepuscularity_web::render_from_files`** (same pattern as extension runtimes calling into `crepuscularity-web`). The default web build is debug; use `--release` for release-profile WASM and post-build optimization.
 
+Rebuilding repairs missing or replaced `crepus-bundle.json` files even when the source is unchanged. Byte-identical bundle output retains its modification time.
+
+Framework emits such as `--emit react` use the same manifest target selection as
+HTML builds. `--manifest` selects the project and `--target` selects its web
+target; explicit `--site`, `--entry` and output flags override the selected
+values. With `--site` alone, only that site's local manifest is considered.
+Missing or invalid explicit manifests, unknown target IDs and ambiguous target
+selection fail before output. Framework emits do not require `runtime/Cargo.toml`.
+An existing local `crepus.toml` under explicit `--site` must be readable and valid;
+malformed files and dangling config symlinks stop before output. An absent local
+config or a valid config with no web targets retains the default entry/output.
+
 ### Prerequisites
 
 - `rustup target add wasm32-unknown-unknown`
 - `cargo install wasm-bindgen-cli`
 
 If both a system package manager and **rustup** ship `cargo`/`rustc`, ensure rustup’s toolchain wins for WASM (the CLI prepends `~/.cargo/bin` to `PATH` for nested builds).
+Explicit `CARGO` and `RUSTC` overrides must also select that same toolchain.
+
+The installed `wasm-bindgen` executable must exactly match the version resolved
+in the runtime's `Cargo.lock`. A fresh scaffold's `wasm-bindgen = "0.2"` can
+resolve newer than an existing executable. On a schema mismatch, the build reports
+both versions: select a matching executable, or constrain the runtime dependency
+to the installed version and rebuild. The build does not modify installed tools.
 
 ### `crepus web new <name>`
 
@@ -272,6 +323,11 @@ fn main() {
 }
 ```
 
+Build validation uses the filename-selected template frontend, including mixed-case
+extensions. Literal component-marker lines in markup remain text; DSL named
+components and metadata retain their normal validation. Reference collection by
+`crepus_refs!` follows the same distinction.
+
 ### Optional web features
 
 - `dom`: wasm-side DOM lookup and mutation helpers such as `crepus.hero.text(...)`.
@@ -321,12 +377,12 @@ Deprecated pretty-printer for `site.json`.
 
 ## iOS host apps (`crepus ios`)
 
-Scaffold an **XcodeGen** + **SwiftPM** app with a local **`NativeShell`** package that renders **View IR** JSON (same contract as **`crepuscularity-native`**). Prerequisite: [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`wax install xcodegen`).
+Scaffold a **SwiftPM** host app with a local **`NativeShell`** package that renders **View IR** JSON (same contract as **`crepuscularity-native`**). Default project generation is built into Crepus.
 
 ```bash
 crepus ios new my-native-demo
 cd my-native-demo
-crepus ios generate   # run xcodegen (walks up until it finds crepus.toml [ios])
+crepus ios generate   # built-in generator; finds crepus.toml [ios] above cwd
 open *.xcodeproj
 ```
 
@@ -337,6 +393,15 @@ crepus ios build
 ```
 
 `crepus ios generate` and `crepus ios build` **walk up** from the current directory until they find **`crepus.toml`** with an **`[ios]`** section — you normally do not need `--dir` or `--scheme`. Optional overrides: `crepus ios build --dir . --scheme Foo --destination 'platform=iOS Simulator,name=iPhone 15'`.
+
+To generate from a custom XcodeGen spec, install [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`wax install xcodegen`) and pass `--spec`:
+
+```bash
+crepus ios generate --spec "specs/custom.yml"
+crepus ios build --spec "specs/custom.yml" --scheme Custom
+```
+
+Relative spec paths resolve from the discovered app root; absolute paths are also accepted. The generated project is placed in that root, and builds use the spec's resolved project name. Missing specs and XcodeGen failures stop generation/building instead of falling back to the built-in project.
 
 To refresh bundled fixtures after template changes, regenerate IR with **`crepuscularity-native`** (`render_template_to_ir` / `to_json_pretty`) and replace `NativeShell/Sources/NativeShell/fixture.json`. For `crepus native new` scaffolds, `crepus native sync views/main.crepus --dir . --out desktop/share/dashboard.view-ir.json --var name=Ada --pretty` writes the same View IR JSON into the root, iOS, Android, and explicit host fixture locations. Add `--no-defaults` when only the explicit `--out` files should be written. See [`examples/native-shells/README.md`](../examples/native-shells/README.md).
 
