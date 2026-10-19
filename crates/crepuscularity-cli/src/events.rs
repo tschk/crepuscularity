@@ -171,19 +171,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_serialization() {
+    fn test_event_serialization() -> Result<(), serde_json::Error> {
         let event = CompilerEvent::compilation_started(
             vec![PathBuf::from("src/main.rs")],
             Some("file_change".to_string()),
         );
 
-        let json = serde_json::to_string(&event).unwrap();
+        let json = serde_json::to_string(&event)?;
         assert!(json.contains("\"event\":\"compilation_started\""));
         assert!(json.contains("src/main.rs"));
+        Ok(())
     }
 
     #[test]
-    fn test_error_event() {
+    fn test_error_event() -> Result<(), serde_json::Error> {
         let errors = vec![BuildError {
             level: "error".to_string(),
             message: "cannot find value `x`".to_string(),
@@ -193,8 +194,9 @@ mod tests {
         }];
 
         let event = CompilerEvent::compilation_error(150, errors);
-        let json = serde_json::to_string(&event).unwrap();
+        let json = serde_json::to_string(&event)?;
         assert!(json.contains("\"event\":\"compilation_error\""));
         assert!(json.contains("cannot find value"));
+        Ok(())
     }
 }
