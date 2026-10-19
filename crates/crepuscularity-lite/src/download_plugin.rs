@@ -253,12 +253,20 @@ impl DownloadPlugin {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        let previous = LAST_GID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
-                Some(nanos.max(last.saturating_add(1)))
-            })
-            .unwrap();
-        format!("{:016X}", nanos.max(previous.saturating_add(1)))
+        let mut previous = LAST_GID.load(Ordering::Relaxed);
+        let gid = loop {
+            let next = nanos.max(previous.saturating_add(1));
+            match LAST_GID.compare_exchange_weak(
+                previous,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break next,
+                Err(current) => previous = current,
+            }
+        };
+        format!("{gid:016X}")
     }
 
     fn start_download(&self, task: Arc<Mutex<DownloadTask>>) {
