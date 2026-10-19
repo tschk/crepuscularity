@@ -468,6 +468,7 @@ pub struct RenderCacheStats {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct IncludeKey {
     path: PathBuf,
+    frontend: Option<PathBuf>,
     component: Option<String>,
 }
 
@@ -487,6 +488,10 @@ struct CachedInclude {
 pub struct BufferRenderer {
     include_cache: HashMap<IncludeKey, CachedInclude>,
     stats: RenderCacheStats,
+    include_depth: usize,
+    now_ms: u64,
+    next_redraw_ms: Option<u64>,
+    build_error: Option<CrepusError>,
 }
 
 impl BufferRenderer {
@@ -503,6 +508,24 @@ impl BufferRenderer {
         buf: &mut Buffer,
         area: Rect,
     ) -> Result<(), CrepusError> {
+        self.render_nodes_at(nodes, ctx, buf, area, current_unix_ms())
+    }
+
+    pub(crate) fn next_redraw_ms(&self) -> Option<u64> {
+        self.next_redraw_ms
+    }
+
+    pub(crate) fn render_nodes_at(
+        &mut self,
+        nodes: &[Node],
+        ctx: &TemplateContext,
+        buf: &mut Buffer,
+        area: Rect,
+        now_ms: u64,
+    ) -> Result<(), CrepusError> {
+        self.now_ms = now_ms;
+        self.next_redraw_ms = None;
+        self.build_error = None;
         let render_ctx = with_tui_target(ctx);
         let children = build_children(
             nodes,
@@ -510,8 +533,12 @@ impl BufferRenderer {
             Direction::Vertical,
             Style::default(),
             self,
+            None,
         );
-        paint_children_buf(&children, buf, area, Direction::Vertical, 0);
+        if let Some(error) = self.build_error.take() {
+            return Err(error);
+        }
+        paint_children_buf(&children, buf, area, Direction::Vertical, 0, false, false);
         Ok(())
     }
 
@@ -527,10 +554,10 @@ impl BufferRenderer {
     ) -> Result<(), CrepusError> {
         let mut child_ctx = with_tui_target(ctx);
         for (key, expr) in &component.meta.defaults {
-            child_ctx
-                .vars
-                .entry(key.clone())
-                .or_insert_with(|| eval_value(expr, &TemplateContext::default()));
+            if !child_ctx.vars.contains_key(key) {
+                let value = eval_expr(expr, &TemplateContext::default())?;
+                child_ctx.vars.insert(key.clone(), value);
+            }
         }
         self.render_nodes(&component.nodes, &child_ctx, buf, area)
     }
@@ -553,11 +580,15 @@ impl BufferRenderer {
     fn load_include(
         &mut self,
         full_path: &Path,
+        frontend_path: &Path,
         component_name: Option<&str>,
         content: &str,
     ) -> Result<Arc<[Node]>, Vec<WidgetChild>> {
         let key = IncludeKey {
             path: full_path.to_path_buf(),
+            frontend: component_name
+                .is_none()
+                .then(|| frontend_path.to_path_buf()),
             component: component_name.map(str::to_owned),
         };
         if let Some(entry) = self.include_cache.get(&key) {
@@ -568,7 +599,7 @@ impl BufferRenderer {
             }
             // Source changed: re-parse and bump `invalidations`. We deliberately
             // do NOT count this as a miss — the include was already cached.
-            match parse_included_source(component_name, content, &full_path.to_string_lossy()) {
+            match parse_included_source(component_name, content, &frontend_path.to_string_lossy()) {
                 Ok(nodes) => {
                     self.stats.invalidations += 1;
                     let arc_nodes: Arc<[Node]> = Arc::from(nodes.into_boxed_slice());
@@ -588,7 +619,7 @@ impl BufferRenderer {
             }
         } else {
             // First successful parse: cache miss. Failures are NOT cached.
-            match parse_included_source(component_name, content, &full_path.to_string_lossy()) {
+            match parse_included_source(component_name, content, &frontend_path.to_string_lossy()) {
                 Ok(nodes) => {
                     self.stats.misses += 1;
                     let arc_nodes: Arc<[Node]> = Arc::from(nodes.into_boxed_slice());
@@ -655,13 +686,16 @@ fn parse_included_source(
                 ))),
             }
         }
-        None => match parse_template(content) {
-            Ok(n) => Ok(n),
-            Err(e) => Err(error_children(&format!(
-                "parse error in '{file_path}': {}",
-                e
-            ))),
-        },
+        None => {
+            match crepuscularity_core::parse_template_with_path(content, Some(Path::new(file_path)))
+            {
+                Ok(n) => Ok(n),
+                Err(e) => Err(error_children(&format!(
+                    "parse error in '{file_path}': {}",
+                    e
+                ))),
+            }
+        }
     }
 }
 
