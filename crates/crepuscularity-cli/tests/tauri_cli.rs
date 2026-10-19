@@ -316,3 +316,199 @@ fn conversion_preserves_tauri_application_metadata() {
     assert!(desktop.contains("\"settings\", \"Settings\""));
     assert!(desktop.contains("px(480.), px(360.)"));
 }
+
+#[test]
+fn conversion_preserves_main_sources_and_relative_graphs_in_both_view_roots() {
+    for (entry, files, prefix, expected) in [
+        (
+            "main.crepus",
+            vec![
+                (
+                    "main.crepus",
+                    "text \"Direct main\"\ninclude \"nested/child.crepus\"\n",
+                ),
+                ("nested/child.crepus", "text \"Nested child\"\n"),
+            ],
+            "",
+            vec!["Direct main", "Nested child"],
+        ),
+        (
+            "index.crepus",
+            vec![
+                (
+                    "index.crepus",
+                    "include \"main.crepus\"\ninclude \"nested/child.crepus\"\n",
+                ),
+                ("main.crepus", "text \"Included main\"\n"),
+                ("nested/child.crepus", "include \"parts/leaf.crepus\"\n"),
+                ("nested/parts/leaf.crepus", "text \"Deep leaf\"\n"),
+            ],
+            "__crepus_source/",
+            vec!["Included main", "Deep leaf"],
+        ),
+        (
+            "page folder/start page.crepus",
+            vec![
+                (
+                    "page folder/start page.crepus",
+                    "include \"parts/child file.crepus\"\n",
+                ),
+                (
+                    "page folder/parts/child file.crepus",
+                    "text \"Space path\"\n",
+                ),
+                ("main.crepus", "text \"Unused main preserved\"\n"),
+            ],
+            "__crepus_source/",
+            vec!["Space path"],
+        ),
+    ] {
+        let source = fixture(2);
+        let file_map: serde_json::Map<String, serde_json::Value> = files
+            .iter()
+            .map(|(path, content)| (path.to_string(), serde_json::json!(content)))
+            .collect();
+        std::fs::write(
+            source.path().join("dist/crepus-bundle.json"),
+            serde_json::to_vec(&serde_json::json!({ "entry": entry, "files": file_map })).unwrap(),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let destination = output.path().join("converted with spaces");
+        // Use the test build directly; this regression must not start a nested Cargo build.
+        let converted = Command::new(env!("CARGO_BIN_EXE_crepus"))
+            .args(["tauri", "convert", "--target", "all", "--dir"])
+            .arg(source.path())
+            .arg("--out")
+            .arg(&destination)
+            .output()
+            .unwrap();
+        assert_success(&converted, entry);
+        for view_root in [destination.join("views"), destination.join("desktop/views")] {
+            for (path, content) in &files {
+                assert_eq!(
+                    std::fs::read_to_string(view_root.join(prefix).join(path)).unwrap(),
+                    *content,
+                    "source changed: {entry}: {path}"
+                );
+            }
+            let main = view_root.join("main.crepus");
+            let text = std::fs::read_to_string(&main).unwrap();
+            let mut ctx = crepuscularity_core::context::TemplateContext::new();
+            ctx.base_dir = Some(view_root.clone());
+            let rendered =
+                crepuscularity_native::render_template_to_ir_with_path(&text, &ctx, Some(&main))
+                    .unwrap_or_else(|error| panic!("{entry} at {}: {error}", main.display()));
+            let json = crepuscularity_native::to_json(&rendered).unwrap();
+            for content in &expected {
+                assert!(json.contains(content), "missing {content:?}: {json}");
+            }
+            if prefix.is_empty() {
+                assert_eq!(text, files[0].1);
+            }
+        }
+    }
+}
+
+#[test]
+fn converted_android_label_escapes_metadata_and_retains_title_precedence() {
+    for (product_name, window_title, expected) in [
+        (
+            Some("AT&T \"Docs\" <雪> 'Team'"),
+            None,
+            "AT&amp;T &quot;Docs&quot; &lt;雪&gt; &#39;Team&#39;",
+        ),
+        (
+            Some("Product fallback"),
+            Some("Window & \"雪\" <Title>"),
+            "Window &amp; &quot;雪&quot; &lt;Title&gt;",
+        ),
+        (Some("Plain product"), None, "Plain product"),
+        (None, None, "NativeShell"),
+    ] {
+        let source = fixture(2);
+        let mut config = serde_json::json!({"build":{"frontendDist":"../dist"}});
+        if let Some(product_name) = product_name {
+            config["productName"] = serde_json::json!(product_name);
+        }
+        if let Some(title) = window_title {
+            config["app"] = serde_json::json!({"windows":[{"label":"main","title":title}]});
+        }
+        std::fs::write(
+            source.path().join("src-tauri/tauri.conf.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let destination = output.path().join("converted");
+        let converted = Command::new(env!("CARGO_BIN_EXE_crepus"))
+            .args(["tauri", "convert", "--target", "mobile", "--dir"])
+            .arg(source.path())
+            .arg("--out")
+            .arg(&destination)
+            .output()
+            .unwrap();
+        assert_success(&converted, "XML metadata label");
+        let manifest =
+            std::fs::read_to_string(destination.join("android/app/src/main/AndroidManifest.xml"))
+                .unwrap();
+        let label = manifest
+            .lines()
+            .find(|line| line.contains("android:label="))
+            .unwrap()
+            .trim();
+        assert_eq!(label, format!("android:label=\"{expected}\""));
+    }
+}
+
+#[test]
+fn conversion_preserves_v1_nested_application_metadata() {
+    for title in [None, Some("V1 Window")] {
+        let source = fixture(1);
+        let mut config = serde_json::json!({
+            "build": {"distDir": "../dist"},
+            "package": {"productName": "V1 Product", "version": "2.3.4"},
+            "tauri": {"bundle": {"identifier": "dev.example.v1"}}
+        });
+        if let Some(title) = title {
+            config["tauri"]["windows"] = serde_json::json!([{"label":"main", "title":title}]);
+        }
+        std::fs::write(
+            source.path().join("src-tauri/tauri.conf.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let destination = output.path().join("native");
+        let converted = Command::new(env!("CARGO_BIN_EXE_crepus"))
+            .args(["tauri", "convert", "--target", "mobile", "--dir"])
+            .arg(source.path())
+            .arg("--out")
+            .arg(&destination)
+            .output()
+            .unwrap();
+        assert_success(&converted, "v1 nested metadata");
+        let manifest =
+            std::fs::read_to_string(destination.join("android/app/src/main/AndroidManifest.xml"))
+                .unwrap();
+        assert!(
+            manifest.contains(&format!(
+                "android:label=\"{}\"",
+                title.unwrap_or("V1 Product")
+            )),
+            "{manifest}"
+        );
+        let gradle =
+            std::fs::read_to_string(destination.join("android/app/build.gradle.kts")).unwrap();
+        assert!(
+            gradle.contains("applicationId = \"dev.example.v1\""),
+            "{gradle}"
+        );
+        assert!(gradle.contains("versionName = \"2.3.4\""), "{gradle}");
+        let project = std::fs::read_to_string(destination.join("ios/project.yml")).unwrap();
+        assert!(
+            project.contains("PRODUCT_BUNDLE_IDENTIFIER: dev.example.v1"),
+            "{project}"
+        );
+    }
+}
