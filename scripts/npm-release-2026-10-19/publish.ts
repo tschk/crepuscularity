@@ -168,8 +168,8 @@ async function main() {
       const info=await metadata(entry.name);
       if(!info.maintainers?.some(m=>m.name===config.owner))throw new Error(`${entry.name}: public maintainers no longer include ${config.owner}`);
       let manifest:Manifest|undefined,dir:string|undefined;
-      if(entry.path) {dir=join(projects,entry.path);const f=join(dir,'package.json');if(existsSync(f))manifest=JSON.parse(readFileSync(f,'utf8'));}
-      else if(entry.artifact) manifest={name:entry.name,version:entry.version!};
+      if(entry.artifact) manifest={name:entry.name,version:entry.version!};
+      else if(entry.path) {dir=join(projects,entry.path);const f=join(dir,'package.json');if(existsSync(f))manifest=JSON.parse(readFileSync(f,'utf8'));}
       if(manifest && manifest.name!==entry.name)throw new Error(`Local package identity changed at ${dir}`);
       const state=manifest?.private ? 'PRIVATE' : status(manifest?.version,info);
       const display=state==='PENDING'&&receipts()[`${entry.name}@${manifest?.version}`]?'ACCEPTED/PENDING':state;
@@ -210,7 +210,7 @@ async function main() {
     return versionsCache.get(name)!;
   };
   const safe:Candidate[]=[];
-  for(const p of ready) {
+  for(const p of ordered(ready)) {
     try {await assertDependencies(p.manifest,readyMap,lookup);safe.push(p);}
     catch(error){readyMap.delete(p.manifest.name);blocked.push(p.manifest.name);console.error(`BLOCKED ${p.manifest.name}: ${(error as Error).message}`);}
   }
