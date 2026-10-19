@@ -97,7 +97,7 @@ fn whitespace_comments_and_multiline_declarations_preserve_the_schema() {
 }
 
 #[test]
-fn changed_or_extra_crepus_declarations_fail_before_writing() {
+fn legacy_changed_or_extra_crepus_declarations_fail_before_writing() {
     let variants = [
         HEADER.replace("void *userdata", "long userdata"),
         HEADER.replace("CrepusSession *session", "Unknown *session"),
@@ -112,7 +112,7 @@ fn changed_or_extra_crepus_declarations_fail_before_writing() {
     ];
     for header in variants {
         let dir = tempfile::tempdir().unwrap();
-        let opts = fixture(dir.path(), &header, &["rust"]);
+        let opts = fixture(dir.path(), &header, &["c", "zig"]);
         assert!(generate_all(&opts)
             .unwrap_err()
             .contains("unsupported Crepus ABI"));
@@ -167,7 +167,7 @@ fn escaped_newlines_cannot_hide_contract_changes_inside_comments() {
         );
         let dir = tempfile::tempdir().unwrap();
         let opts = fixture(dir.path(), &header, &["rust", "csharp"]);
-        assert!(generate_all(&opts).unwrap_err().contains("line splicing"));
+        assert!(generate_all(&opts).unwrap_err().contains("preprocessor"));
         assert!(!dir.path().join("out").exists());
     }
 }
@@ -297,7 +297,11 @@ fn generated_v_bindings_compile() {
         .unwrap();
     let opts = fixture(dir.path(), HEADER, &["v"]);
     let generated = generate_all(&opts).unwrap().remove(0).path;
-    let mut code = fs::read_to_string(generated).unwrap();
+    // Compile the package declarations inside a standalone executable harness.
+    let mut code =
+        fs::read_to_string(generated)
+            .unwrap()
+            .replacen("module crepuscularity", "module main", 1);
     code.push_str("\nfn main() {\n");
     for name in NAMES {
         code.push_str(&format!("    _ = C.{name}\n"));
@@ -392,4 +396,40 @@ fn main() {{ unsafe {{
     run(Command::new(binary)
         .env("DYLD_LIBRARY_PATH", &library_dir)
         .env("LD_LIBRARY_PATH", &library_dir));
+}
+
+#[test]
+fn typed_backends_reject_type_changing_preprocessor_directives() {
+    for directive in [
+        "#define int32_t int64_t",
+        "#if 0",
+        "#include <other.h>",
+        "#undef int32_t",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = HEADER.replace(
+            "#include <stdint.h>",
+            &format!("#include <stdint.h>\n{directive}"),
+        );
+        for language in ["rust", "csharp", "d", "nim", "odin"] {
+            let opts = fixture(dir.path(), &source, &[language]);
+            let error = generate_all(&opts).unwrap_err();
+            assert!(error.contains("preprocessor"), "{language}: {error}");
+            assert!(!dir.path().join("out").exists());
+        }
+    }
+}
+
+#[test]
+fn generic_v_scalar_header_does_not_invent_crepus_session_functions() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = fixture(dir.path(), "int primitive_control(int value);\n", &["v"]);
+    let files = generate_all(&opts).unwrap();
+    assert_eq!(files.len(), 1);
+    let code = fs::read_to_string(&files[0].path).unwrap();
+    assert!(code.contains("primitive_control"), "{code}");
+    for name in NAMES {
+        assert!(!code.contains(name), "invented {name}: {code}");
+    }
+    assert!(!code.contains("CrepusSession"), "{code}");
 }

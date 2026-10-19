@@ -2016,6 +2016,7 @@ version = "0.1.6"
 dependencies = [
  "equilibrium-ffi",
  "serde",
+ "syn 2.0.118",
  "tempfile",
  "toml 0.8.23",
 ]
