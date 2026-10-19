@@ -247,3 +247,30 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
 
     ast_shape_compatible(&old.children, &new.children)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crepuscularity_core::ast::{Element, Node};
+
+    #[test]
+    fn ast_shape_compatible_rejects_different_lengths() {
+        let t1 = vec![Node::Element(Element { tag: "div".into(), id: None, classes: vec![], conditional_classes: vec![], event_handlers: vec![], bindings: vec![], animations: vec![], children: vec![] })];
+        let t2 = vec![];
+        assert!(!ast_shape_compatible(&t1, &t2));
+    }
+
+    #[test]
+    fn ast_shape_compatible_accepts_same_shape() {
+        let t1 = vec![Node::Element(Element { tag: "div".into(), id: None, classes: vec![], conditional_classes: vec![], event_handlers: vec![], bindings: vec![], animations: vec![], children: vec![] })];
+        let t2 = vec![Node::Element(Element { tag: "div".into(), id: None, classes: vec![], conditional_classes: vec![], event_handlers: vec![], bindings: vec![], animations: vec![], children: vec![] })];
+        assert!(ast_shape_compatible(&t1, &t2));
+    }
+
+    #[test]
+    fn ast_shape_compatible_rejects_different_tags() {
+        let t1 = vec![Node::Element(Element { tag: "div".into(), id: None, classes: vec![], conditional_classes: vec![], event_handlers: vec![], bindings: vec![], animations: vec![], children: vec![] })];
+        let t2 = vec![Node::Element(Element { tag: "span".into(), id: None, classes: vec![], conditional_classes: vec![], event_handlers: vec![], bindings: vec![], animations: vec![], children: vec![] })];
+        assert!(!ast_shape_compatible(&t1, &t2));
+    }
+}
