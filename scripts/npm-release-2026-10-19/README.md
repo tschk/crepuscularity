@@ -53,3 +53,5 @@ The parser tarball can be reproduced from the reviewed release worktree using `b
 Documentation: [Bun packing/publishing](https://bun.com/docs/pm/cli/publish), [npm browser login](https://docs.npmjs.com/cli/v11/commands/npm-login/).
 
 Observed authentication fix: Bun 1.4.0 repeatedly requested web challenges during the same five-minute npm IP exemption. The installed npm client accepted the same pending artifact without another challenge. Only the upload client changed; tarballs, checksums and receipt safeguards are unchanged. No installed runtime or authentication setting was rewritten.
+
+Completed publication: all 26 Moonshine packages at 0.4.49 and parser 0.1.4 are publicly available. All 26 downloaded tarballs match their frozen SHA-512 hashes. A fresh registry-only installation of the full Moonshine batch passed signal/memo, Svelte helper, parser bridge and installed CLI checks. See `moonshine-publication-result.json` and `moonshine-registry-verification.json`.
