@@ -177,21 +177,22 @@ mod tests {
     }
 
     #[test]
-    fn session_dispatch_rerenders() {
+    fn session_dispatch_rerenders() -> Result<(), Box<dyn std::error::Error>> {
         let mut context = std::collections::HashMap::new();
         context.insert(
             "count".to_string(),
             serde_json::Value::String("1".to_string()),
         );
         let mut session = crate::ViewSession::new("../fixtures/interactive.crepus", context);
-        assert!(session.render_html().unwrap().contains("Count 1"));
+        assert!(session.render_html()?.contains("Count 1"));
         let ir = session
             .dispatch(crate::Event {
                 handler: "bind:count:2".to_string(),
                 payload: None,
             })
-            .unwrap();
-        let rendered = serde_json::to_string(&ir.root).unwrap();
+            ?;
+        let rendered = serde_json::to_string(&ir.root)?;
         assert!(rendered.contains("Count 2"));
+        Ok(())
     }
 }
