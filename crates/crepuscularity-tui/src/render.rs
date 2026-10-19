@@ -1715,12 +1715,14 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
 fn constraint_preferred(c: &Constraint, total: u16) -> u16 {
     match c {
         Constraint::Length(v) | Constraint::Min(v) | Constraint::Max(v) => *v,
-        Constraint::Percentage(p) => (u32::from(total) * u32::from(*p) / 100) as u16,
+        Constraint::Percentage(p) => {
+            (u32::from(total) * u32::from(*p) / 100).min(u32::from(u16::MAX)) as u16
+        }
         Constraint::Ratio(a, b) => {
             if *b == 0 {
                 0
             } else {
-                (u64::from(total) * u64::from(*a) / u64::from(*b)) as u16
+                (u64::from(total) * u64::from(*a) / u64::from(*b)).min(u64::from(u16::MAX)) as u16
             }
         }
         Constraint::Fill(_) => 0,
@@ -1756,6 +1758,16 @@ fn constraint_floor(c: &Constraint) -> u16 {
 /// `Flex::Legacy`), then proportional shrinking from the end when the children
 /// overflow.
 fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap: u16) -> Vec<Rect> {
+    split_area_with_minima(constraints, area, direction, gap, &[])
+}
+
+fn split_area_with_minima(
+    constraints: &[Constraint],
+    area: Rect,
+    direction: Direction,
+    gap: u16,
+    minima: &[u16],
+) -> Vec<Rect> {
     let n = constraints.len();
     if n == 0 {
         return Vec::new();
@@ -1764,19 +1776,25 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
         Direction::Horizontal => area.width,
         Direction::Vertical => area.height,
     };
-    let spacing = gap.saturating_mul((n as u16).saturating_sub(1));
-    let avail = u32::from(total.saturating_sub(spacing));
+    let spacing = gap.saturating_mul(n.saturating_sub(1).min(u16::MAX as usize) as u16);
+    let avail = u64::from(total.saturating_sub(spacing));
 
-    let mut sizes: Vec<u32> = constraints
+    let mut sizes: Vec<u64> = constraints
         .iter()
-        .map(|c| u32::from(constraint_preferred(c, total)))
+        .enumerate()
+        .map(|(i, c)| {
+            u64::from(constraint_preferred(c, total).max(minima.get(i).copied().unwrap_or(0)))
+        })
         .collect();
-    let sum: u32 = sizes.iter().sum();
+    let sum: u64 = sizes.iter().sum();
 
     if sum < avail {
         let extra = avail - sum;
-        let weights: Vec<u32> = constraints.iter().map(constraint_grow_weight).collect();
-        let wsum: u32 = weights.iter().sum();
+        let weights: Vec<u64> = constraints
+            .iter()
+            .map(|constraint| u64::from(constraint_grow_weight(constraint)))
+            .collect();
+        let wsum: u64 = weights.iter().sum();
         if let Some(base) = extra.checked_div(wsum) {
             let mut used = 0;
             for (i, w) in weights.iter().enumerate() {
@@ -1804,7 +1822,7 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
             if deficit == 0 {
                 break;
             }
-            let floor = u32::from(constraint_floor(&constraints[i]));
+            let floor = u64::from(constraint_floor(&constraints[i]));
             let slack = sizes[i].saturating_sub(floor);
             let cut = slack.min(deficit);
             sizes[i] -= cut;
@@ -1823,16 +1841,16 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
     // Clamp `Max` constraints after distribution so a `Max(v)` never exceeds v.
     for (i, c) in constraints.iter().enumerate() {
         if let Constraint::Max(v) = c {
-            sizes[i] = sizes[i].min(u32::from(*v));
+            sizes[i] = sizes[i].min(u64::from(*v));
         }
     }
 
     let mut out = Vec::with_capacity(n);
-    let mut offset = u32::from(match direction {
+    let mut offset = u64::from(match direction {
         Direction::Horizontal => area.x,
         Direction::Vertical => area.y,
     });
-    let end = offset + u32::from(total);
+    let end = offset + u64::from(total);
     for size in sizes {
         let start = offset.min(end);
         let len = size.min(end - start);
@@ -1840,7 +1858,7 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
             Direction::Horizontal => Rect::new(start as u16, area.y, len as u16, area.height),
             Direction::Vertical => Rect::new(area.x, start as u16, area.width, len as u16),
         });
-        offset = start + len + u32::from(gap);
+        offset = start + len + u64::from(gap);
     }
     out
 }
@@ -1851,16 +1869,43 @@ fn paint_children_buf(
     area: Rect,
     direction: Direction,
     gap: u16,
+    natural_height: bool,
+    wrap_text: bool,
 ) {
     if children.is_empty() {
         return;
     }
-    let constraints: Vec<Constraint> = children.iter().map(|c| c.constraint).collect();
-    let chunks = split_area(&constraints, area, direction, gap);
+    let constraints: Vec<Constraint> = children
+        .iter()
+        .map(|child| {
+            if direction == Direction::Vertical
+                && (natural_height || (wrap_text && auto_text_height(child)))
+            {
+                Constraint::Length(scroll_child_height(child, direction, area.width))
+            } else {
+                child.constraint
+            }
+        })
+        .collect();
+    let minima: Vec<_> = if wrap_text && !natural_height && direction == Direction::Vertical {
+        children
+            .iter()
+            .map(|child| scroll_child_height(child, direction, area.width))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let chunks = split_area_with_minima(&constraints, area, direction, gap, &minima);
 
     for (i, child) in children.iter().enumerate() {
         if let Some(&chunk) = chunks.get(i) {
-            paint_node_buf(&child.node, buf, chunk);
+            paint_node_buf(
+                &child.node,
+                buf,
+                chunk,
+                natural_height && natural_child_height(child, direction),
+                wrap_text && natural_child_height(child, direction),
+            );
         }
     }
 }
@@ -2254,6 +2299,38 @@ mod slot_rotate_tests {
                 "solo"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod constraint_size_tests {
+    use super::*;
+
+    #[test]
+    fn large_child_counts_do_not_wrap_spacing_or_total_sizes() {
+        let area = Rect::new(0, 0, 10, 1);
+        let constraints = vec![Constraint::Length(u16::MAX); 65538];
+        let chunks = split_area(&constraints, area, Direction::Horizontal, 0);
+        assert_eq!(chunks[0].width, 10);
+        assert!(chunks[1..].iter().all(|chunk| chunk.width == 0));
+        let constraints = vec![Constraint::Fill(1); 65537];
+        let chunks = split_area(&constraints, area, Direction::Horizontal, 1);
+        assert!(chunks.iter().all(|chunk| chunk.width == 0));
+    }
+
+    #[test]
+    fn preferred_sizes_clamp_before_narrowing() {
+        assert_eq!(
+            constraint_preferred(&Constraint::Percentage(u16::MAX), u16::MAX),
+            u16::MAX
+        );
+        assert_eq!(
+            constraint_preferred(&Constraint::Ratio(u32::MAX, 1), u16::MAX),
+            u16::MAX
+        );
+        assert_eq!(constraint_preferred(&Constraint::Percentage(50), 100), 50);
+        assert_eq!(constraint_preferred(&Constraint::Ratio(1, 2), 100), 50);
+        assert_eq!(constraint_preferred(&Constraint::Ratio(1, 0), 100), 0);
     }
 }
 
