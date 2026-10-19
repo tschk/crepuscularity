@@ -709,6 +709,167 @@ fn generated_shadow_presets_match_runtime_and_clear_previous_shadows() {
     let _ = view! { "div hover:shadow-md focus:shadow-lg active:shadow-none" };
 }
 
+#[test]
+fn child_declarations_are_sequential_and_scoped_to_the_parent() {
+    let label = "outer";
+    let mut seen = Vec::new();
+    let _ = view! {r#"div
+  span class={{ seen.push(label); "p-2" }}
+  $: let label = "first"
+  span class={{ seen.push(label); "p-2" }}
+  $: let label = "second"
+  span class={{ seen.push(label); "p-2" }}
+"#};
+    assert_eq!(seen, ["outer", "first", "second"]);
+    assert_eq!(label, "outer");
+}
+
+#[test]
+fn child_declarations_work_in_conditionals_and_loop_bodies() {
+    let enabled = true;
+    let items = [1, 2];
+    let mut seen = Vec::new();
+    let _ = view! {r#"div
+  if enabled
+    $: let value = 7
+    span class={{ seen.push(value); "p-2" }}
+  for item in items.into_iter()
+    $: let value = item
+    span class={{ seen.push(value); "p-2" }}
+"#};
+    assert_eq!(seen, [7, 1, 2]);
+}
+
+#[test]
+fn declaration_only_branches_compile_and_conditions_run_once() {
+    let mut checks = 0;
+    let mut seen = Vec::new();
+    let mut record = |value| {
+        seen.push(value);
+        value
+    };
+    let mut condition = || {
+        checks += 1;
+        true
+    };
+    let _ = view! {r#"div
+  if condition()
+    $: let _value = record(1)
+  else
+    $: let _value = record(2)
+  for item in [3, 4].into_iter()
+    $: let _value = record(item)
+"#};
+    assert_eq!(checks, 1);
+    assert_eq!(seen, [1, 3, 4]);
+}
+
+#[test]
+fn root_declarations_preserve_sibling_order_and_single_root_shape() {
+    let label = "outer";
+    let mut seen = Vec::new();
+    let _ = view! {r#"span class={{ seen.push(label); "p-2" }}
+$: let label = "later"
+span class={{ seen.push(label); "p-2" }}
+"#};
+    assert_eq!(seen, ["outer", "later"]);
+    assert_eq!(label, "outer");
+    let mut actual = view! {r#"div p-2
+$: let _unused = 1
+"#};
+    let mut expected = gpui::div().p_2();
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[test]
+fn match_declarations_execute_only_the_selected_arm_once() {
+    let mut checks = 0;
+    let mut seen = Vec::new();
+    let mut selector = || {
+        checks += 1;
+        2
+    };
+    let mut record = |value| {
+        seen.push(value);
+        value
+    };
+    let _ = view! {r#"div
+  match selector()
+    1 =>
+      $: let _value = record(1)
+    2 =>
+      $: let value = record(2)
+      span class={{ record(value + 1); "p-2" }}
+    _ =>
+      $: let _value = record(4)
+"#};
+    assert_eq!(checks, 1);
+    assert_eq!(seen, [2, 3]);
+    let mut record = |value| {
+        seen.push(value);
+        value
+    };
+    let _ = view! {r#"match 1
+  1 =>
+    $: let _value = record(5)
+  _ =>
+    $: let _value = record(6)
+"#};
+    assert_eq!(seen, [2, 3, 5]);
+}
+
+#[test]
+fn declaration_scope_builder_names_do_not_shadow_caller_variables() {
+    let __crepus_parent = "parent";
+    let __crepus_root = "root";
+    let mut seen = Vec::new();
+    let _ = view! {r#"div
+  $: let _value = 1
+  span class={{ seen.push(__crepus_parent); "p-2" }}
+"#};
+    let mut record = |value| {
+        seen.push(value);
+        value
+    };
+    let _ = view! {r#"div
+$: let _value = record(__crepus_root)
+"#};
+    assert_eq!(seen, ["parent", "root"]);
+}
+
+#[test]
+fn control_flow_builders_do_not_capture_caller_el_variables() {
+    let __el = true;
+    let mut seen = Vec::new();
+    let _ = view! {r#"div
+  if __el
+    span class={{ seen.push(__el); "p-2" }}
+    span
+  else
+    span
+"#};
+    assert_eq!(seen, [true]);
+    let __el = 0xff0000u32;
+    let enabled = true;
+    let mut actual = view! { "div class:bg-{__el}={enabled}" };
+    let mut expected = gpui::div().bg(gpui::rgb(__el));
+    assert_eq!(
+        format!("{:?}", actual.style()),
+        format!("{:?}", expected.style())
+    );
+}
+
+#[test]
+fn state_style_builders_do_not_shadow_caller_s_variables() {
+    let __s = 0xff0000u32;
+    let _ = view! { "div hover:bg-{__s} focus:bg-{__s} active:text-{__s}" };
+    let classes = "hover:p-2";
+    let _ = view! { "div hover:bg-{__s} class={classes} hover:text-{__s}" };
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "requires a Metal device"]
