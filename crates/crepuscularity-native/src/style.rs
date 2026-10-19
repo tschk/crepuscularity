@@ -1002,7 +1002,7 @@ mod tests {
         );
         assert_eq!(
             layout("bg-red-500/50").background_color.as_deref(),
-            Some("#fb2c36%80")
+            Some("#fb2c3680")
         );
         assert_eq!(
             layout("bg-[#123456]").background_color.as_deref(),
