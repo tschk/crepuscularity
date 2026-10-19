@@ -147,11 +147,14 @@ fn render_element(el: &Element, ctx: &TemplateContext) -> AnyElement {
 }
 
 /// Wrap a div with GPUI animations based on the parsed animation specs.
-fn render_with_animations(d: gpui::Div, animations: &[AnimationSpec], tag: &str) -> AnyElement {
-    // Generate a stable element ID from the tag + animation properties
-    let props: Vec<&str> = animations.iter().map(|a| a.property.as_str()).collect();
-    let id_str = format!("crepus-anim-{}-{}", tag, props.join("-"));
-    let id = ElementId::Name(SharedString::from(id_str));
+fn render_with_animations<E: Styled + IntoElement + 'static>(
+    d: E,
+    animations: &[AnimationSpec],
+    path: &str,
+    explicit_id: Option<SharedString>,
+) -> AnyElement {
+    // shortcut: positional IDs change on sibling reorder; use explicit IDs for reorderable nodes.
+    let id = ElementId::Name(animation_state_id(path, explicit_id, animations));
 
     if animations.len() == 1 {
         let spec = &animations[0];
@@ -207,7 +210,7 @@ fn apply_easing(anim: Animation, easing: &str) -> Animation {
 }
 
 /// Apply an animation delta (0.0 - 1.0) to a specific property on a div.
-fn apply_animation_property(d: gpui::Div, property: &str, delta: f32) -> gpui::Div {
+fn apply_animation_property<E: Styled>(d: E, property: &str, delta: f32) -> E {
     match property {
         "opacity" | "fade" | "fade-in" => d.opacity(delta),
         "fade-out" => d.opacity(1.0 - delta),
