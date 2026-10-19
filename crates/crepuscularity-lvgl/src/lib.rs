@@ -54,6 +54,23 @@ pub fn render_component_file_to_lvgl_xml(
     component_name: &str,
     ctx: &TemplateContext,
 ) -> Result<String, CrepusError> {
+    render_component_file_to_lvgl_xml_with_options(
+        content,
+        component_name,
+        ctx,
+        &LvglOptions {
+            name: component_name.into(),
+            root: LvglRoot::Component,
+        },
+    )
+}
+
+pub fn render_component_file_to_lvgl_xml_with_options(
+    content: &str,
+    component_name: &str,
+    ctx: &TemplateContext,
+    options: &LvglOptions,
+) -> Result<String, CrepusError> {
     let file = parse_component_file(content)?;
     let component = file
         .components
@@ -67,14 +84,7 @@ pub fn render_component_file_to_lvgl_xml(
                 .insert(key.clone(), eval_expr(expr, &TemplateContext::new())?);
         }
     }
-    render_nodes_to_lvgl_xml(
-        &component.nodes,
-        &child_ctx,
-        &LvglOptions {
-            name: component_name.into(),
-            root: LvglRoot::Component,
-        },
-    )
+    render_nodes_to_lvgl_xml(&component.nodes, &child_ctx, options)
 }
 
 pub fn render_nodes_to_lvgl_xml(
