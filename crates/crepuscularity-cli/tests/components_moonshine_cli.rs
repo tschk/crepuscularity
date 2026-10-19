@@ -114,7 +114,7 @@ fn moonshine_dep_prints_packages() {
 fn moonshine_new_scaffolds_app() {
     let tmp = tempfile::tempdir().expect("tempdir");
     // Isolate from the developer's ~/projects/moonshine so the scaffold uses
-    // placeholder file: paths (still valid package.json content).
+    // published npm packages without requiring a sibling checkout.
     let status = crepus()
         .current_dir(tmp.path())
         .env_remove("MOONSHINE_PATH")
@@ -145,7 +145,13 @@ fn moonshine_new_scaffolds_app() {
     // This test runs with an isolated HOME, so no local checkout is resolvable
     // and the scaffold must fall back to dependencies that install anywhere.
     assert!(!pkg.contains("file:"), "{pkg}");
-    assert!(pkg.contains("\"@tschk/moonshine\": \"^0.3.4\""), "{pkg}");
+    for name in [
+        "@tschk/moonshine",
+        "@tschk/crepus-moonshine",
+        "@tschk/moonshine-components",
+    ] {
+        assert!(pkg.contains(&format!("\"{name}\": \"^0.4.49\"")), "{pkg}");
+    }
     assert!(!pkg.contains("#path:packages/"));
 
     let main = std::fs::read_to_string(app.join("src/main.tsx")).expect("main.tsx");

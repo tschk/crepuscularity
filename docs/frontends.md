@@ -17,8 +17,8 @@ include base from each entry’s directory, using the map root for root-level
 entries. The caller context’s base directory does not override that selection.
 
 None of this depends on the frameworks whose syntax it accepts. There is no
-`svelte`, `vue`, or JSX toolchain in any `Cargo.toml` — all six frontends are
-hand-written Rust.
+`svelte`, `vue`, `astro`, `@angular`, or JSX toolchain in any `Cargo.toml` — all
+six frontends are hand-written Rust.
 
 Markup frontends reject stray `/` or `=` where an attribute name is required;
 those characters remain valid inside attribute values. An `=` must be followed by
@@ -261,6 +261,14 @@ that path. Its extracted scripts do not provide these component semantics:
 - **Vue:** the Composition API (`ref`, `reactive`, `computed`, `watch`,
   `defineProps`, `defineEmits`), the Options API, lifecycle hooks, provide /
   inject.
+- **Astro:** frontmatter imports, `Astro.props`, top-level `await`, and
+  component resolution. The `---` fence is blanked before parsing, so markup is
+  read with the JSX scanning machinery and expressions are evaluated by the
+  shared crepuscularity evaluator.
+- **Angular:** `@Input`/`@Output`, pipes, dependency injection, and template
+  reference variables. Structural directives (`*ngIf`, `*ngFor`, `@if`, `@for`,
+  `@switch`, `@defer`) lower the way `v-if` / `v-for` do, and `{{ … }}` reuses
+  the Vue text scanner.
 
 Native `moonshine-dom` and `moonshine-ssr` builds have a separate authored
 Svelte module path. A `.svelte` entry or imported child compiles its instance
@@ -1177,6 +1185,19 @@ binding serializes child nodes iteratively to avoid exhausting the host call sta
 Internal `RawParseError` diagnostics contain a message and an optional byte offset.
 
 ## Authored Moonshine modules
+
+The aggregate authored-module host contract documented here uses the verified
+Moonshine **0.4.49** baseline. Use matching **0.4.49** packages for
+`@tschk/moonshine`, `@tschk/moonshine-dom`, and the applicable native
+`@tschk/moonshine-svelte`, `@tschk/moonshine-vue`, or `@tschk/moonshine-solid`
+adapters. Feature-specific versions below record individual ABI introductions;
+they do not establish that an older release supports the complete current
+compiler output. This baseline does not remove the unsupported cases or
+feature-specific verification limits documented here.
+
+This requirement applies to authored `moonshine-dom` / `moonshine-ssr` modules.
+The independent View IR emitters for React, Svelte, Vue, Solid, and Imba use their
+corresponding host frameworks and do not acquire a Moonshine dependency.
 
 `crepus web build --emit moonshine-dom --entry Counter.tsx` (or
 `--emit moonshine-ssr`) recognizes JSX/TSX modules using parsed import/export declarations. Plain JSX

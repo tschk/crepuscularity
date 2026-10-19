@@ -51,8 +51,9 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-gpui = {{ git = "https://github.com/gpui-ce/gpui-ce", rev = "c738623ffbcec2aeddc44a645cc6b74646d5cf97", package = "gpui", default-features = false, features = ["font-kit"] }}
-crepuscularity-gpui = {{ git = "https://github.com/tschk/crepuscularity", package = "crepuscularity-gpui" }}
+gpui = {{ package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"] }}
+gpui_platform = {{ package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"] }}
+crepuscularity-gpui = {{ version = "0.5.10" }}
 "#
     )
 }
@@ -133,13 +134,35 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
 mod scaffold_dependency_tests {
     use super::*;
     #[test]
-    fn generated_gpui_source_matches_backend_pin() {
+    fn generated_gpui_source_matches_backend_registry_dependencies() {
         let generated: toml::Value = toml::from_str(&cargo_toml("fixture")).unwrap();
         let backend: toml::Value =
             toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
+        for dependency in ["gpui", "gpui_platform"] {
+            let emitted = &generated["dependencies"][dependency];
+            let shipped = &backend["dependencies"][dependency];
+            for field in ["package", "version"] {
+                assert_eq!(emitted[field], shipped[field], "{dependency}.{field}");
+            }
+            for field in ["git", "rev", "path"] {
+                assert!(emitted.get(field).is_none(), "{dependency}.{field}");
+            }
+        }
         assert_eq!(
-            generated["dependencies"]["gpui"]["rev"],
-            backend["dependencies"]["gpui"]["rev"]
+            generated["dependencies"]["gpui"]["default-features"],
+            backend["dependencies"]["gpui"]["default-features"]
         );
+        assert!(generated["dependencies"]["gpui_platform"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature.as_str() == Some("font-kit")));
+        for feature in ["gpui/font-kit", "gpui_platform/font-kit"] {
+            assert!(backend["features"]["font-kit"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.as_str() == Some(feature)));
+        }
     }
 }

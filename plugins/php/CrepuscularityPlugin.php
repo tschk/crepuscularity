@@ -23,9 +23,21 @@ final class CrepuscularityPlugin
             throw new RuntimeException('Invalid characters in CREPUS_BIN');
         }
 
-        if (str_contains($bin, '/') || str_contains($bin, '\\')) {
-            throw new RuntimeException('CREPUS_BIN must be a binary name, not a path');
+        $isWindowsPath = preg_match('/^[A-Za-z]:[\\\\\/]/', $bin) === 1;
+        if (!$isWindowsPath && str_contains($bin, '\\')) {
+            throw new RuntimeException('Invalid backslash in POSIX CREPUS_BIN');
         }
+
+        $basename = basename($isWindowsPath ? str_replace('\\', '/', $bin) : $bin);
+        if ($basename !== 'crepus' && $basename !== 'crepus.exe') {
+            throw new RuntimeException("Invalid CREPUS_BIN: binary name must be 'crepus' or 'crepus.exe', got '$basename'");
+        }
+
+        $isAbsolute = str_starts_with($bin, '/') || $isWindowsPath;
+        if ($bin !== $basename && !$isAbsolute) {
+            throw new RuntimeException('Invalid CREPUS_BIN: must be an absolute path or a simple binary name');
+        }
+
         return $bin;
     }
 
@@ -97,7 +109,7 @@ final class CrepuscularityPlugin
             fclose($stderrFile);
         }
         if ($code !== 0) {
-            throw new RuntimeException(trim($stderr));
+            throw new RuntimeException(trim($stderr) ?: 'crepus native ir failed');
         }
         return json_decode($stdout, true, 512, JSON_THROW_ON_ERROR);
     }

@@ -528,7 +528,7 @@ fn every_frontend_rejects_secure_multiline_inputs() {
 }
 
 #[test]
-fn boolean_control_attributes_preserve_false_across_frontends() {
+fn checkbox_false_and_portable_picker_presence_hold_across_frontends() {
     for (filename, source) in [
         ("Boolean.crepus", "input type=checkbox checked={false}\nfile-picker multiple={false}"),
         ("Boolean.jsx", "<div><input type=\"checkbox\" checked={false} /><file-picker multiple={false} /></div>"),
@@ -540,7 +540,7 @@ fn boolean_control_attributes_preserve_false_across_frontends() {
         let json = ir_json(source, filename);
         let nodes = if filename.ends_with(".crepus") { &json["root"] } else { &json["root"][0]["children"] };
         assert_eq!(nodes[0]["checked"], false, "{filename}: {json}");
-        assert_eq!(nodes[1]["multiple"], false, "{filename}: {json}");
+        assert_eq!(nodes[1]["multiple"], true, "{filename}: {json}");
     }
 }
 

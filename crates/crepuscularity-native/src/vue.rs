@@ -9,6 +9,7 @@ use crate::scoped_expression::{
     bound_value_expr, checked_expr, expression_runtime, label_expr, property_access,
     slider_value_expr, tab_index_expr, tab_selected_expr, text_expr, LocalBinding,
 };
+use crate::utils::js_str;
 
 /// Emit a complete Vue 3 `.vue` single-file component from `ir`.
 ///
@@ -76,18 +77,9 @@ function toArray(v: unknown): any[] {{
 
 /// Escape HTML text and braces so Vue cannot interpret literal interpolation.
 fn html_text(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '{' => out.push_str("&#123;"),
-            '}' => out.push_str("&#125;"),
-            c => out.push(c),
-        }
-    }
-    out
+    crate::utils::html_text(s)
+        .replace('{', "&#123;")
+        .replace('}', "&#125;")
 }
 
 /// Preserve authored whitespace and NUL data through Vue's template compiler.
@@ -124,25 +116,6 @@ fn html_attr_value(s: &str) -> String {
             c => out.push(c),
         }
     }
-    out
-}
-
-/// JSON-escape a string for use as a JS string literal inside a `v-bind` expression.
-fn js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
     out
 }
 
@@ -224,7 +197,7 @@ fn class_attr(style: Option<&ViewStyle>) -> String {
 
 /// Rewrite expression references using the shared framework lexer.
 fn scope_expr(expr: &str, locals: &[LocalBinding]) -> String {
-    crate::scoped_expression::scope_expr(expr, locals, "scope.")
+    crate::js_expr::scope_expr(expr, locals, "scope.")
 }
 
 /// A text child: literal (HTML-escaped) unless bound, in which case `{{ expr }}`.
@@ -338,7 +311,7 @@ fn emit_for_each(
     )
 }
 
-fn emit_node(node: &ViewNode, indent: usize, locals: &[LocalBinding]) -> String {
+pub(crate) fn emit_node(node: &ViewNode, indent: usize, locals: &[LocalBinding]) -> String {
     let pad = "  ".repeat(indent);
     match node {
         ViewNode::Text {

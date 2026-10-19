@@ -33,11 +33,15 @@ crepuscularity/
     crepuscularity-flutter/      — Flutter View IR / .crepus renderer
     crepuscularity-components/   — Flutter/Svelte packages + catalog source (omi path deps)
   examples/
+    showcase/                — small single-file DSL demos (render target)
     web-site/                — reference site: index.crepus + runtime/
-    counter/                 — SSR counter
-    todo-web/                — SSR todo
-    weather-web/             — SSR weather
-    embedded-*/              — LVGL/STM32 examples
+    quicknote/               — in-repo MV3 browser extension
+    weather/                 — GPUI desktop app
+    ui-library/              — reusable component catalog demos
+    native-shells/           — SwiftUI/XcodeGen + Gradle View IR hosts
+    embedded-dashboard/      — host-sim RGB565 panel
+    advanced/                — benchmarks, SSR, embedded boards, LVGL, mobile, Tauri
+    examples.toml            — catalog by target (see examples/README.md)
 ```
 
 ## Parser Frontends
@@ -54,8 +58,8 @@ extension in `parse_template_with_path`, all producing the same `ast::Node` tree
 | `.csx` `.jsx` `.tsx` (or first line starts with `<`) | JSX | `parser/jsx/` |
 | anything else | indentation | `parser/indent/` |
 
-- Svelte and Vue are **first-party Rust**; no `svelte`/`vue` crate dependency. Do not add one.
-- The shared AST parsers compile the **template only**. `<script>` is extracted verbatim and never executed there. Native web-module builds have separate authored Svelte and Vue compilers; their supported script behavior is described in `docs/frontends.md`.
+- Svelte, Vue, Astro, and Angular are **first-party Rust**; no `svelte`/`vue`/`astro`/`@angular` crate dependency. Do not add one.
+- The shared AST parsers compile the **template only**. `<script>` and Astro frontmatter are extracted verbatim and never executed there; Angular component classes are not executed. Native web-module builds have separate authored Svelte and Vue compilers; their supported script behavior is described in `docs/frontends.md`.
 - Unsupported markup constructs must be **hard parse errors**, never silent drops. Keep it that way when extending them.
 - `parseTemplate(source, filename)` in `@tschk/crepuscularity-wasm` is the one JS entry point for all six; the filename selects the frontend.
 - Full support matrix: [`docs/frontends.md`](docs/frontends.md).

@@ -6,11 +6,38 @@
 
 [deepwiki](https://deepwiki.com/tschk/crepuscularity)
 
-Think React Native turned into a systems UI toolkit: one compact `.crepus` language can drive GPUI desktop apps, Ratatui terminal UIs, Chromium/Firefox extensions, web output, native mobile shells, embedded panels, and LVGL Pro. Crepuscularity also ships hot reload, runtime rendering, and a GPUI desktop shell with an embedded V8 bridge for native capabilities.
+Think React Native turned into a systems UI toolkit: one compact `.crepus` language can drive GPUI desktop apps, Ratatui terminal UIs, Chromium/Firefox extensions, web output, native mobile shells, embedded panels, and LVGL Pro.
 
-Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. Importable React, Svelte 5, Vue 3, and SolidJS components are available through `crepus web build --emit react|svelte|vue|solid`; `--emit moonshine` generates a Moonshine app entry. JSX, Svelte, and Vue are also supported as template input syntaxes.
+## 60-Second Quick Start
 
-Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS + iOS apps.
+```bash
+# 1. Install the CLI (default features = full: dev/preview/tui/aurora)
+cargo install --path crates/crepuscularity-cli
+
+# 2. If `crepus` is not found, Cargo installed it under ~/.cargo/bin — add it to PATH.
+#    (Rustup normally prepends this for login shells; some terminals omit it.)
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# 3. Scaffold and run a GPUI desktop app
+crepus init gpui hello && cd hello && cargo run
+```
+
+On macOS, GPUI needs the Xcode SDK path — `export` it once or prefix the run:
+
+```bash
+SDKROOT=$(xcrun --show-sdk-path) cargo run
+```
+
+Keep going from the same install:
+
+```bash
+# Browser extension (MV3)
+crepus init webext my-extension && cd my-extension && crepus build
+# Load dist/unpacked/ in chrome://extensions
+
+# Render a template to HTML on stdout
+crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase/product-dashboard.json
+```
 
 ## Why Crepuscularity
 
@@ -23,28 +50,11 @@ Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS +
 - **Desktop shell for embedded guest apps** — **`crepuscularity-lite`** embeds V8 in a GPUI host with a Rust native-capability bridge, optional file watching, workers, plugin capabilities, and TypeScript/TSX guest transpilation
 - **Compile-time and runtime paths** — `view!` macro for zero-overhead AOT compilation; `parse_template` / `render_nodes` for full runtime flexibility and hot reload
 
-## Quick Start
+## Overview
 
-```bash
-# Install the CLI (default = full: dev/preview/tui/aurora)
-cargo install --path crates/crepuscularity-cli
-# Slim (no GPUI): cargo install --path crates/crepuscularity-cli --no-default-features
+Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. Importable React, Svelte 5, Vue 3, SolidJS, and Imba components are available through `crepus web build --emit react|svelte|vue|solid|imba`; `--emit moonshine` generates a Moonshine app entry. JSX, Svelte, Vue, Astro, and Angular are also supported as template input syntaxes.
 
-# If `crepus` is not found, Cargo still installed the binary under ~/.cargo/bin — add it to PATH,
-# e.g. for zsh:  export PATH="$HOME/.cargo/bin:$PATH"
-# (Rustup normally prepends this for login shells; some terminals omit it.)
-
-# Create a new GPUI app
-crepus init gpui my-app
-cd my-app
-SDKROOT=$(xcrun --show-sdk-path) cargo run
-
-# Or create a browser extension
-crepus init webext my-extension
-cd my-extension
-crepus build
-# Load dist/unpacked/ in chrome://extensions
-```
+Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS + iOS apps.
 
 ## Minimal target builds
 
@@ -131,15 +141,18 @@ The `.crepus` DSL is the primary language. Each output target is a renderer that
 
 ## Input Frontends
 
-The core parser has **six frontends**, selected by file extension or filename suffix, all
+The core parser has **six frontends**, selected by file extension, all
 compiling to the same AST: indentation (`.crepus`), JSX/HTML tags
-(`.csx`/`.jsx`/`.tsx`), Svelte (`.svelte`), Vue SFC (`.vue`), Astro (`.astro`), and Angular
-(`.component.html`/`.ng.html`/`.ng`). All are hand-written Rust.
+(`.csx`/`.jsx`/`.tsx`), Svelte (`.svelte`), Vue SFC (`.vue`), Astro
+(`.astro`), and Angular component templates (`.component.html`/`.ng.html`/`.ng`).
+The Svelte, Vue, Astro, and Angular frontends are hand-written Rust with no
+`svelte`, `vue`, `astro`, or `@angular` dependency.
 
-They compile the **template only**. Svelte/Vue scripts and Astro frontmatter
-never execute, and Angular component classes are never read. Runes, stores,
-the Composition API, and lifecycle hooks do not run;
-unsupported markup constructs are hard parse errors rather than silent drops.
+The shared parsers compile the **template only**. `<script>` and frontmatter
+are extracted rather than executed, and Angular component classes are not run.
+Native Moonshine module builds have separate authored Svelte and Vue compilers;
+see the support matrix for their bounded script behavior. Unsupported markup
+constructs are hard parse errors rather than silent drops;
 [`docs/frontends.md`](docs/frontends.md) lists exactly what is and is not
 supported.
 

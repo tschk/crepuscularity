@@ -10,6 +10,7 @@ use crate::scoped_expression::{
     bound_value_expr, checked_expr, component_local_name, expression_runtime, label_expr,
     property_access, slider_value_expr, tab_index_expr, tab_selected_expr, text_expr, LocalBinding,
 };
+use crate::utils::js_str;
 
 /// Shared preamble emitted by both entry points: the `Fragment` import used by
 /// `ForEach` and the `toArray` guard so a missing/non-array scope value renders
@@ -156,25 +157,6 @@ pub fn emit_moonshine_component(ir: &ViewIr, component_name: &str) -> String {
     )
 }
 
-/// JSON-escape a string for use inside a JSX expression container.
-fn js_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 /// A string-valued JSX attribute, written the way a person writes it:
 /// `name="value"`. The braced form is only used when the value cannot sit
 /// inside a quoted literal, since `name={"value"}` is legal but not idiomatic.
@@ -266,7 +248,7 @@ fn opt_attr(name: &str, value: Option<&String>) -> String {
 
 /// Rewrite expression references using the shared framework lexer.
 fn scope_expr(expr: &str, locals: &[LocalBinding]) -> String {
-    crate::scoped_expression::scope_expr(expr, locals, "scope.")
+    crate::js_expr::scope_expr(expr, locals, "scope.")
 }
 
 fn on_click_attr(name: &str) -> String {

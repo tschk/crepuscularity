@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use equilibrium_ffi::{generate_imports, ImportOptions, Language};
 use serde::Deserialize;
 
+mod crepus_abi;
 mod csharp;
 mod d;
 mod header;
@@ -56,10 +57,11 @@ pub fn resolve_abi_header(repo_root: &Path, contract_rel: &str) -> PathBuf {
 
 /// Map `crepuscularity-plugins.toml` language id → equilibrium consumer (if any).
 fn equilibrium_language(id: &str) -> Option<Language> {
-    if id == "v" {
-        return None;
+    // Repository adapters retain their complete ABI/callback support.
+    match id {
+        "go" | "python" | "java" | "kotlin" | "swift" | "php" | "ruby" | "typescript" => None,
+        _ => Language::from_cli_name(id),
     }
-    Language::from_cli_name(id)
 }
 
 fn output_filename(language: &str) -> &'static str {
@@ -106,7 +108,7 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
     }
 
     let import_opts = ImportOptions::default();
-    let mut written = Vec::new();
+    let mut prepared = Vec::new();
 
     for pkg in &manifest.package {
         let base = opts
@@ -114,9 +116,6 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             .clone()
             .unwrap_or_else(|| opts.repo_root.clone());
         let pkg_dir = base.join(&pkg.path);
-        std::fs::create_dir_all(&pkg_dir)
-            .map_err(|e| format!("mkdir {}: {e}", pkg_dir.display()))?;
-
         let code = if pkg.language == "rust" {
             rust::generate(&header)?
         } else if pkg.language == "csharp" {
@@ -127,15 +126,37 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             d::generate(&header)?
         } else if pkg.language == "odin" {
             odin::generate(&header)?
-        } else if let Some(lang) = equilibrium_language(&pkg.language) {
-            let generated = generate_imports(&header, lang, &import_opts)?;
-            if pkg.language == "go" {
-                patch_go_cgo(&generated.code)
-            } else {
-                generated.code
-            }
         } else {
-            generate_extra(&pkg.language, &header)?
+            let checked = crepus_abi::check_header(&header)?;
+            if let Some(lang) = equilibrium_language(&pkg.language) {
+                if checked.canonical && pkg.language == "v" {
+                    generate_v_imports(&header, Some(&pkg_dir))?
+                } else if checked.canonical {
+                    crepus_abi::generate(&header, lang)?
+                } else {
+                    if let Some(error) = &checked.fallback_error {
+                        return Err(error.clone());
+                    }
+                    let generated = generate_imports(&header, lang, &import_opts)?;
+                    if !generated.warnings.is_empty() {
+                        return Err(format!(
+                            "{} bindings for {} are incomplete: {}",
+                            pkg.language,
+                            header.display(),
+                            generated.warnings.join("; ")
+                        ));
+                    }
+                    if !generated.companions.is_empty() {
+                        return Err(format!(
+                            "{} bindings require companion files; this backend is not supported",
+                            pkg.language
+                        ));
+                    }
+                    generated.code
+                }
+            } else {
+                generate_extra(&pkg.language, &header)?
+            }
         };
 
         let file_name = output_filename(&pkg.language);
@@ -163,14 +184,24 @@ pub fn generate_all(opts: &BindgenOptions) -> Result<Vec<GeneratedFile>, String>
             _ => format!("{banner}{code}"),
         };
 
-        std::fs::write(&out_path, &full)
-            .map_err(|e| format!("write {}: {e}", out_path.display()))?;
-        written.push(GeneratedFile {
-            language: pkg.language.clone(),
-            path: out_path,
-        });
+        prepared.push((
+            GeneratedFile {
+                language: pkg.language.clone(),
+                path: out_path,
+            },
+            full,
+        ));
     }
 
+    // A warning or unsupported later package must not replace earlier outputs.
+    let mut written = Vec::new();
+    for (file, content) in prepared {
+        let parent = file.path.parent().expect("generated file has a parent");
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::write(&file.path, content)
+            .map_err(|e| format!("write {}: {e}", file.path.display()))?;
+        written.push(file);
+    }
     Ok(written)
 }
 
@@ -226,7 +257,7 @@ import "C"
 "#
         ))),
         "python" => Ok(generate_python_ctypes()),
-        "v" => generate_v_imports(header),
+        "v" => generate_v_imports(header, None),
         "java" => Ok(generate_java_jni(include_name)),
         "kotlin" => Ok(generate_kotlin_ffi(include_name)),
         "swift" => Ok(generate_swift_module(include_name)),
@@ -239,32 +270,49 @@ import "C"
     }
 }
 
-fn generate_v_imports(header: &Path) -> Result<String, String> {
-    if header.to_str().is_none() {
-        return Err("V ABI header path must be UTF-8".into());
+fn generate_v_imports(header: &Path, package_dir: Option<&Path>) -> Result<String, String> {
+    let authored_path = header.to_str().ok_or("V ABI header path must be UTF-8")?;
+    // Resolve output locations without normalizing away rejected directive text.
+    if authored_path.contains("//") {
+        return Err(format!("unsupported V ABI directive path: {authored_path}"));
     }
-    let (include_dir, library_dir) =
-        if header.ends_with("crates/crepuscularity-abi/include/crepuscularity_abi.h") {
-            (
-                "@VMODROOT/../../crates/crepuscularity-abi/include".to_owned(),
-                "@VMODROOT/../../target/debug".to_owned(),
-            )
-        } else {
-            (
-                header
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .display()
-                    .to_string(),
-                header
+    let header = std::path::absolute(header)
+        .map_err(|error| format!("resolve V ABI header path: {error}"))?;
+    let canonical_layout =
+        header.ends_with("crates/crepuscularity-abi/include/crepuscularity_abi.h");
+    let in_repository_package = match package_dir {
+        None => true,
+        Some(package) => {
+            std::path::absolute(package)
+                .map_err(|error| format!("resolve V package path: {error}"))?
+                == header
                     .ancestors()
                     .nth(4)
                     .unwrap_or_else(|| Path::new("."))
-                    .join("target/debug")
-                    .display()
-                    .to_string(),
-            )
-        };
+                    .join("plugins/v")
+        }
+    };
+    let (include_dir, library_dir) = if canonical_layout && in_repository_package {
+        (
+            "@VMODROOT/../../crates/crepuscularity-abi/include".to_owned(),
+            "@VMODROOT/../../target/debug".to_owned(),
+        )
+    } else {
+        (
+            header
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .display()
+                .to_string(),
+            header
+                .ancestors()
+                .nth(4)
+                .unwrap_or_else(|| Path::new("."))
+                .join("target/debug")
+                .display()
+                .to_string(),
+        )
+    };
     let include_name = header
         .file_name()
         .and_then(|name| name.to_str())
@@ -296,19 +344,21 @@ fn generate_v_imports(header: &Path) -> Result<String, String> {
 #flag darwin -Wl,-rpath,"{}"
 #include "{}"
 
+@[typedef]
+struct C.CrepusSession {{}}
 type CrepusEventCallback = fn (&char, voidptr)
 
-fn C.crepus_session_new() voidptr
-fn C.crepus_session_free(session voidptr)
-fn C.crepus_session_set_template_string(session voidptr, template_utf8 &char, base_dir_utf8 &char) int
-fn C.crepus_session_set_component(session voidptr, component_utf8 &char) int
-fn C.crepus_session_set_files_json(session voidptr, files_json_utf8 &char) int
-fn C.crepus_session_set_context_json(session voidptr, context_json_utf8 &char) int
-fn C.crepus_session_apply_context_patch_json(session voidptr, context_json_utf8 &char) int
-fn C.crepus_session_set_event_callback(session voidptr, callback CrepusEventCallback, userdata voidptr) int
-fn C.crepus_session_render_ir_json(session voidptr) &char
-fn C.crepus_session_dispatch_event_json(session voidptr, event_json_utf8 &char) &char
-fn C.crepus_session_take_last_error(session voidptr) &char
+fn C.crepus_session_new() &C.CrepusSession
+fn C.crepus_session_free(session &C.CrepusSession)
+fn C.crepus_session_set_template_string(session &C.CrepusSession, template_utf8 &char, base_dir_utf8 &char) i32
+fn C.crepus_session_set_component(session &C.CrepusSession, component_utf8 &char) i32
+fn C.crepus_session_set_files_json(session &C.CrepusSession, files_json_utf8 &char) i32
+fn C.crepus_session_set_context_json(session &C.CrepusSession, context_json_utf8 &char) i32
+fn C.crepus_session_apply_context_patch_json(session &C.CrepusSession, context_json_utf8 &char) i32
+fn C.crepus_session_set_event_callback(session &C.CrepusSession, callback CrepusEventCallback, userdata voidptr) i32
+fn C.crepus_session_render_ir_json(session &C.CrepusSession) &char
+fn C.crepus_session_dispatch_event_json(session &C.CrepusSession, event_json_utf8 &char) &char
+fn C.crepus_session_take_last_error(session &C.CrepusSession) &char
 fn C.crepus_last_error() &char
 fn C.crepus_string_free(ptr &char)
 "#,
@@ -635,18 +685,28 @@ assert lib.freed == before
     fn generated_v_matches_compiler_checked_binding() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let root = root.canonicalize().unwrap();
-        let checked = std::fs::read_to_string(root.join("plugins/v/abi_generated.v")).unwrap();
+        // Git can check out the reference with CRLF on Windows.
+        let checked = std::fs::read_to_string(root.join("plugins/v/abi_generated.v"))
+            .unwrap()
+            .replace("\r\n", "\n");
         let body = &checked[checked.find("module crepuscularity").unwrap()..];
         assert_eq!(
             generate_v_imports(
-                &root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h")
+                &root.join("crates/crepuscularity-abi/include/crepuscularity_abi.h"),
+                Some(&root.join("plugins/v")),
             )
             .unwrap(),
             body
         );
-        assert!(equilibrium_language("v").is_none());
-        let custom = generate_v_imports(Path::new("/custom/include/custom_abi.h")).unwrap();
-        assert!(custom.contains("#flag -I /custom/include"));
+        // Use a native absolute path: Windows resolves `/custom` against the
+        // current drive, so a Unix-only expected flag is not portable.
+        let custom_header = root.join("custom include/custom_abi.h");
+        let custom = generate_v_imports(&custom_header, None).unwrap();
+        let expected_include = format!("#flag -I {}", custom_header.parent().unwrap().display());
+        assert!(
+            custom.lines().any(|line| line == expected_include),
+            "{custom}"
+        );
         assert!(custom.contains("#include \"custom_abi.h\""));
     }
 

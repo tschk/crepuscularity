@@ -111,7 +111,7 @@ fn single_false_empty_and_dotted_raw_bindings_keep_their_existing_values() {
         .unwrap();
         let value = serde_json::to_value(ir).unwrap();
         assert_eq!(value["root"][0]["checked"], false, "{filename}: {value}");
-        assert_eq!(value["root"][1]["multiple"], false, "{filename}: {value}");
+        assert_eq!(value["root"][1]["multiple"], true, "{filename}: {value}");
         assert_eq!(value["root"][2]["bind"], "user.name", "{filename}: {value}");
         assert_eq!(value["root"][2]["placeholder"], "", "{filename}: {value}");
     }

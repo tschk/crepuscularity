@@ -1,0 +1,34 @@
+[package]
+name = "crepuscularity-gpui-kit"
+version = "0.1.0"
+edition = "2021"
+license = "ISC"
+publish = false
+description = "Experimental GPUI Kit adapter for Crepuscularity compiled templates"
+repository = "https://github.com/tschk/crepuscularity"
+
+[features]
+default = ["component", "assets"]
+component = ["gpui-kit/component"]
+assets = ["gpui-kit/assets"]
+test-support = ["gpui-kit/test-support"]
+inspector = ["gpui-kit/inspector"]
+profiler = ["gpui-kit/profiler"]
+decimal = ["component", "gpui-kit/decimal"]
+tree-sitter = ["component", "gpui-kit/tree-sitter"]
+tree-sitter-languages = ["tree-sitter", "gpui-kit/tree-sitter-languages"]
+
+[dependencies]
+# Kit owns the matching gpui-pre =0.3.7 family. Never substitute the CE workspace dependency.
+gpui-kit = { version = "=0.7.0", default-features = false }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+
+[[example]]
+name = "kit-counter"
+path = "examples/counter.rs"
+required-features = ["component", "assets"]
+
+[[test]]
+name = "ui"
+required-features = ["component", "assets", "test-support"]
