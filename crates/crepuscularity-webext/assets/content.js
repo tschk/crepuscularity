@@ -252,20 +252,38 @@
     });
   }
 
+  const pendingFrameDocuments = new WeakMap();
+
+  function disposeFrameDocument(frame) {
+    pendingFrameDocuments.get(frame)?.();
+  }
+
+  function disposeRemovedFrameDocuments(node) {
+    if (!(node instanceof Element) || node.isConnected) return;
+    if (node.matches("iframe")) disposeFrameDocument(node);
+    for (const frame of node.querySelectorAll("iframe")) {
+      if (!frame.isConnected) disposeFrameDocument(frame);
+    }
+  }
+
   function setIframeDocument(frame, srcdoc) {
+    disposeFrameDocument(frame);
     frame.removeAttribute("src");
+    let cleanup;
     try {
       const blob = new Blob([srcdoc], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
+      cleanup = () => {
+        if (pendingFrameDocuments.get(frame) !== cleanup) return;
+        pendingFrameDocuments.delete(frame);
+        frame.removeEventListener("load", cleanup);
+        URL.revokeObjectURL(url);
+      };
+      pendingFrameDocuments.set(frame, cleanup);
+      frame.addEventListener("load", cleanup, { once: true });
       frame.src = url;
-      frame.addEventListener(
-        "load",
-        () => {
-          URL.revokeObjectURL(url);
-        },
-        { once: true }
-      );
     } catch (_) {
+      cleanup?.();
       frame.srcdoc = srcdoc;
     }
   }
@@ -478,6 +496,7 @@
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => queueNode(node));
+      mutation.removedNodes.forEach(disposeRemovedFrameDocuments);
     }
     if (pending.size > 0) {
       scheduleFlush();
