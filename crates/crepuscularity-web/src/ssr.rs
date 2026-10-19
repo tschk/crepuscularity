@@ -363,4 +363,79 @@ mod tests {
         assert_eq!(obj.get("num").unwrap().as_f64().unwrap(), 42.0);
         assert!(obj.get("bool").unwrap().as_bool().unwrap());
     }
+
+    #[test]
+    fn test_render_bundle_with_ssr_invalid_json() {
+        let result = render_bundle_with_ssr("{invalid}", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("bundle JSON:"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_not_object() {
+        let result = render_bundle_with_ssr("\"just a string\"", false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("bundle must be a JSON object"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_entry() {
+        let result = render_bundle_with_ssr("{\"files\": {}}", false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("bundle missing string field \"entry\""));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_files() {
+        let result = render_bundle_with_ssr("{\"entry\": \"main.html\"}", false);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("bundle missing \"files\" object"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_invalid_files() {
+        let result = render_bundle_with_ssr(
+            r#"{"entry": "main.html", "files": {"main.html": 42}}"#,
+            false,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be a string"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_success() {
+        let json = r#"{
+            "entry": "main.html",
+            "files": {
+                "main.html": "Hello {{ name }}!"
+            }
+        }"#;
+        // Without markers
+        let result = render_bundle_with_ssr(json, false).unwrap();
+        assert_eq!(result, "Hello !"); // "name" is missing, evaluates to empty string
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_success_with_markers() {
+        let json = r#"{
+            "entry": "main.html",
+            "files": {
+                "main.html": "<div>Hello</div>"
+            }
+        }"#;
+        // With markers
+        let result = render_bundle_with_ssr(json, true).unwrap();
+        // Since it's SSR with markers, it should contain hydration script payload.
+        assert!(result.contains("__crepus_hydration__"));
+        assert!(result.contains("<div>Hello</div>"));
+    }
 }
