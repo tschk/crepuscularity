@@ -162,10 +162,18 @@
       return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resolveExpr(v)]));
     }
 
+    const storageReqs = {};
+    for (const b of (program.bindings ?? [])) {
+      if (b.type === "storage_get") (storageReqs[b.area] ??= []).push(b.key);
+    }
+    const storageCache = {};
+    await Promise.all(Object.entries(storageReqs).map(async ([area, keys]) => {
+      storageCache[area] = await api.storage[area].get(keys).catch(() => ({}));
+    }));
+
     for (const b of (program.bindings ?? [])) {
       if (b.type === "storage_get") {
-        const res = await api.storage[b.area].get({ [b.key]: undefined }).catch(() => ({}));
-        vars[b.name] = res[b.key];
+        vars[b.name] = storageCache[b.area][b.key];
       } else if (b.type === "runtime_message") {
         vars[b.name] = await api.runtime.sendMessage(resolveObj(b.payload)).catch(() => null);
       }
