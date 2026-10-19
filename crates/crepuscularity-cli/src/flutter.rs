@@ -112,10 +112,12 @@ mod tests {
     fn insert_places_block_under_dependencies() {
         let source = "name: demo\ndependencies:\n  flutter:\n    sdk: flutter\n";
         let block = dependency_block(None, "main", 2);
-        let updated = insert_under_dependencies(source, &block).unwrap();
-        let deps_idx = updated.find("dependencies:").unwrap();
-        let pkg_idx = updated.find("crepuscularity_flutter:").unwrap();
-        let flutter_idx = updated.find("  flutter:").unwrap();
+        let updated = insert_under_dependencies(source, &block).expect("failed to insert block");
+        let deps_idx = updated.find("dependencies:").expect("missing dependencies");
+        let pkg_idx = updated
+            .find("crepuscularity_flutter:")
+            .expect("missing package");
+        let flutter_idx = updated.find("  flutter:").expect("missing flutter sdk");
         assert!(deps_idx < pkg_idx && pkg_idx < flutter_idx);
     }
 
