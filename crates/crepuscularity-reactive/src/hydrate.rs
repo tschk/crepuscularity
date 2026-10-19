@@ -42,14 +42,15 @@ fn decode_ctx_payload(raw: &str, encoding: Option<&str>) -> HashMap<String, Valu
 
 #[cfg(target_arch = "wasm32")]
 fn read_ctx() -> HashMap<String, Value> {
-    let doc = web_sys::window().unwrap().document().unwrap();
-    if let Some(el) = doc.get_element_by_id("__crepus_hydration__") {
-        let encoding = el.get_attribute("data-crepus-encoding");
-        return decode_ctx_payload(&el.text_content().unwrap_or_default(), encoding.as_deref());
-    }
-    if let Some(el) = doc.get_element_by_id("__crepus_ctx__") {
-        let encoding = el.get_attribute("data-encoding");
-        return decode_ctx_payload(&el.text_content().unwrap_or_default(), encoding.as_deref());
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(el) = doc.get_element_by_id("__crepus_hydration__") {
+            let encoding = el.get_attribute("data-crepus-encoding");
+            return decode_ctx_payload(&el.text_content().unwrap_or_default(), encoding.as_deref());
+        }
+        if let Some(el) = doc.get_element_by_id("__crepus_ctx__") {
+            let encoding = el.get_attribute("data-encoding");
+            return decode_ctx_payload(&el.text_content().unwrap_or_default(), encoding.as_deref());
+        }
     }
     Default::default()
 }
