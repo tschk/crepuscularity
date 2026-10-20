@@ -6,7 +6,20 @@ const VOID_TAGS: &[&str] = &[
 ];
 
 pub fn is_void_html_tag(tag: &str) -> bool {
-    VOID_TAGS.contains(&tag)
+    VOID_TAGS.iter().any(|name| tag.eq_ignore_ascii_case(name))
+}
+
+/// Void elements cannot own children; never silently discard or evaluate them.
+pub(crate) fn validate_children(
+    el: &crepuscularity_core::ast::Element,
+) -> Result<(), crepuscularity_core::CrepusError> {
+    if is_void_html_tag(&el.tag) && !el.children.is_empty() {
+        return Err(crepuscularity_core::CrepusError::render(format!(
+            "HTML void element <{}> does not support children",
+            el.tag
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
