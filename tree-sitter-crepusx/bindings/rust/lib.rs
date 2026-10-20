@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_jsx_parses() {
+    fn test_nested_jsx_parses() -> Result<(), &'static str> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&super::language())
@@ -69,7 +69,8 @@ mod tests {
                 r#"<View class="flex-1 p-4"><Text>Hello</Text></View>"#,
                 None,
             )
-            .unwrap();
+            .ok_or("Failed to parse CrepusX code into a tree")?;
         assert!(!tree.root_node().has_error());
+        Ok(())
     }
 }
