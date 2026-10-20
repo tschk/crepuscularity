@@ -15,15 +15,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_write_text_happy_path() {
+    fn test_read_write_text_happy_path() -> Result<(), Box<dyn std::error::Error>> {
         let res = write_text("test_clipboard_content");
         if res.is_ok() {
-            let read = read_text().unwrap();
+            let read = read_text()?;
             assert_eq!(read, "test_clipboard_content");
         } else {
             // If clipboard is not available on the system, skip happy path assertion
             println!("Skipping happy path as clipboard initialization failed");
         }
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
