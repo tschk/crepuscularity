@@ -193,15 +193,17 @@ div
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Failed to create temporary file");
         let content = r#"
 div
   button on-click={browser.storage.local.get('key')}
     "Load"
 "#;
-        file.write_all(content.as_bytes()).unwrap();
+        file.write_all(content.as_bytes())
+            .expect("Failed to write to temporary file");
 
-        let usages = scan_crepus_for_capabilities(file.path()).unwrap();
+        let usages =
+            scan_crepus_for_capabilities(file.path()).expect("Failed to scan capabilities");
         assert!(!usages.is_empty());
         assert!(usages.iter().any(|u| u.capability == Capability::Storage));
     }
@@ -215,24 +217,27 @@ div
 
     #[test]
     fn test_scan_directory_for_capabilities() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("Failed to create temporary directory");
 
         let root_file = dir.path().join("root.crepus");
         std::fs::write(
             &root_file,
             "div on-click={browser.storage.local.get('key')}",
         )
-        .unwrap();
+        .expect("Failed to write root file");
 
         let non_crepus_file = dir.path().join("ignored.txt");
-        std::fs::write(&non_crepus_file, "browser.tabs").unwrap();
+        std::fs::write(&non_crepus_file, "browser.tabs")
+            .expect("Failed to write ignored text file");
 
         let sub_dir = dir.path().join("components");
-        std::fs::create_dir(&sub_dir).unwrap();
+        std::fs::create_dir(&sub_dir).expect("Failed to create sub directory");
         let sub_file = sub_dir.join("comp.crepus");
-        std::fs::write(&sub_file, "div on-click={browser.notifications.create()}").unwrap();
+        std::fs::write(&sub_file, "div on-click={browser.notifications.create()}")
+            .expect("Failed to write sub directory file");
 
-        let capabilities = scan_directory_for_capabilities(dir.path()).unwrap();
+        let capabilities = scan_directory_for_capabilities(dir.path())
+            .expect("Failed to scan directory for capabilities");
 
         assert!(capabilities.has(&Capability::Storage));
         assert!(capabilities.has(&Capability::Notifications));
