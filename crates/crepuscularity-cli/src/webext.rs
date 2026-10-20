@@ -697,7 +697,7 @@ fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedEx
             }
             [] if target_id.is_some() => ui::error(&format!(
                 "no webext target {:?} in {}",
-                target_id.unwrap(),
+                target_id.unwrap_or(""),
                 crepus_toml.display()
             )),
             [] => {}
