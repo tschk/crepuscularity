@@ -25,10 +25,7 @@ impl Rect {
     }
 
     pub fn contains(&self, px: u16, py: u16) -> bool {
-        px >= self.x
-            && py >= self.y
-            && px < self.x.saturating_add(self.w)
-            && py < self.y.saturating_add(self.h)
+        px >= self.x && py >= self.y && px - self.x < self.w && py - self.y < self.h
     }
 }
 
@@ -84,6 +81,7 @@ pub struct EmbeddedStyle {
     pub padding_b: u16,
     pub padding_l: u16,
     pub padding_r: u16,
+    /// Parsed spacing metadata; margins are not yet applied by layout.
     pub margin: u16,
     pub margin_x: u16,
     pub margin_y: u16,
@@ -99,11 +97,13 @@ pub struct EmbeddedStyle {
     pub border_color: Option<Color>,
     pub width: SizeHint,
     pub height: SizeHint,
-    /// 0–100 when set via `opacity-*`.
+    /// 0–100 when set via `opacity-*`; fractional opacity currently paints opaque.
     pub opacity_percent: Option<u8>,
     pub hidden: bool,
-    /// Bitmap line height in px (default 8).
+    pub invisible: bool,
+    /// Parsed font size; the renderer currently uses a fixed 8×8 bitmap font.
     pub font_size_px: u16,
+    /// Parsed font weight; the renderer currently uses the same glyphs for all weights.
     pub font_bold: bool,
 }
 
@@ -132,6 +132,33 @@ impl EmbeddedStyle {
     pad_margin_getter!(pad_right, padding_r, padding_x, padding);
     pad_margin_getter!(pad_top, padding_t, padding_y, padding);
     pad_margin_getter!(pad_bottom, padding_b, padding_y, padding);
+
+    pub(crate) fn horizontal_inset(&self) -> u16 {
+        self.pad_left()
+            .saturating_add(self.pad_right())
+            .saturating_add(self.border_width.saturating_mul(2))
+    }
+
+    pub(crate) fn vertical_inset(&self) -> u16 {
+        self.pad_top()
+            .saturating_add(self.pad_bottom())
+            .saturating_add(self.border_width.saturating_mul(2))
+    }
+
+    pub(crate) fn content_bounds(&self, bounds: Rect) -> Rect {
+        Rect::new(
+            bounds
+                .x
+                .saturating_add(self.border_width)
+                .saturating_add(self.pad_left()),
+            bounds
+                .y
+                .saturating_add(self.border_width)
+                .saturating_add(self.pad_top()),
+            bounds.w.saturating_sub(self.horizontal_inset()),
+            bounds.h.saturating_sub(self.vertical_inset()),
+        )
+    }
 
     pub fn pad_x(&self) -> u16 {
         self.pad_left().max(self.pad_right())
@@ -212,6 +239,9 @@ impl EmbeddedDocument {
     }
 
     pub fn node_at(&self, x: u16, y: u16) -> Option<&str> {
+        if x >= self.screen.width || y >= self.screen.height {
+            return None;
+        }
         let mut best: Option<&EmbeddedNode> = None;
         for node in &self.root {
             if let Some(hit) = deepest_hit(node, x, y) {
@@ -249,13 +279,14 @@ fn resolve_path<'a>(roots: &'a [EmbeddedNode], path: &[usize]) -> Option<&'a Emb
 }
 
 fn deepest_hit(node: &EmbeddedNode, x: u16, y: u16) -> Option<&EmbeddedNode> {
-    if !node.bounds.contains(x, y) {
+    if node.style.hidden || node.style.invisible {
         return None;
     }
-    let mut best = Some(node);
+    // Painting permits visible overflow, so ancestor bounds cannot prune children.
+    let mut best = node.bounds.contains(x, y).then_some(node);
     for child in &node.children {
         if let Some(hit) = deepest_hit(child, x, y) {
-            best = Some(hit);
+            best = Some(if hit.id.is_some() { hit } else { node });
         }
     }
     best
@@ -264,6 +295,19 @@ fn deepest_hit(node: &EmbeddedNode, x: u16, y: u16) -> Option<&EmbeddedNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rectangle_contains_uses_half_open_bounds_without_coordinate_overflow() {
+        let rect = Rect::new(u16::MAX, u16::MAX, 1, 1);
+        assert!(rect.contains(u16::MAX, u16::MAX));
+        assert!(!rect.contains(u16::MAX - 1, u16::MAX));
+        assert!(!rect.contains(u16::MAX, u16::MAX - 1));
+        assert!(!Rect::new(u16::MAX, u16::MAX, 0, 1).contains(u16::MAX, u16::MAX));
+        let rect = Rect::new(10, 20, 2, 3);
+        assert!(rect.contains(11, 22));
+        assert!(!rect.contains(12, 22));
+        assert!(!rect.contains(11, 23));
+    }
 
     #[test]
     fn node_at_prefers_deepest_id() {
@@ -287,5 +331,34 @@ mod tests {
         };
         let doc = EmbeddedDocument::new(vec![root], ScreenSize::new(100, 100));
         assert_eq!(doc.node_at(15, 15), Some("child"));
+        let mut unnamed = doc.root[0].clone();
+        unnamed.children[0].id = None;
+        let doc = EmbeddedDocument::new(vec![unnamed], ScreenSize::new(100, 100));
+        assert_eq!(doc.node_at(15, 15), Some("root"));
+        let mut overlap = doc.root[0].clone();
+        overlap.children[0].id = Some("back".into());
+        let mut front = overlap.children[0].clone();
+        front.id = Some("front".into());
+        overlap.children.push(front);
+        let doc = EmbeddedDocument::new(vec![overlap], ScreenSize::new(100, 100));
+        assert_eq!(doc.node_at(15, 15), Some("front"));
+        let mut overflow = doc.clone();
+        overflow.screen = ScreenSize::new(200, 200);
+        for child in &mut overflow.root[0].children {
+            child.bounds = Rect::new(110, 110, 20, 20);
+        }
+        assert_eq!(overflow.node_at(115, 115), Some("front"));
+        overflow.root[0].children[1].id = None;
+        assert_eq!(overflow.node_at(115, 115), Some("root"));
+        assert_eq!(overflow.node_at(150, 150), None);
+        let mut clipped = doc.clone();
+        clipped.screen = ScreenSize::new(20, 20);
+        assert_eq!(clipped.node_at(19, 19), Some("front"));
+        for (x, y) in [(20, 19), (19, 20), (99, 99), (u16::MAX, u16::MAX)] {
+            assert_eq!(clipped.node_at(x, y), None);
+            assert_eq!(clipped.hit_test(x, y), None);
+        }
+        clipped.screen = ScreenSize::new(0, 0);
+        assert_eq!(clipped.node_at(0, 0), None);
     }
 }
