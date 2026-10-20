@@ -22,7 +22,7 @@ class PathBoundaryTests(unittest.TestCase):
         self.outside = self.root / "outside.crepus"
         self.outside.write_text('span "outside"')
         self.reply = subprocess.CompletedProcess(
-            [], 0, stdout='{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=""
+            [], 0, stdout=b'{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=b""
         )
 
     def test_rejects_outside_paths_before_reading_or_launching(self):
