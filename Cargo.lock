@@ -1914,6 +1914,7 @@ dependencies = [
 name = "crepuscularity-embedded"
 version = "0.1.23"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "crepuscularity_macros",
  "display-interface",
@@ -2000,6 +2001,7 @@ dependencies = [
 name = "crepuscularity-lvgl"
 version = "0.1.11"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "tempfile",
 ]
@@ -2086,6 +2088,7 @@ dependencies = [
 name = "crepuscularity-tauri-macros"
 version = "0.1.8"
 dependencies = [
+ "heck 0.5.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",

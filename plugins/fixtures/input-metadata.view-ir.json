@@ -1,0 +1,291 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "text",
+        "formName": "type-text",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "search",
+        "formName": "type-search",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "tel",
+        "formName": "type-tel",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "url",
+        "formName": "type-url",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "email",
+        "formName": "type-email",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "password",
+        "formName": "type-password",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "number",
+        "formName": "type-number",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "date",
+        "formName": "type-date",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "datetime-local",
+        "formName": "type-datetime-local",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "month",
+        "formName": "type-month",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "time",
+        "formName": "type-time",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "week",
+        "formName": "type-week",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "color",
+        "formName": "type-color",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "hidden",
+        "formName": "type-hidden",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "secure": true,
+      "style": {
+        "inputType": "email",
+        "formName": "secret",
+        "required": true,
+        "formValue": "secret"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "multiline": true,
+      "secure": true,
+      "style": {
+        "inputType": "email",
+        "formName": "notes",
+        "required": true,
+        "formValue": "\nfirst\rsecond"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "text",
+        "formName": "a\" &<雪>",
+        "required": false,
+        "formValue": "plain"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "formName": "",
+        "required": false,
+        "formValue": ""
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "formName": "optional",
+        "required": false
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": ""
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": null
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "email\" onfocus=\"bad",
+        "formName": "invalid",
+        "required": true
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": true,
+        "formName": false,
+        "required": "true"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "field",
+      "placeholder": "",
+      "style": {
+        "inputType": "email",
+        "formName": "bound",
+        "required": true,
+        "formValue": "ignored"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "inputType": "email",
+        "formName": "email",
+        "required": true,
+        "formValue": "invalid-email"
+      }
+    },
+    {
+      "kind": "input",
+      "bind": "",
+      "placeholder": "",
+      "style": {
+        "formName": "must-fill",
+        "required": true
+      }
+    }
+  ],
+  "cases": [
+    "type-text",
+    "type-search",
+    "type-tel",
+    "type-url",
+    "type-email",
+    "type-password",
+    "type-number",
+    "type-date",
+    "type-datetime-local",
+    "type-month",
+    "type-time",
+    "type-week",
+    "type-color",
+    "type-hidden",
+    "secure-override",
+    "multiline",
+    "escaped-name",
+    "empty-name",
+    "required-false",
+    "missing-style",
+    "null-style",
+    "invalid-type",
+    "invalid-fields",
+    "bound",
+    "email-validation",
+    "required-validation"
+  ],
+  "expectedHtml": "<input type=\"text\" data-bind=\"\" placeholder=\"\" name=\"type-text\" required><input type=\"search\" data-bind=\"\" placeholder=\"\" name=\"type-search\" required><input type=\"tel\" data-bind=\"\" placeholder=\"\" name=\"type-tel\" required><input type=\"url\" data-bind=\"\" placeholder=\"\" name=\"type-url\" required><input type=\"email\" data-bind=\"\" placeholder=\"\" name=\"type-email\" required><input type=\"password\" data-bind=\"\" placeholder=\"\" name=\"type-password\" required><input type=\"number\" data-bind=\"\" placeholder=\"\" name=\"type-number\" required><input type=\"date\" data-bind=\"\" placeholder=\"\" name=\"type-date\" required><input type=\"datetime-local\" data-bind=\"\" placeholder=\"\" name=\"type-datetime-local\" required><input type=\"month\" data-bind=\"\" placeholder=\"\" name=\"type-month\" required><input type=\"time\" data-bind=\"\" placeholder=\"\" name=\"type-time\" required><input type=\"week\" data-bind=\"\" placeholder=\"\" name=\"type-week\" required><input type=\"color\" data-bind=\"\" placeholder=\"\" name=\"type-color\" required><input type=\"hidden\" data-bind=\"\" placeholder=\"\" name=\"type-hidden\" required><input type=\"password\" data-bind=\"\" placeholder=\"\" name=\"secret\" required value=\"secret\"><textarea data-bind=\"\" placeholder=\"\" name=\"notes\" required>\n\nfirst&#13;second</textarea><input type=\"text\" data-bind=\"\" placeholder=\"\" name=\"a&quot; &amp;&lt;雪&gt;\" value=\"plain\"><input data-bind=\"\" placeholder=\"\" name=\"\" value=\"\"><input data-bind=\"\" placeholder=\"\" name=\"optional\"><input data-bind=\"\" placeholder=\"\"><input data-bind=\"\" placeholder=\"\"><input data-bind=\"\" placeholder=\"\" name=\"invalid\" required><input data-bind=\"\" placeholder=\"\"><input type=\"email\" data-bind=\"field\" placeholder=\"\" name=\"bound\" required><input type=\"email\" data-bind=\"\" placeholder=\"\" name=\"email\" required value=\"invalid-email\"><input data-bind=\"\" placeholder=\"\" name=\"must-fill\" required>"
+}

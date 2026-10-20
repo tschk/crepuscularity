@@ -24,6 +24,397 @@ Widget _one(
 );
 
 void main() {
+  testWidgets(
+    'invalid tracking values preserve valid source and drop invalid IR',
+    (tester) async {
+      for (final token in ['NaNpx', 'Infinitypx', '1e309px', '6rem']) {
+        await tester.pumpWidget(
+          _host(
+            CrepusView.fromSource(
+              'text tracking-wide tracking-[$token] "Tracked"',
+            ),
+          ),
+        );
+        expect(
+          tester.widget<Text>(find.text('Tracked')).style!.letterSpacing,
+          0.4,
+        );
+      }
+      for (final value in [
+        double.nan,
+        double.infinity,
+        double.negativeInfinity,
+      ]) {
+        final style = ViewStyle.fromJson({'letterSpacing': value});
+        expect(style, isNull);
+        await tester.pumpWidget(
+          _one({
+            'kind': 'text',
+            'content': 'Tracked',
+            'style': {'letterSpacing': value},
+          }),
+        );
+        expect(
+          tester.widget<Text>(find.text('Tracked')).style!.letterSpacing,
+          isNull,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
+  testWidgets('letter spacing survives source and IR rendering', (
+    tester,
+  ) async {
+    for (final (classes, spacing) in [
+      ('tracking-tight', -0.4),
+      ('tracking-wide', 0.4),
+      ('tracking-[2.5px]', 2.5),
+    ]) {
+      final style =
+          (viewIrFromSource('text $classes "Tracked"').root.single as TextNode)
+              .style!;
+      expect(style.letterSpacing, spacing);
+      expect(ViewStyle.fromJson(style.toJson())!.letterSpacing, spacing);
+      for (final view in [
+        CrepusView.fromSource('text $classes "Tracked"'),
+        CrepusView.fromIr({
+          'version': IR_VERSION,
+          'root': [
+            {
+              'kind': 'text',
+              'content': 'Tracked',
+              'style': {'letterSpacing': spacing},
+            },
+          ],
+        }),
+      ]) {
+        await tester.pumpWidget(_host(view));
+        expect(
+          tester.widget<Text>(find.text('Tracked')).style!.letterSpacing,
+          spacing,
+        );
+      }
+    }
+  });
+
+  testWidgets('source font weights reach every supported Flutter weight', (
+    tester,
+  ) async {
+    final classes = [
+      'thin',
+      'extralight',
+      'light',
+      'normal',
+      'medium',
+      'semibold',
+      'bold',
+      'extrabold',
+      'black',
+    ];
+    for (var index = 0; index < classes.length; index++) {
+      await tester.pumpWidget(
+        _host(CrepusView.fromSource('text font-${classes[index]} "Weight"')),
+      );
+      expect(
+        tester.widget<Text>(find.text('Weight')).style!.fontWeight,
+        FontWeight.values[index],
+      );
+    }
+  });
+
+  testWidgets('source direction order changes the rendered stack', (
+    tester,
+  ) async {
+    for (final (classes, row) in [
+      ('flex-col flex-row', true),
+      ('flex-row flex-col', false),
+    ]) {
+      await tester.pumpWidget(
+        _host(CrepusView.fromSource('div $classes\n  text "Direction"')),
+      );
+      final ancestors = find.ancestor(
+        of: find.text('Direction'),
+        matching: find.byType(Row),
+      );
+      expect(ancestors, row ? findsOneWidget : findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('source evenly justification reaches row layout', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          'stack row justify-start justify-evenly\n  text "Even"',
+        ),
+      ),
+    );
+    final row = find.ancestor(
+      of: find.text('Even'),
+      matching: find.byType(Row),
+    );
+    expect(
+      tester.widget<Row>(row).mainAxisAlignment,
+      MainAxisAlignment.spaceEvenly,
+    );
+  });
+
+  testWidgets('source layout uses the last alignment classes', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          'stack row items-center items-end justify-center justify-start\n  text "Aligned"',
+        ),
+      ),
+    );
+    final row = find.ancestor(
+      of: find.text('Aligned'),
+      matching: find.byType(Row),
+    );
+    expect(row, findsOneWidget);
+    expect(tester.widget<Row>(row).crossAxisAlignment, CrossAxisAlignment.end);
+    expect(tester.widget<Row>(row).mainAxisAlignment, MainAxisAlignment.start);
+  });
+
+  testWidgets('source opacity reaches the rendered widget', (tester) async {
+    await tester.pumpWidget(
+      _host(CrepusView.fromSource('text opacity-25 "Faded"')),
+    );
+    final opacity = find.ancestor(
+      of: find.text('Faded'),
+      matching: find.byType(Opacity),
+    );
+    expect(opacity, findsOneWidget);
+    expect(tester.widget<Opacity>(opacity).opacity, 0.25);
+  });
+
+  testWidgets('source border width uses the theme color by default', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          'text border-2 "Default border"',
+          theme: const CrepusTheme(borderColor: Colors.green),
+        ),
+      ),
+    );
+    final decorations = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>();
+    expect(
+      decorations.any(
+        (decoration) =>
+            decoration.border?.top.width == 2 &&
+            decoration.border?.top.color == Colors.green,
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('source border classes reach rendered decoration', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(CrepusView.fromSource('text border-2 border-[#f008] "Border"')),
+    );
+    final decorations = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>();
+    expect(
+      decorations.any(
+        (decoration) =>
+            decoration.border?.top.width == 2 &&
+            decoration.border?.top.color == const Color(0x88ff0000),
+      ),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('arbitrary source font size reaches rendered text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(CrepusView.fromSource('text text-[18.5px] "Font"')),
+    );
+    expect(tester.widget<Text>(find.text('Font')).style!.fontSize, 18.5);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('arbitrary source radius reaches rendered decoration', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(CrepusView.fromSource('text rounded-[6px] bg-[#f00] "Radius"')),
+    );
+    final decorations = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>();
+    expect(
+      decorations.any(
+        (decoration) => decoration.borderRadius == BorderRadius.circular(6),
+      ),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('CSS shorthand colors agree between source and IR', (
+    tester,
+  ) async {
+    for (final (hex, expected) in [
+      ('#f00', const Color(0xffff0000)),
+      ('#f008', const Color(0x88ff0000)),
+    ]) {
+      for (final source in [false, true]) {
+        await tester.pumpWidget(
+          source
+              ? _host(CrepusView.fromSource('text text-[$hex] "Short"'))
+              : _one({
+                  'kind': 'text',
+                  'content': 'Short',
+                  'style': {'foregroundColor': hex},
+                }),
+        );
+        expect(tester.widget<Text>(find.text('Short')).style!.color, expected);
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
+  testWidgets('arbitrary source foreground color renders CSS alpha', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(CrepusView.fromSource('text text-[#ff000080] "Hex"')),
+    );
+    expect(
+      tester.widget<Text>(find.text('Hex')).style!.color,
+      const Color(0x80ff0000),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('arbitrary source gap renders exact pixels', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource('stack col gap-[2.5px]\n  text "A"\n  text "B"'),
+      ),
+    );
+    expect(
+      tester.getRect(find.text('B')).top -
+          tester.getRect(find.text('A')).bottom,
+      closeTo(2.5, 0.001),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('fractional source gaps produce fractional-scale layout', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          'stack col gap-0.5 p-1.5\n  text "A"\n  text "B"',
+        ),
+      ),
+    );
+    final first = tester.getRect(find.text('A'));
+    final second = tester.getRect(find.text('B'));
+    expect(second.top - first.bottom, closeTo(2, 0.001));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('source action payload preserves quoted braces through taps', (
+    tester,
+  ) async {
+    const payload = 'prompt:{"label":"a } b"}';
+    final actions = <String>[];
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          'button "Go" onclick={$payload}',
+          onAction: actions.add,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Go'));
+    expect(actions, [payload]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bars clamp extreme values and preserve tiny ranges', (
+    tester,
+  ) async {
+    for (final (node, expected) in [
+      ({'kind': 'progress', 'value': 1e308, 'max': 5e-324}, 1.0),
+      ({'kind': 'progress', 'value': -1e308, 'max': 5e-324}, 0.0),
+      ({'kind': 'meter', 'value': 0, 'min': -5e-324, 'max': 5e-324}, 0.5),
+      ({'kind': 'meter', 'value': 1e308, 'min': -1e308, 'max': 1e308}, 1.0),
+    ]) {
+      await tester.pumpWidget(_one(node));
+      expect(tester.takeException(), isNull, reason: '$node');
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator),
+            )
+            .value,
+        expected,
+        reason: '$node',
+      );
+    }
+  });
+
+  testWidgets('signed hex colors fall back to the theme', (tester) async {
+    await tester.pumpWidget(_one(const {'kind': 'text', 'content': 'Color'}));
+    final fallback = tester.widget<Text>(find.text('Color')).style!.color;
+    for (final hex in ['#+1234567', '#-1234567']) {
+      await tester.pumpWidget(
+        _one({
+          'kind': 'text',
+          'content': 'Color',
+          'style': {'foregroundColor': hex},
+        }),
+      );
+      expect(
+        tester.widget<Text>(find.text('Color')).style!.color,
+        fallback,
+        reason: hex,
+      );
+    }
+  });
+
+  testWidgets('meter midpoint survives finite range overflow', (tester) async {
+    await tester.pumpWidget(
+      _one(const {'kind': 'meter', 'value': 0, 'min': -1e308, 'max': 1e308}),
+    );
+    expect(find.text('50%'), findsOneWidget);
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      0.5,
+    );
+  });
+
+  testWidgets('CSS alpha color ignores surrounding whitespace', (tester) async {
+    await tester.pumpWidget(
+      _one(const {
+        'kind': 'text',
+        'content': 'Alpha',
+        'style': {'foregroundColor': ' #ff000080 '},
+      }),
+    );
+    final text = tester.widget<Text>(find.text('Alpha'));
+    expect(text.style!.color, const Color(0x80ff0000));
+  });
+
   group('text', () {
     testWidgets('renders content and honors style', (tester) async {
       await tester.pumpWidget(
@@ -314,6 +705,7 @@ void main() {
         'end': MainAxisAlignment.end,
         'between': MainAxisAlignment.spaceBetween,
         'around': MainAxisAlignment.spaceAround,
+        'evenly': MainAxisAlignment.spaceEvenly,
         'bogus': MainAxisAlignment.start,
       }.entries) {
         await tester.pumpWidget(
@@ -536,6 +928,68 @@ void main() {
           .value;
     }
 
+    testWidgets('progress and meter fit narrow bounded containers', (
+      tester,
+    ) async {
+      for (final kind in ['progress', 'meter']) {
+        for (final width in [0.0, 10.0, 24.0, 64.0, 120.0]) {
+          await tester.pumpWidget(
+            _host(
+              Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: width,
+                  child: CrepusView.fromIr({
+                    'version': 5,
+                    'root': [
+                      {'kind': kind, 'value': 100, 'min': 0, 'max': 100},
+                    ],
+                  }),
+                ),
+              ),
+            ),
+          );
+          expect(tester.takeException(), isNull, reason: '$kind width=$width');
+          expect(find.text('100%'), findsOneWidget);
+          expect(
+            tester
+                .widget<LinearProgressIndicator>(
+                  find.byType(LinearProgressIndicator),
+                )
+                .value,
+            1.0,
+          );
+        }
+      }
+    });
+
+    testWidgets('progress preserves large accessible percentage text', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(5)),
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 200,
+                child: CrepusView.fromIr({
+                  'version': 5,
+                  'root': [
+                    {'kind': 'progress', 'value': 100, 'max': 100},
+                  ],
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('100%'), findsOneWidget);
+      expect(tester.getSize(find.text('100%')).height, greaterThan(40));
+    });
+
     testWidgets('progress maps value/max onto a 0..1 fraction', (tester) async {
       expect(
         await progressValue(tester, const {
@@ -628,9 +1082,7 @@ void main() {
       );
     });
 
-    testWidgets('an inverted or degenerate meter range degrades to zero', (
-      tester,
-    ) async {
+    testWidgets('an inverted meter range degrades to zero', (tester) async {
       expect(
         await progressValue(tester, const {
           'kind': 'meter',
@@ -640,15 +1092,25 @@ void main() {
         }),
         0.0,
       );
-      expect(
-        await progressValue(tester, const {
-          'kind': 'meter',
-          'value': 5,
-          'min': 5,
-          'max': 5,
-        }),
-        0.0,
-      );
+    });
+
+    testWidgets('an equal-bound meter fills when its value reaches the bound', (
+      tester,
+    ) async {
+      for (final value in [4.0, 5.0, 6.0]) {
+        final fraction = value >= 5 ? 1.0 : 0.0;
+        expect(
+          await progressValue(tester, {
+            'kind': 'meter',
+            'value': value,
+            'min': 5,
+            'max': 5,
+          }),
+          fraction,
+        );
+        expect(find.text('${(fraction * 100).round()}%'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
     });
 
     testWidgets('meter clamps values outside the range', (tester) async {
@@ -1148,6 +1610,112 @@ list
       expect(find.text('THEN'), findsOneWidget);
     });
 
+    testWidgets('operators inside quoted operands stay literal', (
+      tester,
+    ) async {
+      for (final condition in [
+        '"a==b" != "other"',
+        '"a!=b" == "a!=b"',
+        '"=="',
+        'value != "a==b"',
+      ]) {
+        await pumpIf(tester, condition, const {'value': 'different'});
+        expect(find.text('THEN'), findsOneWidget, reason: condition);
+        expect(tester.takeException(), isNull);
+      }
+      await pumpIf(tester, '"a==b" == "other"', const {});
+      expect(find.text('ELSE'), findsOneWidget);
+    });
+
+    testWidgets('quoted operands decode the same escapes as template strings', (
+      tester,
+    ) async {
+      for (final entry in <String, String>{
+        r'value == "a\"b"': 'a"b',
+        r'value == "line\nnext"': 'line\nnext',
+        r'value == "C:\\tools"': r'C:\tools',
+        r'value == "unknown\q"': r'unknown\q',
+      }.entries) {
+        await pumpIf(tester, entry.key, {'value': entry.value});
+        expect(find.text('THEN'), findsOneWidget, reason: entry.key);
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    testWidgets(
+      'malformed quoted comparisons and repeated operators are falsy',
+      (tester) async {
+        for (final condition in [
+          'value != "unterminated',
+          '"a"tail != "b"',
+          '1 == 1 == 1',
+          '!"unterminated',
+          '!!x',
+        ]) {
+          await pumpIf(tester, condition, const {'value': 'different'});
+          expect(find.text('ELSE'), findsOneWidget, reason: condition);
+          expect(tester.takeException(), isNull);
+        }
+      },
+    );
+
+    testWidgets('nonfinite numeric conditions cannot select a branch', (
+      tester,
+    ) async {
+      for (final condition in [
+        'NaN',
+        'Infinity',
+        '!NaN',
+        'NaN == NaN',
+        'value',
+        'value == value',
+        'value != 0',
+      ]) {
+        await pumpIf(tester, condition, const {'value': double.nan});
+        expect(find.text('ELSE'), findsOneWidget, reason: condition);
+        expect(tester.takeException(), isNull);
+      }
+      await pumpIf(tester, '"NaN"', const {});
+      expect(find.text('THEN'), findsOneWidget);
+    });
+
+    testWidgets('numeric equality compares values across int and double', (
+      tester,
+    ) async {
+      for (final condition in [
+        'count == 1.0',
+        '1 == decimal',
+        'count == decimal',
+      ]) {
+        await pumpIf(tester, condition, const {'count': 1, 'decimal': 1.0});
+        expect(find.text('THEN'), findsOneWidget, reason: condition);
+      }
+      await pumpIf(tester, 'count != decimal', const {
+        'count': 1,
+        'decimal': 1.0,
+      });
+      expect(find.text('ELSE'), findsOneWidget);
+      await pumpIf(tester, 'count == decimal', const {
+        'count': 1,
+        'decimal': 1.5,
+      });
+      expect(find.text('ELSE'), findsOneWidget);
+    });
+
+    testWidgets('null remains a literal when scope contains a null key', (
+      tester,
+    ) async {
+      final data = <String, Object?>{'value': null, 'null': 'overridden'};
+      await pumpIf(tester, 'value == null', data);
+      expect(find.text('THEN'), findsOneWidget);
+      await pumpIf(tester, 'null', data);
+      expect(find.text('ELSE'), findsOneWidget);
+      await pumpIf(tester, 'value != null', data);
+      expect(find.text('ELSE'), findsOneWidget);
+      await pumpIf(tester, '"null"', data);
+      expect(find.text('THEN'), findsOneWidget);
+    });
+
     testWidgets('a dotted path works on both sides of a comparison', (
       tester,
     ) async {
@@ -1155,6 +1723,25 @@ list
         'user': {'role': 'admin'},
       });
       expect(find.text('THEN'), findsOneWidget);
+    });
+
+    testWidgets('unsupported operands never compare as two missing values', (
+      tester,
+    ) async {
+      for (final condition in [
+        'a && b == missing',
+        'missing == a || b',
+        'call() == missing',
+        '1 === 1',
+        'a >= b == missing',
+        'a..b == missing',
+        'a[0] == missing',
+        'a + b == missing',
+      ]) {
+        await pumpIf(tester, condition, const {});
+        expect(find.text('ELSE'), findsOneWidget, reason: condition);
+        expect(find.text('THEN'), findsNothing, reason: condition);
+      }
     });
 
     testWidgets('an empty or nonsensical condition is falsy, never thrown', (
@@ -1206,6 +1793,82 @@ list
   });
 
   group('forEach', () {
+    testWidgets(
+      'runtime expansion respects the node budget and resets each build',
+      (tester) async {
+        for (var build = 0; build < 2; build++) {
+          await tester.pumpWidget(
+            _host(
+              CrepusView.fromIr(
+                {
+                  'version': 5,
+                  'root': [
+                    {
+                      'kind': 'forEach',
+                      'bind': 'items',
+                      'itemName': 'row',
+                      'itemBody': [
+                        {'kind': 'text', 'content': 'row={row}'},
+                      ],
+                    },
+                  ],
+                },
+                key: ValueKey(build),
+                limits: const CrepusLimits(maxNodes: 5),
+                data: {'items': List.generate(10000, (i) => i)},
+              ),
+            ),
+          );
+          expect(find.text('row=0'), findsOneWidget);
+          expect(find.text('row=3'), findsOneWidget);
+          expect(find.text('row=4'), findsNothing);
+          expect(tester.takeException(), isNull);
+        }
+      },
+    );
+
+    testWidgets('resolves nested list bindings and preserves exact keys', (
+      tester,
+    ) async {
+      for (final scenario in [
+        (false, 'data.items'),
+        (true, 'data.items'),
+        (false, ' data.items '),
+        (true, ' data.items '),
+      ]) {
+        final (exactKey, binding) = scenario;
+        await tester.pumpWidget(
+          _one(
+            {
+              'kind': 'forEach',
+              'bind': binding,
+              'itemName': 'row',
+              'itemBody': [
+                {'kind': 'text', 'content': 'row={row.name}'},
+              ],
+            },
+            data: {
+              'data': {
+                'items': [
+                  {'name': 'nested'},
+                ],
+              },
+              if (exactKey)
+                'data.items': [
+                  {'name': 'exact'},
+                ],
+            },
+          ),
+        );
+        expect(
+          find.text(exactKey ? 'row=exact' : 'row=nested'),
+          findsOneWidget,
+        );
+        expect(find.text(exactKey ? 'row=nested' : 'row=exact'), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+    });
+
     testWidgets('expands the item body once per element', (tester) async {
       await tester.pumpWidget(
         _one(
@@ -1562,13 +2225,14 @@ list
       tester,
     ) async {
       const cases = {
-        100: FontWeight.w300,
+        100: FontWeight.w100,
+        200: FontWeight.w200,
         300: FontWeight.w300,
         450: FontWeight.w400,
         550: FontWeight.w500,
         650: FontWeight.w600,
         750: FontWeight.w700,
-        900: FontWeight.w800,
+        900: FontWeight.w900,
       };
       for (final entry in cases.entries) {
         await tester.pumpWidget(

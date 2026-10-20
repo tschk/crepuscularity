@@ -49,6 +49,8 @@
   }
 
   const mounted = new WeakSet();
+  const resizeFrames = new WeakMap();
+  let resizeListenerAttached = false;
   const pending = new Set();
   let flushScheduled = false;
 
@@ -151,10 +153,14 @@
   }
 
   async function runBrowserProgramData(api, program) {
-    const vars = {};
+    const vars = Object.create(null);
 
     function resolveExpr(expr) {
       if (expr !== null && typeof expr === "object" && "$var" in expr) return vars[expr.$var];
+      if (expr !== null && typeof expr === "object" && "$member" in expr) {
+        const [object, property] = expr.$member;
+        return vars[object][property];
+      }
       return expr;
     }
     function resolveObj(obj) {
@@ -199,6 +205,8 @@
     const replaceTarget = codeBlockReplaceTarget(pre);
     if (replaceTarget?.isConnected) {
       replaceTarget.replaceWith(wrapper);
+      // contentWindow exists once the iframe is connected; messages arrive later.
+      wrapper.querySelectorAll("iframe.aa-widget-frame").forEach(attachFrameResize);
       return;
     }
     console.warn("crepuscularity: code block not connected, skip mount");
@@ -239,8 +247,14 @@
 `;
 
   function attachFrameResize(frame) {
+    if (!frame.contentWindow) return;
+    resizeFrames.set(frame.contentWindow, frame);
+    if (resizeListenerAttached) return;
+    resizeListenerAttached = true;
+    // A weak registry avoids a window listener retaining each removed iframe.
     window.addEventListener("message", (event) => {
-      if (event.source !== frame.contentWindow) {
+      const frame = resizeFrames.get(event.source);
+      if (!frame?.isConnected || event.source !== frame.contentWindow) {
         return;
       }
       if (event.data?.type !== "anywhere-resize") {
@@ -253,20 +267,38 @@
     });
   }
 
+  const pendingFrameDocuments = new WeakMap();
+
+  function disposeFrameDocument(frame) {
+    pendingFrameDocuments.get(frame)?.();
+  }
+
+  function disposeRemovedFrameDocuments(node) {
+    if (!(node instanceof Element) || node.isConnected) return;
+    if (node.matches("iframe")) disposeFrameDocument(node);
+    for (const frame of node.querySelectorAll("iframe")) {
+      if (!frame.isConnected) disposeFrameDocument(frame);
+    }
+  }
+
   function setIframeDocument(frame, srcdoc) {
+    disposeFrameDocument(frame);
     frame.removeAttribute("src");
+    let cleanup;
     try {
       const blob = new Blob([srcdoc], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
+      cleanup = () => {
+        if (pendingFrameDocuments.get(frame) !== cleanup) return;
+        pendingFrameDocuments.delete(frame);
+        frame.removeEventListener("load", cleanup);
+        URL.revokeObjectURL(url);
+      };
+      pendingFrameDocuments.set(frame, cleanup);
+      frame.addEventListener("load", cleanup, { once: true });
       frame.src = url;
-      frame.addEventListener(
-        "load",
-        () => {
-          URL.revokeObjectURL(url);
-        },
-        { once: true }
-      );
     } catch (_) {
+      cleanup?.();
       frame.srcdoc = srcdoc;
     }
   }
@@ -292,7 +324,6 @@
     frame.setAttribute("scrolling", "no");
     frame.sandbox = "allow-scripts";
     setIframeDocument(frame, srcdoc);
-    attachFrameResize(frame);
     mount.append(frame);
     return mount;
   }
@@ -428,7 +459,7 @@
   }
 
   function enhanceCodeBlock(pre) {
-    if (!(pre instanceof HTMLElement) || mounted.has(pre)) {
+    if (!(pre instanceof HTMLElement) || !pre.isConnected || mounted.has(pre)) {
       return;
     }
 
@@ -441,13 +472,16 @@
   }
 
   function queueNode(node) {
-    if (!(node instanceof HTMLElement)) {
+    const element = node instanceof HTMLElement ? node : node.parentElement;
+    if (!(element instanceof HTMLElement)) {
       return;
     }
-    if (node.matches("pre") && hasAnywhereContent(node)) {
-      pending.add(node);
+    const containingPre = element.closest("pre");
+    if (containingPre) {
+      if (hasAnywhereContent(containingPre)) pending.add(containingPre);
       return;
     }
+    if (!(node instanceof HTMLElement)) return;
     const nodes = node.getElementsByTagName("pre");
     for (let i = 0; i < nodes.length; i++) {
       const pre = nodes[i];
@@ -481,13 +515,15 @@
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
+      if (mutation.type === "characterData") queueNode(mutation.target);
       mutation.addedNodes.forEach((node) => queueNode(node));
+      mutation.removedNodes.forEach(disposeRemovedFrameDocuments);
     }
     if (pending.size > 0) {
       scheduleFlush();
     }
   });
-  observer.observe(document.documentElement, { subtree: true, childList: true });
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
 
   if (typeof wasmModule.content_main === "function") {
     wasmModule.content_main();

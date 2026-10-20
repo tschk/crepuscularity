@@ -1,0 +1,135 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "text",
+      "content": "xs",
+      "style": {
+        "classes": [
+          "text-xs"
+        ],
+        "fontSize": 12.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "sm",
+      "style": {
+        "classes": [
+          "text-sm"
+        ],
+        "fontSize": 14.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "base",
+      "style": {
+        "classes": [
+          "text-base"
+        ],
+        "fontSize": 16.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "lg",
+      "style": {
+        "classes": [
+          "text-lg"
+        ],
+        "fontSize": 18.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "xl",
+      "style": {
+        "classes": [
+          "text-xl"
+        ],
+        "fontSize": 20.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "2xl",
+      "style": {
+        "classes": [
+          "text-2xl"
+        ],
+        "fontSize": 24.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "3xl",
+      "style": {
+        "classes": [
+          "text-3xl"
+        ],
+        "fontSize": 30.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "4xl",
+      "style": {
+        "classes": [
+          "text-4xl"
+        ],
+        "fontSize": 36.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "5xl",
+      "style": {
+        "classes": [
+          "text-5xl"
+        ],
+        "fontSize": 48.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "6xl",
+      "style": {
+        "classes": [
+          "text-6xl"
+        ],
+        "fontSize": 60.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "7xl",
+      "style": {
+        "classes": [
+          "text-7xl"
+        ],
+        "fontSize": 72.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "8xl",
+      "style": {
+        "classes": [
+          "text-8xl"
+        ],
+        "fontSize": 96.0
+      }
+    },
+    {
+      "kind": "text",
+      "content": "9xl",
+      "style": {
+        "classes": [
+          "text-9xl"
+        ],
+        "fontSize": 128.0
+      }
+    }
+  ]
+}
