@@ -1673,3 +1673,41 @@ fn native_add_merges_overlapping_android_permissions() {
     );
     assert!(!manifest.contains("android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion"));
 }
+
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "default desktop crepus.exe does not spawn reliably on Windows CI"
+)]
+fn native_ir_stdin_json_selects_supplied_frontend_filename() {
+    let payload = serde_json::json!({
+        "filename": "fixture.svelte",
+        "template": "<script>const hidden = 'ignored';</script><h1>Frontend content</h1>",
+        "context": {}
+    });
+    let mut child = crepus()
+        .args(["native", "ir", "--stdin-json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn crepus");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ir: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(ir["root"][0]["content"], "Frontend content");
+    assert!(!output
+        .stdout
+        .windows(b"ignored".len())
+        .any(|part| part == b"ignored"));
+}
