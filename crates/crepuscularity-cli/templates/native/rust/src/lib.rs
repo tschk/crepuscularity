@@ -21,6 +21,10 @@ struct MobileActionState {
     preview_count: u64,
     last_action: String,
     last_payload: Option<String>,
+}
+
+#[derive(Default)]
+struct ResultMetadata {
     last_result: String,
     last_error: Option<String>,
 }
@@ -35,6 +39,7 @@ type ActionHandler =
     fn(&mut MobileActionState, Option<&serde_json::Value>) -> Result<serde_json::Value, String>;
 
 static ACTION_STATE: OnceLock<Mutex<MobileActionState>> = OnceLock::new();
+static RESULT_METADATA: OnceLock<Mutex<ResultMetadata>> = OnceLock::new();
 static VIEW_STATE: OnceLock<Mutex<serde_json::Value>> = OnceLock::new();
 
 fn action_state() -> &'static Mutex<MobileActionState> {
@@ -47,6 +52,13 @@ fn view_state() -> &'static Mutex<serde_json::Value> {
 
 fn lock_action_state() -> MutexGuard<'static, MobileActionState> {
     action_state()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn lock_result_metadata() -> MutexGuard<'static, ResultMetadata> {
+    RESULT_METADATA
+        .get_or_init(|| Mutex::new(ResultMetadata::default()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -80,8 +92,11 @@ pub fn dispatch_action_json(action: &str) -> String {
         Ok(value) => action_json(true, &action_name, Some(value), None, &state),
         Err(error) => action_json(false, &action_name, None, Some(&error), &state),
     };
-    state.last_error = parse_action_error(&result);
-    state.last_result = result.clone();
+    let mut metadata = lock_result_metadata();
+    metadata.last_error = parse_action_error(&result);
+    metadata.last_result = result.clone();
+    drop(metadata);
+    drop(state);
     result
 }
 
@@ -103,35 +118,86 @@ fn dispatch_change_json(action: &str, bind: &str, value_json: &str) -> String {
         return merge_view_value(bind, value).to_string();
     }
     let mut payload = serde_json::Map::new();
-    payload.insert(bind.to_string(), value);
-    if let Some((capability, method)) = action.split_once('.') {
-        return dispatch_action_json(
-            &serde_json::json!({
-                "kind": "plugin",
-                "capability": capability,
-                "method": method,
-                "payload": payload,
-            })
-            .to_string(),
-        );
+    payload.insert(bind.to_string(), value.clone());
+    let request = if let Some((capability, method)) = action.split_once('.') {
+        serde_json::json!({
+            "kind": "plugin",
+            "capability": capability,
+            "method": method,
+            "payload": payload,
+        })
+    } else {
+        serde_json::json!({ "action": action, "payload": payload })
+    };
+    let raw = dispatch_action_json(&request.to_string());
+    let Ok(mut result) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return raw;
+    };
+    if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        if request_kind(&request) == Some("plugin") {
+            result["bindings"] = serde_json::json!({ bind: value });
+        } else if let Some(fields) = result
+            .get_mut("value")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            fields.entry(bind.to_string()).or_insert(value);
+        }
     }
-    if !action.is_empty() {
-        payload.insert(
-            "action".to_string(),
-            serde_json::Value::String(action.to_string()),
-        );
+    result.to_string()
+}
+
+fn write_binding_path(
+    root: &mut serde_json::Value,
+    path: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    // Leave two nesting levels for the result envelope and its state object.
+    if path.split('.').take(127).count() > 126 {
+        return Err("binding path exceeds 126 segments".to_string());
     }
-    dispatch_action_json(&serde_json::Value::Object(payload).to_string())
+    let mut segments = path.split('.').peekable();
+    let mut current = root;
+    while let Some(segment) = segments.next() {
+        let last = segments.peek().is_none();
+        match current {
+            serde_json::Value::Object(map) => {
+                if last {
+                    map.insert(segment.to_string(), value);
+                    return Ok(());
+                }
+                current = map
+                    .entry(segment.to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+            }
+            serde_json::Value::Array(items) => {
+                let index = segment
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid array index in binding path: {path}"))?;
+                current = items
+                    .get_mut(index)
+                    .ok_or_else(|| format!("array index out of bounds in binding path: {path}"))?;
+                if last {
+                    *current = value;
+                    return Ok(());
+                }
+            }
+            _ => return Err(format!("cannot traverse scalar in binding path: {path}")),
+        }
+    }
+    Ok(())
 }
 
 fn merge_view_value(bind: &str, value: serde_json::Value) -> serde_json::Value {
     let mut state = lock_view_state();
-    if !state.is_object() {
-        *state = serde_json::json!({});
+    let mut updated = if state.is_object() {
+        state.clone()
+    } else {
+        serde_json::json!({})
+    };
+    if let Err(error) = write_binding_path(&mut updated, bind, value.clone()) {
+        return serde_json::json!({ "ok": false, "action": "bind", "error": error });
     }
-    if let Some(map) = state.as_object_mut() {
-        map.insert(bind.to_string(), value.clone());
-    }
+    *state = updated;
     serde_json::json!({
         "ok": true,
         "action": "bind",
@@ -142,6 +208,10 @@ fn merge_view_value(bind: &str, value: serde_json::Value) -> serde_json::Value {
 
 fn parse_action_error(result: &str) -> Option<String> {
     let payload = serde_json::from_str::<serde_json::Value>(result).ok()?;
+    action_error_from_value(&payload, result)
+}
+
+fn action_error_from_value(payload: &serde_json::Value, result: &str) -> Option<String> {
     if payload.get("ok").and_then(|value| value.as_bool()) == Some(false) {
         return Some(
             payload
@@ -422,7 +492,17 @@ fn parse_action_request(input: &str) -> serde_json::Value {
         .filter(|value: &serde_json::Value| {
             value.get("action").is_some() || value.get("kind").is_some()
         })
-        .unwrap_or_else(|| serde_json::json!({ "action": input }))
+        .unwrap_or_else(|| {
+            if let Some((capability, method)) = input.split_once('.') {
+                serde_json::json!({
+                    "kind": "plugin",
+                    "capability": capability,
+                    "method": method,
+                })
+            } else {
+                serde_json::json!({ "action": input })
+            }
+        })
 }
 
 fn legacy_action_name(request: &serde_json::Value) -> Option<&str> {
@@ -700,7 +780,15 @@ pub extern "C" fn crepus_mobile_dispatch_json(
     output_ptr: *mut c_char,
     output_len: usize,
 ) -> usize {
-    let result = action_from_ffi(action_ptr, action_len)
+    copy_json_to_output(
+        &dispatch_json_from_ffi(action_ptr, action_len),
+        output_ptr,
+        output_len,
+    )
+}
+
+fn dispatch_json_from_ffi(action_ptr: *const c_char, action_len: usize) -> String {
+    action_from_ffi(action_ptr, action_len)
         .map(|action| dispatch_action_json(action.as_ref()))
         .unwrap_or_else(|| {
             action_json(
@@ -710,8 +798,16 @@ pub extern "C" fn crepus_mobile_dispatch_json(
                 Some("invalid action pointer"),
                 &MobileActionState::default(),
             )
-        });
-    copy_json_to_output(&result, output_ptr, output_len)
+        })
+}
+
+/// Execute once and return the complete JSON; release with crepus_mobile_free_string.
+#[no_mangle]
+pub extern "C" fn crepus_mobile_dispatch_json_owned(
+    action_ptr: *const c_char,
+    action_len: usize,
+) -> *mut c_char {
+    alloc_c_string(&dispatch_json_from_ffi(action_ptr, action_len))
 }
 
 #[no_mangle]
@@ -735,6 +831,23 @@ pub extern "C" fn crepus_mobile_dispatch_change_json(
     output_ptr: *mut c_char,
     output_len: usize,
 ) -> usize {
+    copy_json_to_output(
+        &dispatch_change_from_ffi(
+            action_ptr, action_len, bind_ptr, bind_len, value_ptr, value_len,
+        ),
+        output_ptr,
+        output_len,
+    )
+}
+
+fn dispatch_change_from_ffi(
+    action_ptr: *const c_char,
+    action_len: usize,
+    bind_ptr: *const c_char,
+    bind_len: usize,
+    value_ptr: *const c_char,
+    value_len: usize,
+) -> String {
     let Some(action) = action_from_ffi(action_ptr, action_len) else {
         let result = action_json(
             false,
@@ -743,7 +856,7 @@ pub extern "C" fn crepus_mobile_dispatch_change_json(
             Some("invalid action pointer"),
             &MobileActionState::default(),
         );
-        return copy_json_to_output(&result, output_ptr, output_len);
+        return result;
     };
     let Some(bind) = action_from_ffi(bind_ptr, bind_len) else {
         let result = action_json(
@@ -753,7 +866,7 @@ pub extern "C" fn crepus_mobile_dispatch_change_json(
             Some("invalid bind pointer"),
             &MobileActionState::default(),
         );
-        return copy_json_to_output(&result, output_ptr, output_len);
+        return result;
     };
     let Some(value_json) = action_from_ffi(value_ptr, value_len) else {
         let result = action_json(
@@ -763,24 +876,35 @@ pub extern "C" fn crepus_mobile_dispatch_change_json(
             Some("invalid value pointer"),
             &MobileActionState::default(),
         );
-        return copy_json_to_output(&result, output_ptr, output_len);
+        return result;
     };
-    copy_json_to_output(
-        &dispatch_change_json(action.as_ref(), bind.as_ref(), value_json.as_ref()),
-        output_ptr,
-        output_len,
-    )
+    dispatch_change_json(action.as_ref(), bind.as_ref(), value_json.as_ref())
+}
+
+/// Execute once and return the complete JSON; release with crepus_mobile_free_string.
+#[no_mangle]
+pub extern "C" fn crepus_mobile_dispatch_change_json_owned(
+    action_ptr: *const c_char,
+    action_len: usize,
+    bind_ptr: *const c_char,
+    bind_len: usize,
+    value_ptr: *const c_char,
+    value_len: usize,
+) -> *mut c_char {
+    alloc_c_string(&dispatch_change_from_ffi(
+        action_ptr, action_len, bind_ptr, bind_len, value_ptr, value_len,
+    ))
 }
 
 #[no_mangle]
 pub extern "C" fn crepus_mobile_last_result() -> *mut c_char {
-    let state = lock_action_state();
+    let state = lock_result_metadata();
     alloc_c_string(&state.last_result)
 }
 
 #[no_mangle]
 pub extern "C" fn crepus_mobile_last_error() -> *mut c_char {
-    let state = lock_action_state();
+    let state = lock_result_metadata();
     alloc_c_string(state.last_error.as_deref().unwrap_or(""))
 }
 
@@ -837,20 +961,56 @@ fn copy_json_to_output(result: &str, output_ptr: *mut c_char, output_len: usize)
 fn store_result_json(raw: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(raw) {
         Ok(value) => {
-            let mut state = lock_action_state();
-            state.last_error = parse_action_error(raw);
+            let mut state = lock_result_metadata();
             state.last_result = raw.to_string();
+            if value.get("ok").is_some_and(|status| !status.is_boolean()) {
+                state.last_error = Some("result.ok must be a boolean".to_string());
+                return false;
+            }
+            state.last_error = action_error_from_value(&value, raw);
             drop(state);
-            if let Some(fields) = value.get("value").and_then(|value| value.as_object()) {
+            if value.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+                return true;
+            }
+            let fields = value.get("value").and_then(serde_json::Value::as_object);
+            let bindings = value.get("bindings").and_then(serde_json::Value::as_object);
+            if fields.is_some() || bindings.is_some() {
                 let mut view_state = lock_view_state();
-                if !view_state.is_object() {
-                    *view_state = serde_json::json!({});
+                if view_state.is_object()
+                    && fields.map_or(0, |fields| fields.len())
+                        + bindings.map_or(0, |bindings| bindings.len())
+                        == 1
+                {
+                    let (key, value) = fields
+                        .into_iter()
+                        .chain(bindings)
+                        .flat_map(|fields| fields.iter())
+                        .next()
+                        .expect("one result field");
+                    // One path cannot fail after its first insertion creates an object-only suffix.
+                    if let Err(error) = write_binding_path(&mut view_state, key, value.clone()) {
+                        drop(view_state);
+                        lock_result_metadata().last_error = Some(error);
+                        return false;
+                    }
+                    return true;
                 }
-                if let Some(map) = view_state.as_object_mut() {
+                // shortcut: multi-field commits still clone for rollback; revisit if they become a hot path.
+                let mut updated = if view_state.is_object() {
+                    view_state.clone()
+                } else {
+                    serde_json::json!({})
+                };
+                for fields in fields.into_iter().chain(bindings) {
                     for (key, value) in fields {
-                        map.insert(key.clone(), value.clone());
+                        if let Err(error) = write_binding_path(&mut updated, key, value.clone()) {
+                            drop(view_state);
+                            lock_result_metadata().last_error = Some(error);
+                            return false;
+                        }
                     }
                 }
+                *view_state = updated;
             }
             true
         }
@@ -859,7 +1019,7 @@ fn store_result_json(raw: &str) -> bool {
 }
 
 fn eval_text(expr: &str, scope_name: Option<&str>, scope_json: Option<&str>) -> String {
-    stringify_value(&resolve_expr(expr, scope_name, scope_json))
+    display_value(&resolve_expr(expr, scope_name, scope_json))
 }
 
 fn eval_bool(expr: &str, scope_name: Option<&str>, scope_json: Option<&str>) -> bool {
@@ -867,7 +1027,9 @@ fn eval_bool(expr: &str, scope_name: Option<&str>, scope_json: Option<&str>) -> 
 }
 
 fn eval_number(expr: &str, scope_name: Option<&str>, scope_json: Option<&str>) -> f64 {
-    number_value(&resolve_expr(expr, scope_name, scope_json)).unwrap_or(0.0)
+    number_value(&resolve_expr(expr, scope_name, scope_json))
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
 }
 
 fn eval_items_json(expr: &str, scope_name: Option<&str>, scope_json: Option<&str>) -> String {
@@ -883,17 +1045,45 @@ fn resolve_expr(
     scope_json: Option<&str>,
 ) -> serde_json::Value {
     let trimmed = expr.trim();
-    if let Some(rest) = trimmed.strip_prefix('!') {
-        return serde_json::Value::Bool(!truthy_value(&resolve_expr(rest, scope_name, scope_json)));
+    if trimmed.starts_with('!') {
+        let mut rest = trimmed;
+        let mut negate = false;
+        while let Some(next) = rest.strip_prefix('!') {
+            negate = !negate;
+            rest = next.trim_start();
+        }
+        let value = truthy_value(&resolve_expr(rest, scope_name, scope_json));
+        return serde_json::Value::Bool(value != negate);
     }
     for op in [">=", "<=", "==", "!=", ">", "<"] {
-        if let Some(index) = trimmed.find(op) {
+        if let Some(index) = comparison_index(trimmed, op) {
             let left = resolve_path(trimmed[..index].trim(), scope_name, scope_json);
             let right = resolve_path(trimmed[index + op.len()..].trim(), scope_name, scope_json);
             return serde_json::Value::Bool(compare_values(&left, &right, op));
         }
     }
     resolve_path(trimmed, scope_name, scope_json)
+}
+
+fn comparison_index(expr: &str, op: &str) -> Option<usize> {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, ch) in expr.char_indices() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quoted = false;
+            }
+        } else if ch == '"' {
+            quoted = true;
+        } else if expr[index..].starts_with(op) {
+            return Some(index);
+        }
+    }
+    None
 }
 
 fn resolve_path(
@@ -904,7 +1094,34 @@ fn resolve_path(
     if let Some(literal) = literal_value(expr) {
         return literal;
     }
-    if let Some(scope) = scope_json.and_then(|value| serde_json::from_str(value).ok()) {
+    if expr
+        .split_once('.')
+        .is_some_and(|(root, _)| matches!(root.trim(), "null" | "none" | "None" | "Null"))
+    {
+        return serde_json::Value::Null;
+    }
+    let scope = scope_json.and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+    if scope_name == Some("@crepus:lexical") {
+        let Some((aliases, local)) = scope
+            .as_ref()
+            .and_then(|scope| Some((scope.get("aliases")?.as_object()?, scope.get("local")?)))
+        else {
+            return serde_json::Value::Null;
+        };
+        let (root, member) = expr
+            .split_once('.')
+            .map_or((expr, None), |(root, member)| (root, Some(member)));
+        if let Some(item) = aliases.get(root) {
+            return match member {
+                Some(path) => lookup_path(path, item).unwrap_or(serde_json::Value::Null),
+                None => item.clone(),
+            };
+        }
+        return lookup_path(expr, local)
+            .or_else(|| lookup_path(expr, &lock_view_state()))
+            .unwrap_or(serde_json::Value::Null);
+    }
+    if let Some(scope) = scope {
         if let Some(scope_name) = scope_name {
             if expr == scope_name {
                 return scope;
@@ -931,44 +1148,82 @@ fn lookup_path(path: &str, root: &serde_json::Value) -> Option<serde_json::Value
     if path.is_empty() {
         return Some(root.clone());
     }
-    let mut current = root;
+    let mut current = Cow::Borrowed(root);
     for segment in path.split('.') {
-        match current {
-            serde_json::Value::Object(map) => current = map.get(segment)?,
-            serde_json::Value::Array(items) => {
-                current = items.get(segment.parse::<usize>().ok()?)?
-            }
-            _ => return None,
-        }
+        current = match current {
+            Cow::Borrowed(value) => lookup_property(value, segment)?,
+            Cow::Owned(value) => Cow::Owned(lookup_property(&value, segment)?.into_owned()),
+        };
     }
-    Some(current.clone())
+    Some(current.into_owned())
+}
+
+fn lookup_property<'a>(
+    value: &'a serde_json::Value,
+    property: &str,
+) -> Option<Cow<'a, serde_json::Value>> {
+    use serde_json::{json, Value};
+    let computed = match value {
+        Value::Object(map) => return map.get(property).map(Cow::Borrowed),
+        Value::Array(items) => match property {
+            "len" | "length" => json!(items.len()),
+            "is_empty" | "empty" => json!(items.is_empty()),
+            _ => {
+                return items
+                    .get(property.parse::<usize>().ok()?)
+                    .map(Cow::Borrowed)
+            }
+        },
+        Value::String(text) => match property {
+            "len" | "length" => json!(text.chars().count()),
+            "upper" => json!(text.to_uppercase()),
+            "lower" => json!(text.to_lowercase()),
+            "trim" => json!(text.trim()),
+            "is_empty" | "empty" => json!(text.is_empty()),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(Cow::Owned(computed))
 }
 
 fn literal_value(expr: &str) -> Option<serde_json::Value> {
     match expr {
         "true" => Some(serde_json::Value::Bool(true)),
         "false" => Some(serde_json::Value::Bool(false)),
-        "null" => Some(serde_json::Value::Null),
-        _ if expr.starts_with('"') && expr.ends_with('"') && expr.len() >= 2 => Some(
-            serde_json::Value::String(expr[1..expr.len() - 1].to_string()),
-        ),
+        "null" | "none" | "None" | "Null" => Some(serde_json::Value::Null),
+        _ if expr.starts_with('"') && expr.ends_with('"') && expr.len() >= 2 => {
+            serde_json::from_str::<String>(expr)
+                .ok()
+                .map(serde_json::Value::String)
+        }
         _ => expr
             .parse::<i64>()
             .map(|value| serde_json::json!(value))
+            .or_else(|_| expr.parse::<u64>().map(|value| serde_json::json!(value)))
             .or_else(|_| expr.parse::<f64>().map(|value| serde_json::json!(value)))
             .ok(),
     }
 }
 
 fn compare_values(left: &serde_json::Value, right: &serde_json::Value, op: &str) -> bool {
-    if let (Some(left), Some(right)) = (number_value(left), number_value(right)) {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    if let (Some(left_number), Some(right_number)) = (number_value(left), number_value(right)) {
+        let order = match (integer_value(left), integer_value(right)) {
+            (Some(left), Some(right)) => Some(left.cmp(&right)),
+            (Some(left), None) => compare_integer_float(left, right_number),
+            (None, Some(right)) => {
+                compare_integer_float(right, left_number).map(|order| order.reverse())
+            }
+            (None, None) => left_number.partial_cmp(&right_number),
+        };
         return match op {
-            ">=" => left >= right,
-            "<=" => left <= right,
-            ">" => left > right,
-            "<" => left < right,
-            "==" => left == right,
-            "!=" => left != right,
+            ">=" => matches!(order, Some(Greater | Equal)),
+            "<=" => matches!(order, Some(Less | Equal)),
+            ">" => order == Some(Greater),
+            "<" => order == Some(Less),
+            "==" => order == Some(Equal),
+            "!=" => order != Some(Equal),
             _ => false,
         };
     }
@@ -978,6 +1233,36 @@ fn compare_values(left: &serde_json::Value, right: &serde_json::Value, op: &str)
         "==" => left == right,
         "!=" => left != right,
         _ => false,
+    }
+}
+
+fn compare_integer_float(integer: i128, float: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    if float.is_nan() {
+        return None;
+    }
+    if float >= -(i128::MIN as f64) {
+        return Some(Less);
+    }
+    if float < i128::MIN as f64 {
+        return Some(Greater);
+    }
+    let order = integer.cmp(&(float.trunc() as i128));
+    if order == Equal {
+        0.0_f64.partial_cmp(&float.fract())
+    } else {
+        Some(order)
+    }
+}
+
+fn integer_value(value: &serde_json::Value) -> Option<i128> {
+    match value {
+        serde_json::Value::Number(number) => number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from)),
+        serde_json::Value::String(text) => text.parse::<i128>().ok(),
+        _ => None,
     }
 }
 
@@ -997,6 +1282,14 @@ fn truthy_value(value: &serde_json::Value) -> bool {
         serde_json::Value::String(text) => !text.is_empty(),
         serde_json::Value::Array(items) => !items.is_empty(),
         serde_json::Value::Object(map) => !map.is_empty(),
+    }
+}
+
+fn display_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Array(items) => format!("[{} items]", items.len()),
+        serde_json::Value::Object(_) => String::new(),
+        _ => stringify_value(value),
     }
 }
 
@@ -1101,6 +1394,7 @@ pub extern "C" fn crepus_mobile_eval_items_json(
 #[cfg(test)]
 fn reset_action_state() {
     *lock_action_state() = MobileActionState::default();
+    *lock_result_metadata() = ResultMetadata::default();
 }
 
 #[cfg(test)]
@@ -1358,6 +1652,269 @@ mod tests {
     use std::thread;
 
     #[test]
+    #[ignore = "manual release measurement of result storage"]
+    fn result_storage_measurement() {
+        let _guard = test_lock();
+        let previous = lock_view_state().clone();
+        for count in [1_000, 50_000] {
+            let rows: Vec<_> = (0..count)
+                .map(|i| format!("row-{i:08}-雪-abcdefghijklmnop"))
+                .collect();
+            let raw = serde_json::json!({"ok": true, "value": {"rows": rows}}).to_string();
+            for _ in 0..3 {
+                assert!(store_result_json(&raw));
+            }
+            let mut samples = Vec::new();
+            for _ in 0..11 {
+                let start = std::time::Instant::now();
+                for _ in 0..5 {
+                    assert!(store_result_json(std::hint::black_box(&raw)));
+                }
+                samples.push(start.elapsed().as_secs_f64() * 1_000_000.0 / 5.0);
+            }
+            samples.sort_by(f64::total_cmp);
+            assert_eq!(lock_view_state()["rows"].as_array().unwrap().len(), count);
+            println!(
+                "RESULT_STORE count={count} bytes={} median_us={:.3}",
+                raw.len(),
+                samples[5]
+            );
+        }
+        *lock_view_state() = previous;
+    }
+
+    #[test]
+    fn lexical_scope_resolves_nested_aliases_local_values_and_globals() {
+        let _guard = test_lock();
+        let previous = std::mem::replace(
+            &mut *lock_view_state(),
+            serde_json::json!({
+                "row": {"title": "global row", "secret": "global secret"},
+                "title": "global title", "global": {"name": "shared"}
+            }),
+        );
+        let scope = serde_json::json!({
+            "aliases": {
+                "row": {"title": "outer"}, "child": {"title": "inner"},
+                "number": 7, "list": ["one", {"title": "second"}],
+                "word": " A ", "empty": null,
+                "null": {"title": "collision"}, "none": {"title": "collision"},
+                "None": {"title": "collision"}, "Null": {"title": "collision"}
+            },
+            "local": {"title": "inner", "row": {"secret": "local secret"}},
+            "title": "wrapper title"
+        })
+        .to_string();
+        for (expr, expected) in [
+            ("row.title == child.title", serde_json::json!(false)),
+            ("title == child.title", serde_json::json!(true)),
+            ("title", serde_json::json!("inner")),
+            ("row", serde_json::json!({"title": "outer"})),
+            ("row.secret", serde_json::Value::Null),
+            ("global.name", serde_json::json!("shared")),
+            ("number", serde_json::json!(7)),
+            ("number.title", serde_json::Value::Null),
+            ("list", serde_json::json!(["one", {"title": "second"}])),
+            ("list.1.title", serde_json::json!("second")),
+            ("list.length", serde_json::json!(2)),
+            ("list.2", serde_json::Value::Null),
+            ("word.trim", serde_json::json!("A")),
+            ("empty", serde_json::Value::Null),
+            ("empty.title", serde_json::Value::Null),
+        ] {
+            assert_eq!(
+                resolve_expr(expr, Some("@crepus:lexical"), Some(&scope)),
+                expected,
+                "{expr}"
+            );
+        }
+        for alias in ["null", "none", "None", "Null"] {
+            for expr in [alias.to_string(), format!("{alias}.title")] {
+                assert_eq!(
+                    resolve_expr(&expr, Some("@crepus:lexical"), Some(&scope)),
+                    serde_json::Value::Null,
+                    "{expr}"
+                );
+            }
+        }
+        // The supplied map already contains the nearest binding for a shadowed alias.
+        let shadowed =
+            r#"{"aliases":{"row":{"title":"inner"},"child":{"title":"inner"}},"local":null}"#;
+        assert_eq!(
+            resolve_expr(
+                "row.title == child.title",
+                Some("@crepus:lexical"),
+                Some(shadowed)
+            ),
+            serde_json::json!(true)
+        );
+        // Ordinary scope transport remains an item rather than a lexical wrapper.
+        assert_eq!(
+            resolve_expr("row.title", Some("row"), Some(r#"{"title":"ordinary"}"#)),
+            serde_json::json!("ordinary")
+        );
+        *lock_view_state() = previous;
+    }
+
+    #[test]
+    fn malformed_lexical_scope_never_falls_back_to_global_state() {
+        let _guard = test_lock();
+        let previous = std::mem::replace(
+            &mut *lock_view_state(),
+            serde_json::json!({"title":"global", "row":{"secret":"global"}}),
+        );
+        for scope in [
+            None,
+            Some("invalid"),
+            Some("null"),
+            Some("[]"),
+            Some("{}"),
+            Some(r#"{"aliases":{},"title":"wrapper"}"#),
+            Some(r#"{"aliases":null,"local":{}}"#),
+            Some(r#"{"aliases":[],"local":{"title":"local"}}"#),
+        ] {
+            for expr in ["title", "row.secret", "aliases", "local"] {
+                assert_eq!(
+                    resolve_expr(expr, Some("@crepus:lexical"), scope),
+                    serde_json::Value::Null,
+                    "{expr}: {scope:?}"
+                );
+            }
+            assert_eq!(
+                resolve_expr("42", Some("@crepus:lexical"), scope),
+                serde_json::json!(42)
+            );
+        }
+        *lock_view_state() = previous;
+    }
+
+    #[test]
+    fn c_abi_eval_accepts_lexical_scope_without_signature_changes() {
+        let expr = "row.title == child.title";
+        let scope_name = "@crepus:lexical";
+        let scope = r#"{"aliases":{"row":{"title":"same"},"child":{"title":"same"}},"local":{"title":"local"}}"#;
+        assert!(crepus_mobile_eval_bool(
+            expr.as_ptr().cast(),
+            expr.len(),
+            scope_name.as_ptr().cast(),
+            scope_name.len(),
+            scope.as_ptr().cast(),
+            scope.len()
+        ));
+        let expr = "title";
+        let mut output = [0 as c_char; 32];
+        let written = crepus_mobile_eval_text(
+            expr.as_ptr().cast(),
+            expr.len(),
+            scope_name.as_ptr().cast(),
+            scope_name.len(),
+            scope.as_ptr().cast(),
+            scope.len(),
+            output.as_mut_ptr(),
+            output.len(),
+        );
+        assert_eq!(written, 5);
+        assert_eq!(
+            unsafe { CStr::from_ptr(output.as_ptr()) }.to_str().unwrap(),
+            "local"
+        );
+    }
+
+    #[test]
+    fn display_values_do_not_replace_collection_transport_or_comparison() {
+        let scope = serde_json::json!({
+            "yes": true, "no": false, "number": 1.5, "literal": "{keep}",
+            "items": [{"name": "one"}, {"name": "two"}], "empty": [],
+            "object": {"name": "one"}, "null_value": null,
+            "other_items": [{"name": "different"}, {"name": "two"}],
+            "other_object": {"name": "different"}
+        })
+        .to_string();
+        for (path, expected) in [
+            ("yes", "true"),
+            ("no", "false"),
+            ("number", "1.5"),
+            ("literal", "{keep}"),
+            ("items", "[2 items]"),
+            ("empty", "[0 items]"),
+            ("object", ""),
+            ("null_value", ""),
+            ("missing", ""),
+        ] {
+            assert_eq!(eval_text(path, None, Some(&scope)), expected, "{path}");
+        }
+        assert_eq!(
+            eval_text("item", Some("item"), Some(r#"{"name":"one"}"#)),
+            ""
+        );
+        let transported: serde_json::Value =
+            serde_json::from_str(&eval_items_json("items", None, Some(&scope))).unwrap();
+        assert_eq!(
+            transported,
+            serde_json::json!([{"name":"one"},{"name":"two"}])
+        );
+        assert!(!eval_bool("items == other_items", None, Some(&scope)));
+        assert!(!eval_bool("object == other_object", None, Some(&scope)));
+    }
+
+    #[test]
+    fn string_and_list_properties_match_template_values() {
+        let state = serde_json::json!({
+            "name": " A😀é ", "empty": "", "items": [{"name": "one"}, {"name": "two"}],
+            "empty_items": [], "object": {"length": "field", "upper": "also field"}
+        });
+        for (path, expected) in [
+            ("name.length", serde_json::json!(5)),
+            ("name.len", serde_json::json!(5)),
+            ("name.trim.upper", serde_json::json!("A😀É")),
+            ("name.trim.lower.length", serde_json::json!(3)),
+            ("empty.is_empty", serde_json::json!(true)),
+            ("name.empty", serde_json::json!(false)),
+            ("items.len", serde_json::json!(2)),
+            ("items.length", serde_json::json!(2)),
+            ("items.empty", serde_json::json!(false)),
+            ("empty_items.is_empty", serde_json::json!(true)),
+            ("items.1.name.upper", serde_json::json!("TWO")),
+            ("object.length", serde_json::json!("field")),
+            ("object.upper", serde_json::json!("also field")),
+        ] {
+            assert_eq!(lookup_path(path, &state), Some(expected.clone()), "{path}");
+            assert_eq!(
+                resolve_expr(path, None, Some(&state.to_string())),
+                expected,
+                "{path}"
+            );
+        }
+        for path in [
+            "missing.length",
+            "items.-1",
+            "items.2",
+            "empty_items.0",
+            "name.unknown",
+        ] {
+            assert_eq!(lookup_path(path, &state), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn null_aliases_are_literals_even_when_scope_has_matching_keys() {
+        let scope = r#"{"none":{"field":"collision"},"None":{"field":"collision"},"Null":{"field":"collision"},"object":{"None":"field"}}"#;
+        for alias in ["null", "none", "None", "Null"] {
+            assert_eq!(
+                resolve_expr(alias, Some("item"), Some(scope)),
+                serde_json::Value::Null
+            );
+            assert_eq!(eval_text(alias, Some("item"), Some(scope)), "");
+            assert!(!eval_bool(alias, Some("item"), Some(scope)));
+            assert_eq!(
+                resolve_expr(&format!("{alias}.field"), None, Some(scope)),
+                serde_json::Value::Null
+            );
+        }
+        assert_eq!(eval_text("object.None", None, Some(scope)), "field");
+    }
+
+    #[test]
     fn dispatch_action_json_mutates_state() {
         let _guard = test_lock();
         reset_action_state();
@@ -1426,6 +1983,385 @@ mod tests {
         assert_eq!(result["action"], "sync");
         assert_eq!(result["value"]["enabled"], true);
         assert_eq!(result["state"]["lastPayload"], r#"{"enabled":true}"#);
+    }
+
+    #[test]
+    fn named_control_bindings_do_not_become_request_metadata() {
+        let _guard = test_lock();
+        for bind in ["action", "kind", "payload", "capability", "method"] {
+            reset_action_state();
+            *lock_view_state() = serde_json::json!({});
+            let raw = dispatch_change_json("sync", bind, "\"plugin\"");
+            let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+            assert_eq!(result["ok"], true, "{bind}: {raw}");
+            assert_eq!(result["action"], "sync", "{bind}: {raw}");
+            let payload: serde_json::Value =
+                serde_json::from_str(result["state"]["lastPayload"].as_str().expect("payload"))
+                    .expect("payload json");
+            assert_eq!(payload[bind], "plugin");
+            assert!(store_result_json(&raw));
+            assert_eq!(eval_text(bind, None, None), "plugin", "{bind}: {raw}");
+        }
+        let raw = dispatch_change_json("unknown", "method", "\"ignored\"");
+        let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(result["ok"], false);
+        assert!(store_result_json(&raw));
+        assert_eq!(eval_text("method", None, None), "plugin");
+    }
+
+    #[test]
+    fn plugin_control_changes_keep_bindings_separate_from_plugin_results() {
+        let _guard = test_lock();
+        for bind in ["enabled", "capability", "method", "value"] {
+            reset_action_state();
+            *lock_view_state() = serde_json::json!({});
+            let raw = dispatch_change_json("device.info", bind, "true");
+            let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+            assert_eq!(result["ok"], true, "{bind}: {raw}");
+            assert_eq!(result["value"]["capability"], "device");
+            assert_eq!(result["value"]["method"], "info");
+            assert!(result["value"]["value"].is_object());
+            assert!(store_result_json(&raw));
+            assert!(eval_bool(bind, None, None), "{bind}: {raw}");
+        }
+        let raw = dispatch_change_json("device.missing", "value", "false");
+        let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(result["ok"], false);
+        assert!(result.get("bindings").is_none());
+        assert!(store_result_json(&raw));
+        assert!(eval_bool("value", None, None));
+    }
+
+    #[test]
+    fn dotted_plugin_actions_use_the_typed_request_route() {
+        let _guard = test_lock();
+        reset_action_state();
+        for action in ["device.info", "app.info"] {
+            let raw = dispatch_action_json(action);
+            let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+            assert_eq!(result["ok"], true, "{raw}");
+            assert_eq!(result["action"], action);
+            assert!(result["value"]["value"].is_object());
+        }
+        let raw = dispatch_action_json("missing.info");
+        let result: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["error"], "unsupported capability: missing");
+        let request = r#"{"action":"sync","payload":{"message":"example.com"}}"#;
+        assert_eq!(
+            parse_action_request(request)["payload"]["message"],
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn native_expressions_preserve_quoted_operators_and_decode_escapes() {
+        let _guard = test_lock();
+        for text in [
+            "a>b",
+            "a<=b",
+            "a==b",
+            "a!=b",
+            "quote \" > 🧪",
+            "line\nnext",
+            "slash\\end",
+        ] {
+            let expr = serde_json::to_string(text).unwrap();
+            assert_eq!(eval_text(&expr, None, None), text);
+            assert!(eval_bool(&format!("{expr} == {expr}"), None, None));
+            assert!(!eval_bool(&format!("{expr} != {expr}"), None, None));
+        }
+        *lock_view_state() = serde_json::json!({"title":"a>b", "count": 3});
+        assert!(eval_bool(r#"title == "a>b""#, None, None));
+        assert!(eval_bool("count >= 3", None, None));
+        assert!(!eval_bool("count < 3", None, None));
+        assert_eq!(literal_value(r#""bad\q""#), None);
+    }
+
+    #[test]
+    fn unary_negation_chains_use_bounded_stack_space() {
+        let _guard = test_lock();
+        assert!(!eval_bool("!true", None, None));
+        assert!(eval_bool("! ! true", None, None));
+        assert_eq!(eval_text("!!42", None, None), "true");
+        assert!(eval_bool("! 1 > 2", None, None));
+        let even = format!("{}true", "!".repeat(100_000));
+        assert!(eval_bool(&even, None, None));
+        assert!(!eval_bool(&format!("!{even}"), None, None));
+    }
+
+    #[test]
+    fn integer_comparisons_preserve_precision_above_double_range() {
+        let _guard = test_lock();
+        *lock_view_state() = serde_json::json!({
+            "low": 9007199254740992_i64, "high": 9007199254740993_i64,
+            "unsigned": u64::MAX, "signed": i64::MAX,
+            "text": "9007199254740993"
+        });
+        for expr in [
+            "low < high",
+            "low != high",
+            "high > low",
+            "high == text",
+            "unsigned > signed",
+            "unsigned == 18446744073709551615",
+            "-9223372036854775808 < signed",
+            "1.5 < 2.0",
+        ] {
+            assert!(eval_bool(expr, None, None), "{expr}");
+        }
+        for expr in ["low == high", "high <= low", "unsigned == signed"] {
+            assert!(!eval_bool(expr, None, None), "{expr}");
+        }
+    }
+
+    #[test]
+    fn mixed_numeric_comparisons_do_not_round_integer_operands() {
+        let _guard = test_lock();
+        for expr in [
+            "9007199254740993 > 9007199254740992.0",
+            "9007199254740992.0 < 9007199254740993",
+            "18446744073709551615 < 18446744073709551616.0",
+            "-9223372036854775807 > -9223372036854775808.0",
+            "1 < 1.5",
+            "-1 > -1.5",
+            "1 == 1.0",
+            "0 == -0.0",
+        ] {
+            assert!(eval_bool(expr, None, None), "{expr}");
+        }
+        assert!(!eval_bool(
+            "9007199254740993 == 9007199254740992.0",
+            None,
+            None
+        ));
+        assert_eq!(
+            compare_integer_float(i128::MAX, -(i128::MIN as f64)),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_integer_float(i128::MIN, i128::MIN as f64),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(compare_integer_float(0, f64::NAN), None);
+        assert_eq!(
+            compare_integer_float(0, f64::INFINITY),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_integer_float(0, f64::NEG_INFINITY),
+            Some(std::cmp::Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn result_decoding_preserves_floating_point_boundary_values() {
+        let _guard = test_lock();
+        let expected = -9.223372036854775e18_f64;
+        assert!(store_result_json(
+            r#"{"value":{"decimal":-9.223372036854775e18,"integer":-9223372036854775808}}"#
+        ));
+        assert_eq!(
+            eval_number("decimal", None, None).to_bits(),
+            expected.to_bits()
+        );
+        assert!(eval_bool("integer < decimal", None, None));
+    }
+
+    #[test]
+    fn numeric_model_reads_reject_nonfinite_strings() {
+        let _guard = test_lock();
+        for text in ["NaN", "inf", "-inf", "1e309"] {
+            *lock_view_state() = serde_json::json!({ "number": text });
+            assert_eq!(eval_number("number", None, None), 0.0, "{text}");
+        }
+        *lock_view_state() = serde_json::json!({ "number": "0.125" });
+        assert_eq!(eval_number("number", None, None), 0.125);
+        *lock_view_state() = serde_json::json!({ "number": 1e100 });
+        assert_eq!(eval_number("number", None, None), 1e100);
+    }
+
+    #[test]
+    fn rejected_results_record_errors_without_applying_model_fields() {
+        let _guard = test_lock();
+        reset_action_state();
+        *lock_view_state() = serde_json::json!({"enabled":true,"title":"kept"});
+        let raw = r#"{"ok":false,"error":"rejected","value":{"enabled":false},"bindings":{"title":"lost"}}"#;
+        assert!(store_result_json(raw));
+        assert!(eval_bool("enabled", None, None));
+        assert_eq!(eval_text("title", None, None), "kept");
+        let state = lock_result_metadata();
+        assert_eq!(state.last_error.as_deref(), Some("rejected"));
+        assert_eq!(state.last_result, raw);
+        drop(state);
+        for (raw, expected) in [
+            (r#" { "ok": false } "#, Some(r#" { "ok": false } "#)),
+            (
+                r#"{"ok":false,"error":5}"#,
+                Some(r#"{"ok":false,"error":5}"#),
+            ),
+            (r#"{"ok":false,"error":""}"#, Some("")),
+            (r#"{"ok":true,"error":"ignored"}"#, None),
+            (r#"{}"#, None),
+        ] {
+            assert_eq!(parse_action_error(raw).as_deref(), expected);
+            assert!(store_result_json(raw));
+            let metadata = lock_result_metadata();
+            assert_eq!(metadata.last_error.as_deref(), expected);
+            assert_eq!(metadata.last_result, raw);
+        }
+        assert_eq!(parse_action_error("not json"), None);
+        assert!(store_result_json(r#"{"value":{"title":"legacy"}}"#));
+        assert_eq!(eval_text("title", None, None), "legacy");
+    }
+
+    #[test]
+    fn dispatch_diagnostics_recover_without_publishing_unhandled_requests() {
+        let _guard = test_lock();
+        reset_action_state();
+        let failed = dispatch_action_json("missing.info");
+        {
+            let metadata = lock_result_metadata();
+            assert_eq!(metadata.last_result, failed);
+            assert_eq!(
+                metadata.last_error.as_deref(),
+                Some("unsupported capability: missing")
+            );
+        }
+        let successful = dispatch_action_json("sync");
+        dispatch_action_json("unknown");
+        dispatch_change_json("sync", "enabled", "invalid json");
+        assert!(!store_result_json("invalid json"));
+        let metadata = lock_result_metadata();
+        assert_eq!(metadata.last_result, successful);
+        assert_eq!(metadata.last_error, None);
+    }
+
+    #[test]
+    fn result_sink_and_diagnostics_do_not_wait_for_running_handler() {
+        let _guard = test_lock();
+        reset_action_state();
+        *lock_view_state() = serde_json::json!({"enabled":true});
+        let handler = lock_action_state();
+        let (completed, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let read = |ptr: *mut c_char| {
+                assert!(!ptr.is_null());
+                let text = unsafe { CStr::from_ptr(ptr) }
+                    .to_string_lossy()
+                    .into_owned();
+                unsafe { crepus_mobile_free_string(ptr) };
+                text
+            };
+            let success = r#"{"ok":true,"value":{"enabled":false}}"#;
+            assert!(store_result_json(success));
+            assert_eq!(read(crepus_mobile_last_result()), success);
+            assert_eq!(read(crepus_mobile_last_error()), "");
+            assert!(!eval_bool("enabled", None, None));
+            let rejected = r#"{"ok":false,"error":"rejected","value":{"enabled":true}}"#;
+            assert!(store_result_json(rejected));
+            assert_eq!(read(crepus_mobile_last_result()), rejected);
+            assert_eq!(read(crepus_mobile_last_error()), "rejected");
+            assert!(!eval_bool("enabled", None, None));
+            let invalid = r#"{"ok":true,"bindings":{"enabled.child":true}}"#;
+            assert!(!store_result_json(invalid));
+            assert_eq!(read(crepus_mobile_last_result()), invalid);
+            assert!(read(crepus_mobile_last_error()).contains("cannot traverse scalar"));
+            assert!(!eval_bool("enabled", None, None));
+            completed.send(()).unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(5));
+        // Release before assertions/join so a regressed worker cannot stay blocked.
+        drop(handler);
+        worker.join().expect("result worker panicked");
+        result.expect("result sink waited for handler lock");
+    }
+
+    #[test]
+    fn malformed_result_statuses_cannot_apply_model_updates() {
+        let _guard = test_lock();
+        for status in [
+            serde_json::json!("false"),
+            serde_json::json!(0),
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            reset_action_state();
+            *lock_view_state() = serde_json::json!({"enabled":true});
+            let raw=serde_json::json!({"ok":status,"value":{"enabled":false},"bindings":{"enabled":false}}).to_string();
+            assert!(!store_result_json(&raw), "{raw}");
+            assert!(eval_bool("enabled", None, None), "{raw}");
+            let state = lock_result_metadata();
+            assert_eq!(
+                state.last_error.as_deref(),
+                Some("result.ok must be a boolean")
+            );
+            assert_eq!(state.last_result, raw);
+        }
+    }
+
+    #[test]
+    fn dotted_bindings_update_nested_objects_and_existing_array_items() {
+        let _guard = test_lock();
+        *lock_view_state() = serde_json::json!({"settings":{"theme":"dark","enabled":false},"items":[{"enabled":false,"id":42}]});
+        let raw = dispatch_change_json("", "settings.enabled", "true");
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["ok"]
+                .as_bool()
+                .unwrap()
+        );
+        assert!(eval_bool("settings.enabled", None, None));
+        assert_eq!(eval_text("settings.theme", None, None), "dark");
+        let raw = dispatch_change_json("sync", "items.0.enabled", "true");
+        assert!(store_result_json(&raw));
+        assert!(eval_bool("items.0.enabled", None, None));
+        assert_eq!(eval_number("items.0.id", None, None), 42.0);
+        assert!(lock_view_state().get("settings.enabled").is_none());
+        assert!(store_result_json(
+            r#"{"bindings":{"new.branch.title":"created"}}"#
+        ));
+        assert_eq!(eval_text("new.branch.title", None, None), "created");
+        let path = std::iter::repeat_n("child", 126)
+            .collect::<Vec<_>>()
+            .join(".");
+        let raw = dispatch_change_json("", &path, "true");
+        assert!(store_result_json(&raw));
+        assert!(eval_bool(&path, None, None));
+    }
+
+    #[test]
+    fn invalid_binding_paths_do_not_partially_update_state() {
+        let _guard = test_lock();
+        let original = serde_json::json!({"items":[{"id":42}],"enabled":true});
+        *lock_view_state() = original.clone();
+        let raw = r#"{"ok":true,"value":{"enabled":false},"bindings":{"items.999.id":0}}"#;
+        assert!(!store_result_json(raw));
+        assert_eq!(*lock_view_state(), original);
+        for path in ["items.bad.id", "items.999.id", "new.branch.items.0.child"] {
+            let raw = serde_json::json!({
+                "value": {"enabled": false},
+                "bindings": {path: true, "items.bad.id": false}
+            })
+            .to_string();
+            assert!(!store_result_json(&raw), "{path}");
+            assert_eq!(*lock_view_state(), original, "{path}");
+        }
+        let raw = dispatch_change_json("", "enabled.child", "true");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["ok"],
+            false
+        );
+        assert_eq!(*lock_view_state(), original);
+        let path = std::iter::repeat_n("child", 127)
+            .collect::<Vec<_>>()
+            .join(".");
+        let raw = dispatch_change_json("", &path, "true");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["ok"],
+            false
+        );
+        assert_eq!(*lock_view_state(), original);
     }
 
     #[test]
@@ -1629,6 +2565,54 @@ mod tests {
     }
 
     #[test]
+    fn owned_action_results_preserve_large_values_without_replaying_mutations() {
+        let _guard = test_lock();
+        reset_action_state();
+        fn take(pointer: *mut c_char) -> serde_json::Value {
+            assert!(!pointer.is_null());
+            let result = unsafe { CStr::from_ptr(pointer) }
+                .to_str()
+                .unwrap()
+                .to_owned();
+            unsafe { crepus_mobile_free_string(pointer) };
+            serde_json::from_str(&result).unwrap()
+        }
+        let large = "雪\0😀".repeat(6000);
+        let action =
+            serde_json::json!({"action": "sync", "payload": {"message": large}}).to_string();
+        let first = take(crepus_mobile_dispatch_json_owned(
+            action.as_ptr().cast(),
+            action.len(),
+        ));
+        assert_eq!(first["ok"], true);
+        assert_eq!(first["value"]["message"], large);
+        assert_eq!(first["state"]["syncCount"], 1);
+        let value = serde_json::to_string(&large).unwrap();
+        let changed = take(crepus_mobile_dispatch_change_json_owned(
+            b"sync".as_ptr().cast(),
+            4,
+            b"title".as_ptr().cast(),
+            5,
+            value.as_ptr().cast(),
+            value.len(),
+        ));
+        assert_eq!(changed["ok"], true);
+        assert_eq!(changed["value"]["title"], large);
+        assert_eq!(changed["state"]["syncCount"], 2);
+        let invalid = take(crepus_mobile_dispatch_change_json_owned(
+            b"sync".as_ptr().cast(),
+            4,
+            std::ptr::null(),
+            0,
+            value.as_ptr().cast(),
+            value.len(),
+        ));
+        assert_eq!(invalid["error"], "invalid bind pointer");
+        assert_eq!(lock_action_state().sync_count, 2);
+        reset_action_state();
+    }
+
+    #[test]
     fn c_abi_accepts_len_prefixed_action() {
         let _guard = test_lock();
         reset_action_state();
@@ -1652,5 +2636,94 @@ mod tests {
         let _guard = test_lock();
         reset_action_state();
         assert!(!dispatch_action("missing"));
+    }
+    #[test]
+    fn single_result_field_preserves_unrelated_collection_allocations() {
+        let _guard = test_lock();
+        for raw in [
+            r#"{"value":{"title":"updated"}}"#,
+            r#"{"value":{},"bindings":{"title":"updated"}}"#,
+            r#"{"value":{"title":"updated"},"bindings":{}}"#,
+            r#"{"bindings":{"new.branch.title":"updated"}}"#,
+        ] {
+            *lock_view_state() =
+                serde_json::json!({"large":[{"payload":"x".repeat(16_384)}],"title":"old"});
+            let pointers = || {
+                let state = lock_view_state();
+                (
+                    state["large"].as_array().unwrap().as_ptr() as usize,
+                    state["large"][0]["payload"].as_str().unwrap().as_ptr() as usize,
+                )
+            };
+            let before = pointers();
+            assert!(store_result_json(raw));
+            assert_eq!(pointers(), before, "{raw}");
+            let title = if raw.contains("new.branch") {
+                "new.branch.title"
+            } else {
+                "title"
+            };
+            assert_eq!(eval_text(title, None, None), "updated");
+        }
+    }
+
+    #[test]
+    fn single_invalid_result_path_preserves_state_and_records_error() {
+        let _guard = test_lock();
+        let original = serde_json::json!({"items":[{"id":42}],"enabled":true});
+        for path in [
+            "items.bad.id".to_owned(),
+            "items.999.id".to_owned(),
+            "enabled.child".to_owned(),
+            std::iter::repeat_n("child", 127)
+                .collect::<Vec<_>>()
+                .join("."),
+        ] {
+            *lock_view_state() = original.clone();
+            let raw = serde_json::json!({"bindings": {path: false}}).to_string();
+            assert!(!store_result_json(&raw));
+            assert_eq!(*lock_view_state(), original);
+            let metadata = lock_result_metadata();
+            assert_eq!(metadata.last_result, raw);
+            assert!(metadata.last_error.is_some());
+        }
+    }
+
+    #[test]
+    fn multiple_overlapping_result_fields_keep_atomic_rollback() {
+        let _guard = test_lock();
+        let original = serde_json::json!({"items":[{"id":42}],"title":"old"});
+        for raw in [
+            r#"{"value":{"items":false},"bindings":{"items.0.id":3}}"#,
+            r#"{"value":{"title":"changed"},"bindings":{"items.99.id":3}}"#,
+        ] {
+            *lock_view_state() = original.clone();
+            assert!(!store_result_json(raw));
+            assert_eq!(*lock_view_state(), original);
+        }
+        assert!(store_result_json(
+            r#"{"value":{"title":"first"},"bindings":{"title":"second"}}"#
+        ));
+        assert_eq!(eval_text("title", None, None), "second");
+    }
+
+    #[test]
+    fn empty_result_maps_and_nonobject_state_keep_existing_behavior() {
+        let _guard = test_lock();
+        *lock_view_state() = serde_json::json!(42);
+        let path = std::iter::repeat_n("child", 127)
+            .collect::<Vec<_>>()
+            .join(".");
+        assert!(!store_result_json(
+            &serde_json::json!({"bindings": {path: true}}).to_string()
+        ));
+        assert_eq!(*lock_view_state(), serde_json::json!(42));
+        assert!(store_result_json(r#"{"value":1,"bindings":null}"#));
+        assert_eq!(*lock_view_state(), serde_json::json!(42));
+        assert!(store_result_json(r#"{"value":{},"bindings":{}}"#));
+        assert_eq!(*lock_view_state(), serde_json::json!({}));
+        *lock_view_state() = serde_json::json!(42);
+        assert!(store_result_json(r#"{"bindings":{"title":"created"}}"#));
+        assert_eq!(*lock_view_state(), serde_json::json!({"title":"created"}));
     }
 }

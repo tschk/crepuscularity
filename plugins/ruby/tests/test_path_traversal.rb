@@ -43,4 +43,18 @@ class TestCrepuscularityPluginSecurity < Minitest::Test
     ir = CrepuscularityPlugin.render_ir(valid_file, { "count" => "1" })
     assert ir.root
   end
+
+  def test_filesystem_root_allows_nested_templates
+    fixture = File.expand_path("../fixtures/interactive.crepus", __dir__)
+    Dir.chdir(File::SEPARATOR) do
+      assert_equal 7, CrepuscularityPlugin.render_ir(fixture).version
+    end
+  end
+
+  def test_context_render_preserves_frontend_filename
+    fixture = File.expand_path("../../fixtures/frontend.svelte", __dir__)
+    text = CrepuscularityPlugin.render_ir(fixture, { "name" => "Ada" }).root.to_s
+    assert_includes text, "Frontend content"
+    refute_includes text, "ignored"
+  end
 end

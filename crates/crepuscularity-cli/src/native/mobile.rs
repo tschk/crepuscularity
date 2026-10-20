@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,13 +9,16 @@ use std::time::{Duration, Instant};
 use console::style;
 use crepuscularity_core::context::TemplateContext;
 use crepuscularity_native::{
-    host, plan_hot_reload, render_template_to_ir, to_json, HotReloadEnvelope, HotReloadMessage,
+    diff_ir, generate_native_source, host, plan_hot_reload_with_path,
+    render_template_to_ir_with_path, to_json, to_json_pretty, HotReloadEnvelope, HotReloadMessage,
+    NativeCodegenTarget, ViewIr,
 };
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 
 use super::build::IosBuildTarget;
 use super::ir::{
-    load_json_ctx, parse_var_value, resolve_template_path, CodegenArgs, CodegenPlatform, SyncArgs,
+    default_fixture_output_paths, load_json_ctx, parse_var_value, resolve_template_path,
+    CodegenArgs, CodegenPlatform, SyncArgs,
 };
 use super::{execute, prepend_kotlin_package};
 use crate::cli::{
@@ -163,9 +166,27 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
     }
 }
 
+fn jni_package_component(name: &str) -> String {
+    let mut encoded = String::new();
+    for unit in name.encode_utf16() {
+        match unit {
+            0x30..=0x39 | 0x41..=0x5a | 0x61..=0x7a => {
+                encoded.push(char::from_u32(u32::from(unit)).unwrap())
+            }
+            0x5f => encoded.push_str("_1"),
+            _ => encoded.push_str(&format!("_0{unit:04x}")),
+        }
+    }
+    encoded
+}
+
 pub fn scaffold_mobile_app(name: &str) {
-    let name_snake = name.replace(['-', ' '], "_");
-    let name_pascal: String = name
+    let app_name = Path::new(name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_else(|| ui::error("mobile destination must end in an app name"));
+    let name_snake = app_name.replace(['-', ' '], "_");
+    let name_pascal: String = app_name
         .split(['-', '_', ' '])
         .map(|part| {
             let mut chars = part.chars();
@@ -214,7 +235,7 @@ pub fn scaffold_mobile_app(name: &str) {
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
     let r_2 = format!("dev.crepuscularity.{name_snake}");
-    let r_3 = format!("dev_crepuscularity_{name_snake}");
+    let r_3 = format!("dev_crepuscularity_{}", jni_package_component(&name_snake));
     let r_4 = format!("{name_pascal}App");
 
     let patterns = &[
@@ -333,7 +354,7 @@ pub fn run_codegen_full(
         } else {
             default_out
         };
-        let _ = execute(NativeCommands::Codegen {
+        execute(NativeCommands::Codegen {
             args: CodegenArgs {
                 template: Some(template_path.clone()),
                 platform: Some(plat_arg),
@@ -343,7 +364,7 @@ pub fn run_codegen_full(
                 ctx: None,
                 vars: vars.to_vec(),
             },
-        });
+        })?;
         if plat == MobilePlatform::Android {
             prepend_kotlin_package(&out_dir.join(format!("{view_name}.kt")));
         }
@@ -444,10 +465,11 @@ pub fn run_dev(args: MobileDevArgs) -> Result<(), CrepusCliError> {
 
     let initial_template = fs::read_to_string(&template_path)
         .map_err(|e| CrepusCliError::io(e, template_path.clone()))?;
-    let ir = render_template_to_ir(&initial_template, &ctx)
+    let ir = render_template_to_ir_with_path(&initial_template, &ctx, Some(&template_path))
         .map_err(|e| CrepusCliError::context(e.to_string()))?;
     let ir_json =
         to_json(&ir).map_err(|e| CrepusCliError::context(format!("serialize IR: {e}")))?;
+    sync_outputs(&root, &ir, args.platform)?;
     let event = HotReloadEnvelope {
         sequence: 0,
         message: HotReloadMessage::FullReload {
@@ -466,7 +488,6 @@ pub fn run_dev(args: MobileDevArgs) -> Result<(), CrepusCliError> {
         last_event: RwLock::new(event),
     });
 
-    sync_outputs(&root, &template_path, args.platform);
     start_mobile_watcher(root.clone(), state.clone());
 
     let addr = format!("127.0.0.1:{}", args.port);
@@ -498,11 +519,13 @@ pub fn run_dev(args: MobileDevArgs) -> Result<(), CrepusCliError> {
 pub fn start_mobile_watcher(root: PathBuf, state: Arc<MobileDevState>) {
     let (tx, rx) = mpsc::channel::<PathBuf>();
     let watch_root = root.join("views");
+    let watched_template = state.template_path.clone();
+    let template_dir = watched_template.parent().unwrap_or(&root).to_path_buf();
     std::thread::spawn(move || {
         let mut watcher =
             notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(event) => {
-                    if is_template_event(&event) {
+                    if is_template_event(&event, &watched_template) {
                         for path in event.paths {
                             let _ = tx.send(path);
                         }
@@ -512,6 +535,9 @@ pub fn start_mobile_watcher(root: PathBuf, state: Arc<MobileDevState>) {
             })
             .expect("crepus mobile dev: cannot create file watcher");
         let _ = watcher.watch(&watch_root, RecursiveMode::Recursive);
+        if !template_dir.starts_with(&watch_root) {
+            let _ = watcher.watch(&template_dir, RecursiveMode::Recursive);
+        }
         loop {
             std::thread::sleep(Duration::from_secs(3600));
         }
@@ -548,7 +574,11 @@ pub fn refresh_mobile_state(state: &MobileDevState) {
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let rendered_ir = match render_template_to_ir(&new_template, &state.ctx) {
+    let rendered_ir = match render_template_to_ir_with_path(
+        &new_template,
+        &state.ctx,
+        Some(&state.template_path),
+    ) {
         Ok(ir) => ir,
         Err(e) => {
             store_event(
@@ -560,7 +590,40 @@ pub fn refresh_mobile_state(state: &MobileDevState) {
             return;
         }
     };
-    let message = plan_hot_reload(&old_template, &new_template, &state.ctx);
+    let message = plan_hot_reload_with_path(
+        &old_template,
+        &new_template,
+        &state.ctx,
+        Some(&state.template_path),
+    );
+    let message = match message {
+        HotReloadMessage::Noop | HotReloadMessage::Patch { .. } => {
+            // Historical source now resolves current includes; diff the actual last-good output.
+            let previous = state
+                .last_ir_json
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match serde_json::from_str::<ViewIr>(&previous) {
+                Ok(ir) if ir.version == rendered_ir.version => {
+                    let mutations = diff_ir(&ir, &rendered_ir);
+                    if mutations.is_empty() {
+                        HotReloadMessage::Noop
+                    } else {
+                        HotReloadMessage::Patch { mutations }
+                    }
+                }
+                _ => HotReloadMessage::FullReload {
+                    ir: rendered_ir.clone(),
+                    reason: "previous IR unavailable or incompatible".into(),
+                },
+            }
+        }
+        HotReloadMessage::FullReload { reason, .. } => HotReloadMessage::FullReload {
+            ir: rendered_ir.clone(),
+            reason,
+        },
+        other => other,
+    };
     match &message {
         HotReloadMessage::Patch { .. } | HotReloadMessage::FullReload { .. } => {
             if let Ok(json) = to_json(&rendered_ir) {
@@ -572,7 +635,9 @@ pub fn refresh_mobile_state(state: &MobileDevState) {
                     .last_template
                     .write()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = new_template;
-                sync_outputs(&state.root, &state.template_path, state.platform);
+                if let Err(error) = sync_outputs(&state.root, &rendered_ir, state.platform) {
+                    eprintln!("mobile output sync failed: {error}");
+                }
             }
         }
         _ => {}
@@ -593,9 +658,16 @@ pub fn handle_mobile_dev_stream(
     stream: &mut TcpStream,
     state: &MobileDevState,
 ) -> std::io::Result<()> {
-    let mut buf = [0; 4096];
-    let n = stream.read(&mut buf)?;
-    let req = String::from_utf8_lossy(&buf[..n]);
+    let mut buf = Vec::new();
+    BufReader::new(&mut *stream)
+        .take(4097)
+        .read_until(b'\n', &mut buf)?;
+    if buf.len() > 4096 || !buf.ends_with(b"\n") {
+        return stream.write_all(
+            http_response("400 Bad Request", "text/plain", "invalid request line").as_bytes(),
+        );
+    }
+    let req = String::from_utf8_lossy(&buf);
     let path = req
         .lines()
         .next()
@@ -645,62 +717,162 @@ pub fn http_response(status: &str, content_type: &str, body: &str) -> String {
     )
 }
 
-pub fn sync_outputs(root: &Path, template_path: &Path, platform: MobilePlatform) {
-    let rel = template_path
-        .strip_prefix(root)
-        .unwrap_or(template_path)
-        .to_path_buf();
-    let _ = execute(NativeCommands::Sync {
-        args: SyncArgs {
-            template: rel,
-            dir: root.to_path_buf(),
-            out: Vec::new(),
-            no_defaults: false,
-            component: None,
-            ctx: None,
-            vars: Vec::new(),
-            pretty: true,
-        },
-    });
-    let tpl = template_path.to_path_buf();
+pub fn sync_outputs(
+    root: &Path,
+    ir: &ViewIr,
+    platform: MobilePlatform,
+) -> Result<(), CrepusCliError> {
+    let mut json = to_json_pretty(ir).map_err(|e| CrepusCliError::context(e.to_string()))?;
+    json.push('\n');
+    let mut outputs: Vec<_> = default_fixture_output_paths(root)
+        .into_iter()
+        .filter(|path| path.parent().is_some_and(Path::exists))
+        .map(|path| (path, json.clone()))
+        .collect();
     if matches!(platform, MobilePlatform::Ios | MobilePlatform::All) {
-        let out = root.join("ios/Sources/NativeShell/Generated");
-        let _ = execute(NativeCommands::Codegen {
-            args: CodegenArgs {
-                template: Some(tpl.clone()),
-                platform: Some(CodegenPlatform::SwiftUi),
-                out: Some(out),
-                view_name: Some("CrepusGeneratedView".into()),
-                component: None,
-                ctx: None,
-                vars: Vec::new(),
-            },
-        });
+        outputs.push((
+            root.join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift"),
+            generate_native_source(ir, NativeCodegenTarget::SwiftUi, "CrepusGeneratedView"),
+        ));
     }
     if matches!(platform, MobilePlatform::Android | MobilePlatform::All) {
-        let out_dir =
-            root.join("android/app/src/main/java/dev/crepuscularity/nativeshell/generated");
-        let _ = execute(NativeCommands::Codegen {
-            args: CodegenArgs {
-                template: Some(tpl),
-                platform: Some(CodegenPlatform::Compose),
-                out: Some(out_dir.clone()),
-                view_name: Some("CrepusGeneratedView".into()),
-                component: None,
-                ctx: None,
-                vars: Vec::new(),
-            },
-        });
-        prepend_kotlin_package(&out_dir.join("CrepusGeneratedView.kt"));
+        outputs.push((
+            root.join("android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt"),
+            format!("package dev.crepuscularity.nativeshell\n\n{}", generate_native_source(ir, NativeCodegenTarget::Compose, "CrepusGeneratedView")),
+        ));
     }
+    for (path, mut source) in outputs {
+        if !source.ends_with('\n') {
+            source.push('\n');
+        }
+        if fs::read_to_string(&path).is_ok_and(|existing| existing == source) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| CrepusCliError::io(e, parent.to_path_buf()))?;
+        }
+        fs::write(&path, source).map_err(|e| CrepusCliError::io(e, path))?;
+    }
+    Ok(())
 }
 
-pub fn is_template_event(event: &Event) -> bool {
+pub fn is_template_event(event: &Event, template_path: &Path) -> bool {
     matches!(
         event.kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-    ) && event
-        .paths
-        .iter()
-        .any(|path| path.extension().and_then(|e| e.to_str()) == Some("crepus"))
+    ) && event.paths.iter().any(|path| {
+        path == template_path
+            || path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "crepus" | "vue" | "svelte" | "astro" | "csx" | "jsx" | "tsx" | "ng"
+                    )
+                })
+            || path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    let name = name.to_ascii_lowercase();
+                    name.ends_with(".ng.html") || name.ends_with(".component.html")
+                })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jni_package_names_escape_source_identifiers() {
+        for (source, expected) in [
+            ("phone", "phone"),
+            ("phone_app", "phone_1app"),
+            ("éclair", "_000e9clair"),
+            ("𐐀", "_0d801_0dc00"),
+        ] {
+            assert_eq!(jni_package_component(source), expected);
+        }
+    }
+
+    #[test]
+    fn watcher_selects_the_template_regardless_of_extension() {
+        let path = PathBuf::from("views/Page.astro");
+        let event =
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(path.clone());
+        assert!(is_template_event(&event, &path));
+        let unrelated = Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+            .add_path(PathBuf::from("views/notes.txt"));
+        assert!(!is_template_event(&unrelated, &path));
+        let dependency = Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+            .add_path(PathBuf::from("views/part.crepus"));
+        assert!(is_template_event(&dependency, &path));
+    }
+
+    #[test]
+    fn watcher_selects_all_named_frontend_dependencies() {
+        for kind in [
+            EventKind::Create(notify::event::CreateKind::Any),
+            EventKind::Modify(notify::event::ModifyKind::Any),
+            EventKind::Remove(notify::event::RemoveKind::Any),
+        ] {
+            for name in [
+                "Part.crepus",
+                "Part.vue",
+                "Part.svelte",
+                "Part.astro",
+                "Part.csx",
+                "Part.jsx",
+                "Part.tsx",
+                "Part.ng",
+                "Part.ng.html",
+                "Part.component.html",
+            ] {
+                for name in [name.to_owned(), name.to_ascii_uppercase()] {
+                    let event = Event::new(kind).add_path(PathBuf::from("views").join(&name));
+                    assert!(
+                        is_template_event(&event, Path::new("views/main.crepus")),
+                        "{name}: {kind:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reload_keeps_the_selected_frontend_in_ir_and_events() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Page.astro");
+        let initial = "---\nconst title = \"ignored\";\n---\n<h1>Initial</h1>";
+        let changed = "---\nconst title = \"ignored\";\n---\n<h1>Reloaded</h1>";
+        let ctx = TemplateContext::new();
+        let ir = crepuscularity_native::render_template_to_ir_with_path(initial, &ctx, Some(&path))
+            .unwrap();
+        let state = MobileDevState {
+            sequence: AtomicU64::new(0),
+            root: root.path().to_owned(),
+            platform: MobilePlatform::All,
+            template_path: path.clone(),
+            ctx,
+            last_template: RwLock::new(initial.to_owned()),
+            last_ir_json: RwLock::new(to_json(&ir).unwrap()),
+            last_event: RwLock::new(HotReloadEnvelope {
+                sequence: 0,
+                message: HotReloadMessage::FullReload {
+                    ir,
+                    reason: "initial".to_owned(),
+                },
+            }),
+        };
+        fs::write(&path, changed).unwrap();
+        refresh_mobile_state(&state);
+        let rendered = state.last_ir_json.read().unwrap();
+        assert!(rendered.contains("Reloaded"), "{rendered}");
+        assert!(!rendered.contains("ignored"), "{rendered}");
+        let event = serde_json::to_string(&*state.last_event.read().unwrap()).unwrap();
+        assert!(event.contains("Reloaded"), "{event}");
+        assert!(!event.contains("ignored"), "{event}");
+    }
 }

@@ -38,14 +38,20 @@ pub fn execute(
         let Some((k, v)) = raw.split_once('=') else {
             ui::error(&format!("--bool expects key=true|false, got: {raw}"));
         };
-        let val = v.parse::<bool>().unwrap_or(false);
+        let val = v.parse::<bool>().unwrap_or_else(|_| {
+            ui::error(&format!("--bool expects key=true|false, got: {raw}"));
+        });
         ctx_vars.push((k.to_string(), TemplateValue::Bool(val)));
     }
     for raw in ints {
         let Some((k, v)) = raw.split_once('=') else {
             ui::error(&format!("--int expects key=N, got: {raw}"));
         };
-        let val = v.parse::<i64>().unwrap_or(0);
+        let val = v.parse::<i64>().unwrap_or_else(|_| {
+            ui::error(&format!(
+                "--int expects key=N with a signed 64-bit integer, got: {raw}"
+            ));
+        });
         ctx_vars.push((k.to_string(), TemplateValue::Int(val)));
     }
 
@@ -79,6 +85,7 @@ fn dump_ast(source: &str, path: &Path) {
 
 fn dump_html(source: &str, path: &Path, vars: &[(String, TemplateValue)]) {
     let mut ctx = TemplateContext::new();
+    ctx.base_dir = path.parent().map(Path::to_path_buf);
     for (k, v) in vars {
         ctx.set(k, v.clone());
     }
@@ -93,11 +100,40 @@ fn dump_html(source: &str, path: &Path, vars: &[(String, TemplateValue)]) {
 
 fn dump_ir(source: &str, path: &Path, vars: &[(String, TemplateValue)]) {
     let mut ctx = TemplateContext::new();
+    ctx.base_dir = path.parent().map(Path::to_path_buf);
     for (k, v) in vars {
         ctx.set(k, v.clone());
     }
     let component = path.file_stem().and_then(|s| s.to_str()).unwrap_or("root");
-    match crepuscularity_native::render_component_file_to_ir(source, component, &ctx) {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let markup_frontend = matches!(extension.as_str(), "vue" | "svelte" | "astro" | "ng")
+        || filename.ends_with(".component.html")
+        || filename.ends_with(".ng.html")
+        || crepuscularity_core::parser::is_jsx_mode(source, Some(path));
+    // Section delimiters are DSL syntax; markup may contain them as literal text.
+    let named_component = if markup_frontend {
+        Ok(false)
+    } else {
+        crepuscularity_core::parser::parse_component_file(source)
+            .map(|file| !file.components.is_empty())
+    };
+    let result = named_component.and_then(|named| {
+        if named {
+            crepuscularity_native::render_component_file_to_ir(source, component, &ctx)
+        } else {
+            crepuscularity_native::render_template_to_ir_with_path(source, &ctx, Some(path))
+        }
+    });
+    match result {
         Ok(ir) => match crepuscularity_native::to_json_pretty(&ir) {
             Ok(json) => print!("{json}"),
             Err(e) => ui::error(&format!("IR serialization error: {e}")),

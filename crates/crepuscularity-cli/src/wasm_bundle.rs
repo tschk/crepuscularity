@@ -5,41 +5,59 @@ use std::process::Command;
 
 use crate::build_options::{BuildOptions, OptimizationLevel};
 
-/// Locate the first `*.wasm` artifact in a release directory (ignores `.d.wasm`).
-pub fn find_wasm_file(dir: &Path) -> Option<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return None;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().map(|e| e == "wasm").unwrap_or(false)
-            && !p
-                .file_name()
-                .map(|n| n.to_string_lossy().ends_with(".d.wasm"))
-                .unwrap_or(false)
-        {
-            return Some(p);
-        }
+/// Locate the runtime library artifact, never an unrelated file in the target directory.
+pub fn find_wasm_file(dir: &Path, runtime_dir: &Path) -> Option<PathBuf> {
+    let source = std::fs::read_to_string(runtime_dir.join("Cargo.toml")).ok()?;
+    let manifest: toml::Value = toml::from_str(&source).ok()?;
+    let name = manifest
+        .get("lib")
+        .and_then(|lib| lib.get("name"))
+        .and_then(toml::Value::as_str)
+        .or_else(|| manifest.get("package")?.get("name")?.as_str())?;
+    let artifact = dir.join(format!("{}.wasm", name.replace('-', "_")));
+    artifact.is_file().then_some(artifact)
+}
+
+/// Ask Cargo where this runtime writes artifacts, including workspace/config overrides.
+pub fn wasm_profile_dir(runtime_dir: &Path, options: BuildOptions) -> Result<PathBuf, String> {
+    let mut cmd = Command::new(cargo_executable());
+    prepend_rustup_bin_to_path(&mut cmd);
+    // Match cargo_build_wasm32's environment policy.
+    cmd.env_remove("CARGO_TARGET_DIR");
+    let output = cmd
+        .args([
+            "metadata",
+            "--no-deps",
+            "--offline",
+            "--format-version",
+            "1",
+        ])
+        .current_dir(runtime_dir)
+        .output()
+        .map_err(|error| format!("cargo metadata: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
-    None
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("cargo metadata JSON: {error}"))?;
+    let target = metadata
+        .get("target_directory")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("cargo metadata omitted target_directory")?;
+    Ok(Path::new(target)
+        .join("wasm32-unknown-unknown")
+        .join(options.cargo_profile()))
 }
 
-pub fn wasm_profile_dirs(
-    app_path: &Path,
-    runtime_dir: &Path,
-    options: BuildOptions,
-) -> (PathBuf, PathBuf) {
-    let profile = options.cargo_profile();
-    let workspace_target = app_path.join("target/wasm32-unknown-unknown").join(profile);
-    let local_target = runtime_dir
-        .join("target/wasm32-unknown-unknown")
-        .join(profile);
-    (workspace_target, local_target)
-}
-
-/// `~/.cargo/bin` when present — must be **before** Homebrew `/opt/homebrew/bin` on `PATH` so
-/// nested builds invoke rustup's `rustc` (with wasm std), not a standalone `rustc`.
+/// Prefer Cargo home's installed toolchain proxies over unrelated PATH tools.
 fn rustup_bin_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CARGO_HOME") {
+        let bin = std::path::absolute(home).ok()?.join("bin");
+        return bin.is_dir().then_some(bin);
+    }
     if let Some(home) = std::env::var_os("HOME") {
         let p = Path::new(&home).join(".cargo/bin");
         if p.is_dir() {
@@ -57,6 +75,12 @@ fn rustup_bin_dir() -> Option<PathBuf> {
 }
 
 fn prepend_rustup_bin_to_path(cmd: &mut Command) {
+    // Nested Cargo changes directory; keep its home anchored to the caller.
+    if let Some(home) = std::env::var_os("CARGO_HOME") {
+        if let Ok(home) = std::path::absolute(home) {
+            cmd.env("CARGO_HOME", home);
+        }
+    }
     let Some(bin) = rustup_bin_dir() else {
         return;
     };
@@ -76,15 +100,8 @@ fn cargo_executable() -> std::ffi::OsString {
     if let Some(c) = std::env::var_os("CARGO") {
         return c;
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let p = Path::new(&home).join(".cargo/bin/cargo");
-        if p.is_file() {
-            return p.into_os_string();
-        }
-    }
-    #[cfg(windows)]
-    if let Some(profile) = std::env::var_os("USERPROFILE") {
-        let p = Path::new(&profile).join(".cargo/bin/cargo.exe");
+    if let Some(bin) = rustup_bin_dir() {
+        let p = bin.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
         if p.is_file() {
             return p.into_os_string();
         }
@@ -99,7 +116,7 @@ fn cargo_executable() -> std::ffi::OsString {
 ///   reuse across builds (more effective than the `cargo`-level `--quiet` flag).
 ///
 /// Prefer rustup's `cargo` when `PATH` points at a non-rustup toolchain (e.g. Homebrew rustc
-/// without wasm std). Uses `CARGO` if set, else `~/.cargo/bin/cargo` when present.
+/// without wasm std). Uses `CARGO` if set, else Cargo home's executable when present.
 pub fn cargo_build_wasm32(runtime_dir: &Path, options: BuildOptions) -> Result<(), String> {
     let cargo_exe = cargo_executable();
     let mut cmd = Command::new(cargo_exe);
@@ -131,21 +148,17 @@ pub fn cargo_build_wasm32(runtime_dir: &Path, options: BuildOptions) -> Result<(
     }
 }
 
-pub fn run_wasm_bindgen(wasm_path: &Path, out_dir: &Path, out_name: &str) -> Result<(), String> {
-    let out_dir_str = out_dir.to_string_lossy();
-    let wasm = wasm_path.to_str().ok_or("wasm path utf-8")?;
+fn wasm_bindgen_command(wasm_path: &Path, out_dir: &Path, out_name: &str) -> Command {
     let mut cmd = Command::new("wasm-bindgen");
-    prepend_rustup_bin_to_path(&mut cmd);
-    let out = cmd
-        .args([
-            "--target",
-            "web",
-            "--out-dir",
-            out_dir_str.as_ref(),
-            "--out-name",
-            out_name,
-            wasm,
-        ])
+    cmd.args(["--target", "web", "--out-dir"])
+        .arg(out_dir)
+        .args(["--out-name", out_name])
+        .arg(wasm_path);
+    cmd
+}
+
+pub fn run_wasm_bindgen(wasm_path: &Path, out_dir: &Path, out_name: &str) -> Result<(), String> {
+    let out = wasm_bindgen_command(wasm_path, out_dir, out_name)
         .output()
         .map_err(|e| format!("wasm-bindgen: {e}"))?;
     if out.status.success() {
@@ -155,40 +168,9 @@ pub fn run_wasm_bindgen(wasm_path: &Path, out_dir: &Path, out_name: &str) -> Res
     let stderr = String::from_utf8_lossy(&out.stderr);
     // version mismatch: "rust Wasm file schema version: 0.2.123"
     if let Some(ver) = parse_wasm_bindgen_needed_version(&stderr) {
-        let spinner = crate::ui::spinner(&format!("installing wasm-bindgen-cli {ver}"));
-        let install = Command::new("cargo")
-            .args(["install", "wasm-bindgen-cli", "--version", &ver, "--locked"])
-            .output()
-            .map_err(|e| format!("cargo install wasm-bindgen-cli {ver}: {e}"))?;
-        if !install.status.success() {
-            crate::ui::spinner_err(
-                &spinner,
-                &format!(
-                    "could not install wasm-bindgen-cli {ver}: {}",
-                    String::from_utf8_lossy(&install.stderr)
-                ),
-            );
-        }
-        crate::ui::spinner_ok(&spinner, &format!("wasm-bindgen-cli {ver} installed"));
-        // retry
-        let mut cmd2 = Command::new("wasm-bindgen");
-        prepend_rustup_bin_to_path(&mut cmd2);
-        let out2 = cmd2
-            .args([
-                "--target",
-                "web",
-                "--out-dir",
-                out_dir_str.as_ref(),
-                "--out-name",
-                out_name,
-                wasm,
-            ])
-            .output()
-            .map_err(|e| format!("wasm-bindgen (retry): {e}"))?;
-        if out2.status.success() {
-            return Ok(());
-        }
-        return Err(String::from_utf8_lossy(&out2.stderr).into_owned());
+        return Err(format!(
+            "{stderr}\nThis module requires wasm-bindgen-cli {ver}. Select a matching wasm-bindgen executable on PATH or update the runtime dependency and rebuild. The installed tool was not changed."
+        ));
     }
 
     Err(stderr.into_owned())
@@ -245,4 +227,80 @@ pub fn run_wasm_opt(
     }
     std::fs::rename(&tmp, wasm_path).map_err(|e| format!("replace optimized wasm: {e}"))?;
     Ok(WasmOptStatus::Optimized)
+}
+
+#[cfg(test)]
+mod artifact_tests {
+    use super::*;
+
+    #[test]
+    fn cargo_target_directory_respects_nested_workspace_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("app/runtime");
+        std::fs::create_dir_all(runtime.join("src")).unwrap();
+        std::fs::create_dir_all(root.path().join(".cargo")).unwrap();
+        std::fs::write(
+            root.path().join("Cargo.toml"),
+            "[workspace]\nmembers=['app/runtime']\nresolver='2'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join(".cargo/config.toml"),
+            "[build]\ntarget-dir='artifacts'\n",
+        )
+        .unwrap();
+        std::fs::write(runtime.join("Cargo.toml"), "[package]\nname='fixture-runtime'\nversion='0.1.0'\nedition='2021'\n[lib]\ncrate-type=['cdylib']\n").unwrap();
+        std::fs::write(runtime.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+        let options = crate::build_options::BuildOptionsArgs::default()
+            .into_options()
+            .unwrap();
+        let expected = root
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("artifacts/wasm32-unknown-unknown/debug");
+        assert_eq!(wasm_profile_dir(&runtime, options).unwrap(), expected);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn bindgen_arguments_preserve_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let wasm = Path::new(std::ffi::OsStr::from_bytes(b"input \xff.wasm"));
+        let output = Path::new(std::ffi::OsStr::from_bytes(b"output \xfe"));
+        let command = wasm_bindgen_command(wasm, output, "runtime");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args[3].as_bytes(), b"output \xfe");
+        assert_eq!(args[6].as_bytes(), b"input \xff.wasm");
+    }
+
+    #[test]
+    fn selects_runtime_library_and_rejects_stale_artifacts() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("runtime");
+        let target = root.path().join("target");
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            runtime.join("Cargo.toml"),
+            "[package]\nname = 'my-runtime'\n",
+        )
+        .unwrap();
+        std::fs::write(target.join("stale.wasm"), []).unwrap();
+        std::fs::write(target.join("my_runtime.d.wasm"), []).unwrap();
+        assert_eq!(find_wasm_file(&target, &runtime), None);
+        let expected = target.join("my_runtime.wasm");
+        std::fs::write(&expected, []).unwrap();
+        assert_eq!(find_wasm_file(&target, &runtime), Some(expected));
+
+        std::fs::write(
+            runtime.join("Cargo.toml"),
+            "[package]\nname = 'my-runtime'\n[lib]\nname = 'custom_lib'\n",
+        )
+        .unwrap();
+        assert_eq!(find_wasm_file(&target, &runtime), None);
+        let expected = target.join("custom_lib.wasm");
+        std::fs::write(&expected, []).unwrap();
+        assert_eq!(find_wasm_file(&target, &runtime), Some(expected));
+    }
 }

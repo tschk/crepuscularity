@@ -71,7 +71,7 @@ pub enum JsExpr {
     Literal(Value),
     /// A variable reference
     Var(String),
-    /// A member access (object.property)
+    /// A member access using a literal property name
     Member { object: String, property: String },
     /// Raw JavaScript code (use with caution)
     Raw(String),
@@ -203,22 +203,33 @@ impl BrowserProgram {
     }
 
     /// Emit the program as a JavaScript ES module.
+    ///
+    /// Literal strings escape `<` so they cannot alter an enclosing HTML script element.
+    /// [`JsExpr::raw`] remains caller-authored executable source and is not HTML-safe.
     pub fn emit_module(&self) -> String {
-        let mut js = String::from("export async function runBrowserProgram(browserApi) {\n");
+        let mut api_name = String::from("browserApi");
+        while self
+            .bindings
+            .iter()
+            .any(|binding| sanitize_ident(&binding.name) == api_name)
+        {
+            api_name.push('_');
+        }
+        let mut js = format!("export async function runBrowserProgram({api_name}) {{\n");
 
         for binding in &self.bindings {
             match &binding.source {
                 BrowserSource::StorageGet { area, key } => {
                     js.push_str(&format!(
-                        "  const {name} = (await browserApi.storage.{area}.get({{{quoted_key}: undefined}}))[{quoted_key}];\n",
+                        "  const {name} = (await {api_name}.storage.{area}.get({{[{quoted_key}]: undefined}}))[{quoted_key}];\n",
                         name = sanitize_ident(&binding.name),
                         area = area.as_js_name(),
-                        quoted_key = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
+                        quoted_key = js_string(key),
                     ));
                 }
                 BrowserSource::RuntimeMessage(payload) => {
                     js.push_str(&format!(
-                        "  const {name} = await browserApi.runtime.sendMessage({payload});\n",
+                        "  const {name} = await {api_name}.runtime.sendMessage({payload});\n",
                         name = sanitize_ident(&binding.name),
                         payload = payload.to_js(),
                     ));
@@ -230,16 +241,15 @@ impl BrowserProgram {
             match statement {
                 BrowserStatement::StorageSet { area, key, value } => {
                     js.push_str(&format!(
-                        "  await browserApi.storage.{area}.set({{{quoted_key}: {value}}});\n",
+                        "  await {api_name}.storage.{area}.set({{[{quoted_key}]: {value}}});\n",
                         area = area.as_js_name(),
-                        quoted_key =
-                            serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
+                        quoted_key = js_string(key),
                         value = value.to_js(),
                     ));
                 }
                 BrowserStatement::RuntimeSend(payload) => {
                     js.push_str(&format!(
-                        "  await browserApi.runtime.sendMessage({payload});\n",
+                        "  await {api_name}.runtime.sendMessage({payload});\n",
                         payload = payload.to_js(),
                     ));
                 }
@@ -292,13 +302,7 @@ impl MessagePayload {
         let fields = self
             .fields
             .iter()
-            .map(|(key, value)| {
-                format!(
-                    "{}: {}",
-                    serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
-                    value.to_js()
-                )
-            })
+            .map(|(key, value)| format!("[{}]: {}", js_string(key), value.to_js()))
             .collect::<Vec<_>>()
             .join(", ");
         format!("{{ {fields} }}")
@@ -342,13 +346,42 @@ impl JsExpr {
 
     fn to_js(&self) -> String {
         match self {
-            JsExpr::Literal(value) => value.to_string(),
+            JsExpr::Literal(value) => literal_to_js(value),
             JsExpr::Var(name) => sanitize_ident(name),
             JsExpr::Member { object, property } => {
-                format!("{}.{}", sanitize_ident(object), sanitize_ident(property))
+                format!("{}[{}]", sanitize_ident(object), js_string(property))
             }
             JsExpr::Raw(code) => code.clone(),
         }
+    }
+}
+
+fn js_string(value: &str) -> String {
+    serde_json::to_string(value)
+        .expect("JSON string serialization")
+        .replace('<', "\\u003c")
+}
+
+fn literal_to_js(value: &Value) -> String {
+    match value {
+        Value::String(value) => js_string(value),
+        Value::Object(fields) => format!(
+            "{{{}}}",
+            fields
+                .iter()
+                .map(|(key, value)| format!("[{}]: {}", js_string(key), literal_to_js(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(literal_to_js)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => value.to_string(),
     }
 }
 
@@ -383,14 +416,14 @@ impl From<i64> for JsExpr {
 }
 
 /// Serialize a JsExpr to a JSON value for the data-driven program format.
-/// Variable references are encoded as `{ "$var": "name" }` so the JS
-/// interpreter can resolve them against the bound variables map.
+/// Variable references use `{ "$var": "name" }`; member references use
+/// `{ "$member": ["object", "property"] }` to retain literal property names.
 fn json_expr_to_value(expr: &JsExpr) -> Value {
     match expr {
         JsExpr::Literal(v) => v.clone(),
         JsExpr::Var(name) => serde_json::json!({ "$var": name }),
         JsExpr::Member { object, property } => {
-            serde_json::json!({ "$var": format!("{object}.{property}") })
+            serde_json::json!({ "$member": [object, property] })
         }
         JsExpr::Raw(code) => serde_json::json!({ "$raw": code }),
     }
@@ -400,7 +433,7 @@ fn sanitize_ident(input: &str) -> String {
     input
         .chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
                 ch
             } else {
                 '_'
@@ -435,5 +468,131 @@ mod tests {
         let js = payload.to_js();
         assert!(js.contains("\"action\""));
         assert!(js.contains("myVar"));
+    }
+
+    #[test]
+    fn emitted_objects_preserve_special_json_keys() {
+        let nested = serde_json::json!({"__proto__": {"marker": true}});
+        let program = BrowserProgram::new()
+            .bind_storage("stored", StorageArea::Local, "__proto__")
+            .set_storage(StorageArea::Local, "__proto__", nested.clone())
+            .send_runtime(MessagePayload::new().with_field("__proto__", JsExpr::var("stored")));
+        let js = program.emit_module();
+        assert!(js.contains("get({[\"__proto__\"]: undefined})"), "{js}");
+        assert!(
+            js.contains("set({[\"__proto__\"]: {[\"__proto__\"]:"),
+            "{js}"
+        );
+        assert!(js.contains("{ [\"__proto__\"]: stored }"), "{js}");
+        assert_eq!(
+            JsExpr::from(serde_json::json!([nested])).to_js(),
+            "[{[\"__proto__\"]: {[\"marker\"]: true}}]"
+        );
+    }
+
+    #[test]
+    fn member_expressions_preserve_object_and_property_separately() {
+        let member = JsExpr::member("object", "a-b");
+        assert_eq!(member.to_js(), "object[\"a-b\"]");
+        assert_eq!(
+            json_expr_to_value(&member),
+            serde_json::json!({"$member": ["object", "a-b"]})
+        );
+        assert_eq!(
+            json_expr_to_value(&JsExpr::var("object.a-b")),
+            serde_json::json!({"$var": "object.a-b"})
+        );
+    }
+
+    #[test]
+    fn module_api_parameter_does_not_collide_with_bindings() {
+        let js = BrowserProgram::new()
+            .bind_storage("browserApi", StorageArea::Local, "first")
+            .bind_runtime_message("browserApi_", MessagePayload::new())
+            .set_storage(StorageArea::Local, "result", JsExpr::var("browserApi"))
+            .send_runtime(MessagePayload::new().with_field("value", JsExpr::raw("browserApi_")))
+            .emit_module();
+        assert!(
+            js.starts_with("export async function runBrowserProgram(browserApi__) {"),
+            "{js}"
+        );
+        assert!(
+            js.contains("const browserApi = (await browserApi__.storage.local.get"),
+            "{js}"
+        );
+        assert!(
+            js.contains("const browserApi_ = await browserApi__.runtime.sendMessage"),
+            "{js}"
+        );
+        assert!(js.contains("await browserApi__.storage.local.set"), "{js}");
+        assert!(
+            js.contains("await browserApi__.runtime.sendMessage({ [\"value\"]: browserApi_ })"),
+            "{js}"
+        );
+    }
+
+    #[test]
+    fn dollar_identifiers_remain_distinct_from_underscore_identifiers() {
+        let js = BrowserProgram::new()
+            .bind_storage("$value", StorageArea::Local, "dollar")
+            .bind_storage("_value", StorageArea::Local, "underscore")
+            .send_runtime(
+                MessagePayload::new()
+                    .with_field("dollar", JsExpr::var("$value"))
+                    .with_field("underscore", JsExpr::var("_value"))
+                    .with_field("raw", JsExpr::raw("$value")),
+            )
+            .emit_module();
+        assert!(js.contains("const $value ="), "{js}");
+        assert!(js.contains("const _value ="), "{js}");
+        assert!(js.contains("[\"dollar\"]: $value"), "{js}");
+        assert!(js.contains("[\"underscore\"]: _value"), "{js}");
+        assert!(js.contains("[\"raw\"]: $value"), "{js}");
+    }
+    #[test]
+    fn authored_literal_strings_do_not_close_inline_script_elements() {
+        let dangerous = "</ScRiPt><script>not code</script>";
+        let composite = serde_json::json!({(dangerous): [dangerous, {"nested": dangerous}]});
+        let js = BrowserProgram::new()
+            .bind_storage("stored", StorageArea::Local, dangerous)
+            .set_storage(StorageArea::Local, dangerous, JsExpr::from(composite))
+            .send_runtime(
+                MessagePayload::new()
+                    .with_field(dangerous, dangerous)
+                    .with_field("member", JsExpr::member("stored", dangerous)),
+            )
+            .console_log([JsExpr::from(dangerous)])
+            .emit_module();
+        assert!(!js.contains('<'), "{js}");
+        assert!(js.contains("\\u003c/ScRiPt>"), "{js}");
+        assert!(js.contains("console.log(\"\\u003c/ScRiPt>"), "{js}");
+    }
+
+    #[test]
+    fn raw_javascript_is_not_rewritten_for_html_embedding() {
+        let js = BrowserProgram::new()
+            .console_log([JsExpr::raw("a < b")])
+            .emit_module();
+        assert!(js.contains("console.log(a < b)"), "{js}");
+    }
+    #[test]
+    fn literal_strings_escape_every_ascii_case_of_script_closers_and_comment_openers() {
+        for mask in 0..64 {
+            let tag: String = "script"
+                .chars()
+                .enumerate()
+                .map(|(index, ch)| {
+                    if mask & (1 << index) != 0 {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch
+                    }
+                })
+                .collect();
+            let value = format!("<!--<script></{tag}>");
+            let emitted = JsExpr::from(value).to_js();
+            assert!(!emitted.contains('<'), "{emitted}");
+            assert!(emitted.contains("\\u003c!--"), "{emitted}");
+        }
     }
 }

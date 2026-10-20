@@ -57,6 +57,9 @@ pub fn json_to_template(v: Value) -> TemplateValue {
 /// - `js`   — JavaScript module source (inserted as `<script type="module">`)
 /// - `unocss` — UnoCSS engine source to inline (pass `""` to omit)
 /// - `empty_msg` — fallback body HTML when `html` is empty
+///
+/// Script and style sources are raw HTML contents; callers must prevent closing
+/// tags in authored source. `BrowserProgram::emit_module` escapes its string literals.
 pub fn build_frame_doc(html: &str, css: &str, js: &str, unocss: &str, empty_msg: &str) -> String {
     let base_css = r#"html,body{margin:0;padding:0;background:#fffdf8;color:#111;font-family:"IBM Plex Sans",sans-serif;}body{padding:16px;}"#;
     let fonts_link = r#"<link rel="preconnect" href="https://fonts.googleapis.com">
