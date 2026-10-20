@@ -65,6 +65,10 @@ impl ElementRef {
     }
 
     pub fn attr(&self, name: &str, value: &str) -> Result<(), JsValue> {
+        let normalized = name.to_ascii_lowercase();
+        if crate::is_url_attr(&normalized) && !crate::is_safe_url_value(&normalized, value) {
+            return Err(JsValue::from_str("unsafe URL attribute value"));
+        }
         self.get()?.set_attribute(name, value)
     }
 }

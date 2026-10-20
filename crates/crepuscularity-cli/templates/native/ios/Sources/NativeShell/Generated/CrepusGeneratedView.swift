@@ -1,12 +1,41 @@
+import Foundation
 import SwiftUI
 
+@MainActor
 public enum CrepusActions {
+    public static let model = CrepusStateStore.shared
     public static var dispatch: (String) -> String = { _ in "{}" }
     public static var resultSink: (String) -> Void = { _ in }
 
+    private static let actionQueue = DispatchQueue(label: "dev.crepuscularity.native.actions", qos: .userInitiated)
+
     public static func perform(_ action: String) {
-        resultSink(dispatch(action))
+        let dispatch = dispatch
+        let resultSink = resultSink
+        actionQueue.async {
+            let result = dispatch(action)
+            DispatchQueue.main.sync {
+                resultSink(result)
+            }
+        }
     }
+    public static func performChange(_ action: String?, bind: String, value: Any) {
+        let resultSink = resultSink
+        guard let valueJson = CrepusRustActions.encodeQueuedChangeValue(value),
+              let sequence = model.beginDraft(path: bind, valueJson: valueJson) else {
+            resultSink("{\"ok\":false,\"error\":\"json encode failure\"}")
+            return
+        }
+        let action = action ?? ""
+        actionQueue.async {
+            let result = CrepusRustActions.dispatchQueuedChange(action, bind: bind, valueJson: valueJson)
+            DispatchQueue.main.sync {
+                defer { model.finishDraft(path: bind, sequence: sequence) }
+                resultSink(result)
+            }
+        }
+    }
+
 }
 
 public struct CrepusGeneratedView: View {

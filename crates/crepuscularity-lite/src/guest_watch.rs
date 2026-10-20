@@ -5,13 +5,16 @@
 //! Hot reload policy: recreate [`crate::V8Host`] before re-`eval` so globals do not survive across
 //! reloads (see the package binary).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
+use crepuscularity_core::watch::SingleFileWatcher;
+use notify_debouncer_mini::{
+    new_debouncer_opt, notify::RecursiveMode, Config, DebounceEventResult,
+};
 
-/// Start watching `guest_file`'s parent directory (non-recursive). On each debounced change that
+/// Watch the logical `guest_file`, following symlink retargets. On each debounced change that
 /// targets this path, `on_changed` is called from the debouncer thread.
 ///
 /// A background thread keeps the debouncer alive for the rest of the process.
@@ -27,34 +30,28 @@ pub fn spawn_guest_file_watcher(
         ));
     }
 
-    let parent = guest_file
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let target = guest_file
+    guest_file
         .canonicalize()
         .map_err(|e| format!("canonicalize {}: {e}", guest_file.display()))?;
 
     let fire = on_changed.clone();
-    let mut debouncer = new_debouncer(debounce, move |res: DebounceEventResult| match res {
-        Ok(events) => {
-            for ev in events {
-                if paths_refer_to_same_or_overlap(&ev.path, &target) {
+    let mut debouncer = new_debouncer_opt::<_, SingleFileWatcher>(
+        Config::default().with_timeout(debounce),
+        move |res: DebounceEventResult| match res {
+            Ok(events) => {
+                if !events.is_empty() {
                     fire();
-                    break;
                 }
             }
-        }
-        Err(e) => eprintln!("crepus-lite guest watch: {e}"),
-    })
+            Err(e) => eprintln!("crepus-lite guest watch: {e}"),
+        },
+    )
     .map_err(|e| format!("debouncer: {e}"))?;
 
     debouncer
         .watcher()
-        .watch(&parent, RecursiveMode::NonRecursive)
-        .map_err(|e| format!("watch {}: {e}", parent.display()))?;
+        .watch(&guest_file, RecursiveMode::NonRecursive)
+        .map_err(|e| format!("watch {}: {e}", guest_file.display()))?;
 
     thread::Builder::new()
         .name("crepus-lite-guest-watch".into())
@@ -65,17 +62,4 @@ pub fn spawn_guest_file_watcher(
         .map_err(|e| format!("spawn guest watcher thread: {e}"))?;
 
     Ok(())
-}
-
-fn paths_refer_to_same_or_overlap(event_path: &Path, guest: &Path) -> bool {
-    if event_path == guest {
-        return true;
-    }
-    match (
-        std::fs::canonicalize(event_path),
-        std::fs::canonicalize(guest),
-    ) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
 }

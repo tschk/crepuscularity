@@ -10,6 +10,8 @@
 library;
 
 import 'view_ir.dart';
+import 'string_literals.dart';
+import 'color_literals.dart';
 
 /// Parse `.crepus` source into a [ViewIr]. Oversized source (beyond
 /// [CrepusLimits.maxSourceLength]) or a document that breaks the node/depth caps
@@ -66,6 +68,29 @@ List<_Line> _lex(String source) {
   return out;
 }
 
+// Match nested braces while keeping braces inside quoted expressions opaque.
+int? _closingBrace(String text, int start) {
+  var depth = 1;
+  int? quote;
+  for (var i = start + 1; i < text.length; i++) {
+    final next = text.codeUnitAt(i);
+    if (quote != null) {
+      if (next == 0x5c && i + 1 < text.length) {
+        i++;
+      } else if (next == quote) {
+        quote = null;
+      }
+    } else if (next == 0x22 || next == 0x27) {
+      quote = next;
+    } else if (next == 0x7b) {
+      depth++;
+    } else if (next == 0x7d && --depth == 0) {
+      return i;
+    }
+  }
+  return null;
+}
+
 /// Split a line into whitespace-delimited tokens, but keep `"..."` strings and
 /// `{...}` expressions whole (so `onclick={prompt:do it}` stays one token).
 List<String> _tokenize(String line) {
@@ -83,11 +108,18 @@ List<String> _tokenize(String line) {
       final ch = line.codeUnitAt(i);
       if (ch == 0x20 || ch == 0x09) break;
       if (ch == 0x22) {
-        // opening quote — consume through the closing quote (honoring escapes)
+        // Only standalone text tokens contain interpolation; attributes are literal.
+        final interpolate = sb.isEmpty;
         sb.writeCharCode(ch);
         i += 1;
         while (i < n) {
           final q = line.codeUnitAt(i);
+          if (interpolate && q == 0x7b) {
+            final end = _closingBrace(line, i);
+            sb.write(line.substring(i, end == null ? n : end + 1));
+            i = end == null ? n : end + 1;
+            continue;
+          }
           sb.writeCharCode(q);
           i += 1;
           if (q == 0x5c && i < n) {
@@ -100,17 +132,9 @@ List<String> _tokenize(String line) {
         continue;
       }
       if (ch == 0x7b) {
-        // `{` — consume through `}` (no nesting, matching the grammar)
-        sb.writeCharCode(ch);
-        i += 1;
-        while (i < n && line.codeUnitAt(i) != 0x7d) {
-          sb.writeCharCode(line.codeUnitAt(i));
-          i += 1;
-        }
-        if (i < n) {
-          sb.writeCharCode(0x7d);
-          i += 1;
-        }
+        final end = _closingBrace(line, i);
+        sb.write(line.substring(i, end == null ? n : end + 1));
+        i = end == null ? n : end + 1;
         continue;
       }
       sb.writeCharCode(ch);
@@ -196,7 +220,7 @@ bool _isTextLine(_Raw raw) =>
 
 ViewNode _mapNode(_Raw raw) {
   if (_isTextLine(raw)) {
-    return TextNode(content: _unquote(raw.line.tokens.first));
+    return TextNode(content: unquoteCrepusLiteral(raw.line.tokens.first));
   }
   final el = _Element.parse(raw);
   final tag = el.tag.toLowerCase();
@@ -239,6 +263,7 @@ ViewNode _mapNode(_Raw raw) {
     case 'button':
       return ButtonNode(
         label: el.label(),
+        labelParts: el.buttonLabelParts(),
         onClick: el.events['click'],
         onLongPress: el.events['longpress'],
         style: style,
@@ -305,6 +330,7 @@ ViewNode _mapNode(_Raw raw) {
     case 'image':
       return ImageNode(
         src: el.attrs['src'] ?? '',
+        srcBind: el.urlBindings['src'],
         alt: el.attrs['alt'],
         onLongPress: el.events['longpress'],
         style: style,
@@ -322,6 +348,7 @@ ViewNode _mapNode(_Raw raw) {
     case 'link':
       return LinkNode(
         href: el.attrs['href'] ?? '',
+        hrefBind: el.urlBindings['href'],
         target: el.attrs['target'],
         rel: el.attrs['rel'],
         children: _listItemChildren(raw, el, style),
@@ -336,23 +363,6 @@ ViewNode _mapNode(_Raw raw) {
         children: _listItemChildren(raw, el, style),
         style: style,
       );
-    case 'stack':
-    case 'card':
-    case 'section':
-    case 'panel':
-    case 'group':
-    case 'view':
-      return StackNode(
-        axis: tag == 'view'
-            ? StackAxis.column
-            : (tag == 'row' ? StackAxis.row : _axisOf(el.classes)),
-        spacing: _gap(el.classes),
-        alignItems: _alignItems(el.classes),
-        justifyContent: _justify(el.classes),
-        onLongPress: el.events['longpress'],
-        children: _mapSiblings(raw.children),
-        style: style,
-      );
     case 'for':
     case 'foreach':
       return _mapFor(el, raw);
@@ -361,8 +371,22 @@ ViewNode _mapNode(_Raw raw) {
   // Fallback: a container → stack (or scroll wrapper).
   final axis = tag == 'view' ? StackAxis.column : _axisOf(el.classes);
   final children = _mapSiblings(raw.children);
-  if (tag == 'scroll' || _isScroll(el.classes)) {
-    return ScrollNode(axis: axis, children: children, style: style);
+  final scrollAxis = _scrollAxis(el.classes, axis);
+  if (tag == 'scroll' || scrollAxis != null) {
+    return ScrollNode(
+      axis: scrollAxis ?? axis,
+      children: [
+        StackNode(
+          axis: axis,
+          spacing: _gap(el.classes),
+          alignItems: _alignItems(el.classes),
+          justifyContent: _justify(el.classes),
+          children: children,
+        ),
+      ],
+      style: style,
+      onLongPress: el.events['longpress'],
+    );
   }
   return StackNode(
     axis: axis,
@@ -412,7 +436,8 @@ ViewNode _mapFor(_Element el, _Raw raw) {
 
 String? _firstTextChild(_Element el) {
   for (final child in el.raw.children) {
-    if (_isTextLine(child)) return _unquote(child.line.tokens.first);
+    if (_isTextLine(child))
+      return unquoteCrepusLiteral(child.line.tokens.first);
   }
   return null;
 }
@@ -441,15 +466,18 @@ class _Element {
   final String tag;
   final List<String> classes = [];
   final Map<String, String> attrs = {};
+  final Map<String, String> urlBindings = {};
   final Map<String, String> events = {};
   String? inlineText;
+  String? inlineTextToken;
   String? id;
 
   static _Element parse(_Raw raw) {
     final el = _Element(raw, raw.line.tokens.first);
     for (final token in raw.line.tokens.skip(1)) {
       if (token.startsWith('"')) {
-        el.inlineText = _unquote(token);
+        el.inlineTextToken = token;
+        el.inlineText = unquoteCrepusLiteral(token);
         continue;
       }
       if (token.startsWith('#')) {
@@ -460,12 +488,24 @@ class _Element {
       final eq = token.indexOf('=');
       if (eq > 0) {
         final name = token.substring(0, eq);
-        final value = _attrValue(token.substring(eq + 1));
+        final rawValue = token.substring(eq + 1);
+        final value = _attrValue(rawValue);
         final ev = _eventName(name);
         if (ev != null) {
           el.events[ev] = value;
         } else {
           el.attrs[name] = value;
+          if (name == 'src' || name == 'href') {
+            // Preserve expression origin; quoted URLs with braces are literal.
+            el.urlBindings.remove(name);
+            if (rawValue.startsWith('{') &&
+                _closingBrace(rawValue, 0) == rawValue.length - 1) {
+              final expression = rawValue
+                  .substring(1, rawValue.length - 1)
+                  .trim();
+              if (expression.isNotEmpty) el.urlBindings[name] = expression;
+            }
+          }
         }
         continue;
       }
@@ -493,6 +533,54 @@ class _Element {
     return parsed != null && parsed.isFinite ? parsed : null;
   }
 
+  List<ButtonLabelPart> buttonLabelParts() {
+    if (attrs.containsKey('label')) return const [];
+    var token = inlineTextToken;
+    if (token == null) {
+      for (final child in raw.children) {
+        if (_isTextLine(child)) {
+          token = child.line.tokens.first;
+          break;
+        }
+      }
+    }
+    if (token == null || token.length < 2 || !token.endsWith('"'))
+      return const [];
+    final content = token.substring(1, token.length - 1);
+    if (!content.contains('{')) return const [];
+    final parts = <ButtonLabelPart>[];
+    var offset = 0;
+    while (offset < content.length) {
+      final start = content.indexOf('{', offset);
+      if (start < 0) {
+        parts.add(
+          ButtonLabelPart(
+            kind: 'literal',
+            value: unquoteCrepusLiteral('"${content.substring(offset)}"'),
+          ),
+        );
+        break;
+      }
+      if (start > offset) {
+        parts.add(
+          ButtonLabelPart(
+            kind: 'literal',
+            value: unquoteCrepusLiteral(
+              '"${content.substring(offset, start)}"',
+            ),
+          ),
+        );
+      }
+      final end = _closingBrace(content, start);
+      if (end == null) return const [];
+      final expression = content.substring(start + 1, end).trim();
+      if (expression.isEmpty) return const [];
+      parts.add(ButtonLabelPart(kind: 'expr', value: expression));
+      offset = end + 1;
+    }
+    return parts;
+  }
+
   String label() => optionalLabel() ?? '';
 
   String? optionalLabel() {
@@ -503,32 +591,26 @@ class _Element {
 }
 
 /// `onclick`/`on-change`/`onLongPress` → `click`/`change`/`longpress`.
-/// Anything not starting with `on` is a plain attribute, not an event.
+/// `@click` uses the canonical event prefix; other names remain attributes.
 String? _eventName(String attr) {
   final lower = attr.toLowerCase();
-  if (!lower.startsWith('on')) return null;
-  var rest = lower.substring(2);
+  final prefixLength = lower.startsWith('@')
+      ? 1
+      : lower.startsWith('on')
+      ? 2
+      : 0;
+  if (prefixLength == 0) return null;
+  var rest = lower.substring(prefixLength);
   if (rest.startsWith('-') || rest.startsWith('_')) rest = rest.substring(1);
   return rest.replaceAll('-', '').replaceAll('_', '');
 }
 
 String _attrValue(String raw) {
-  if (raw.startsWith('"')) return _unquote(raw);
+  if (raw.startsWith('"')) return unquoteCrepusLiteral(raw);
   if (raw.startsWith('{') && raw.endsWith('}')) {
     return raw.substring(1, raw.length - 1).trim();
   }
   return raw;
-}
-
-String _unquote(String raw) {
-  var s = raw;
-  if (s.startsWith('"')) s = s.substring(1);
-  if (s.endsWith('"')) s = s.substring(0, s.length - 1);
-  return s
-      .replaceAll('\\n', '\n')
-      .replaceAll('\\t', '\t')
-      .replaceAll('\\"', '"')
-      .replaceAll('\\\\', '\\');
 }
 
 // ── Tailwind-ish class → style/layout hints (subset of style.rs) ────────────
@@ -536,65 +618,124 @@ String _unquote(String raw) {
 StackAxis _axisOf(List<String> classes) {
   // Both Tailwind (`flex-col`/`flex-row`) and the terse `stack col`/`stack row`
   // shorthand are accepted.
-  if (classes.contains('flex-col') ||
-      classes.contains('col') ||
-      classes.contains('column')) {
-    return StackAxis.column;
+  for (final c in classes.reversed) {
+    if (c == 'flex-col' || c == 'col' || c == 'column') {
+      return StackAxis.column;
+    }
+    if (c == 'flex-row' || c == 'row') return StackAxis.row;
   }
-  if (classes.contains('flex-row') ||
-      classes.contains('row') ||
-      classes.contains('flex')) {
-    return StackAxis.row;
-  }
-  return StackAxis.column;
+  return classes.contains('flex') ? StackAxis.row : StackAxis.column;
 }
 
-bool _isScroll(List<String> classes) =>
-    classes.contains('overflow-scroll') ||
-    classes.contains('overflow-auto') ||
-    classes.contains('overflow-y-auto') ||
-    classes.contains('overflow-y-scroll') ||
-    classes.contains('scroll');
+StackAxis? _scrollAxis(List<String> classes, StackAxis layoutAxis) {
+  final horizontal = classes.any(
+    (c) => c == 'overflow-x-auto' || c == 'overflow-x-scroll',
+  );
+  final vertical = classes.any(
+    (c) => c == 'overflow-y-auto' || c == 'overflow-y-scroll',
+  );
+  if (horizontal && !vertical) return StackAxis.row;
+  if (vertical && !horizontal) return StackAxis.column;
+  if (horizontal ||
+      vertical ||
+      classes.any(
+        (c) => c == 'overflow-auto' || c == 'overflow-scroll' || c == 'scroll',
+      ))
+    return layoutAxis;
+  return null;
+}
+
+double? _spacingUnit(String value) {
+  var scale = 4.0;
+  if (value.startsWith('[') && value.endsWith(']')) {
+    value = value.substring(1, value.length - 1);
+    if (value.endsWith('px')) value = value.substring(0, value.length - 2);
+    scale = 1.0;
+  }
+  final number = double.tryParse(value);
+  if (number == null) return null;
+  final pixels = number * scale;
+  return pixels.isFinite ? pixels : null;
+}
+
+/// One margin arm. A leading `-` negates the resolved spacing (`-m-4`, `-mx-2`).
+/// The named `px` step is 1; every other token goes through [_spacingUnit].
+/// A token that does not parse leaves [current] unchanged.
+double? _marginClass(String token, String prefix, double? current) {
+  final negative = token.startsWith('-');
+  final body = negative ? token.substring(1) : token;
+  if (!body.startsWith(prefix)) return current;
+  final raw = body.substring(prefix.length);
+  final spacing = raw == 'px' ? 1.0 : _spacingUnit(raw);
+  if (spacing == null) return current;
+  return negative ? -spacing : spacing;
+}
 
 double? _gap(List<String> classes) {
-  for (final c in classes) {
+  for (final c in classes.reversed) {
     if (c.startsWith('gap-')) {
-      final n = int.tryParse(c.substring(4));
-      if (n != null) return n * 4.0;
+      final spacing = _spacingUnit(c.substring(4));
+      if (spacing != null) return spacing;
     }
   }
   return null;
 }
 
 String? _alignItems(List<String> classes) {
-  if (classes.contains('items-center')) return 'center';
-  if (classes.contains('items-end')) return 'end';
-  if (classes.contains('items-start')) return 'start';
-  if (classes.contains('items-stretch')) return 'stretch';
+  for (final c in classes.reversed) {
+    switch (c) {
+      case 'items-center':
+        return 'center';
+      case 'items-end':
+        return 'end';
+      case 'items-start':
+        return 'start';
+      case 'items-stretch':
+        return 'stretch';
+    }
+  }
   return null;
 }
 
 String? _justify(List<String> classes) {
-  if (classes.contains('justify-center')) return 'center';
-  if (classes.contains('justify-end')) return 'end';
-  if (classes.contains('justify-between')) return 'between';
-  if (classes.contains('justify-around')) return 'around';
-  if (classes.contains('justify-start')) return 'start';
+  for (final c in classes.reversed) {
+    switch (c) {
+      case 'justify-center':
+        return 'center';
+      case 'justify-end':
+        return 'end';
+      case 'justify-between':
+        return 'between';
+      case 'justify-around':
+        return 'around';
+      case 'justify-evenly':
+        return 'evenly';
+      case 'justify-start':
+        return 'start';
+    }
+  }
   return null;
 }
 
 const Map<String, double> _fontSizes = {
   'text-xs': 12,
-  'text-sm': 13,
-  'text-base': 15,
-  'text-lg': 17,
+  'text-sm': 14,
+  'text-base': 16,
+  'text-lg': 18,
   'text-xl': 20,
   'text-2xl': 24,
   'text-3xl': 30,
+  'text-4xl': 36,
+  'text-5xl': 48,
+  'text-6xl': 60,
+  'text-7xl': 72,
+  'text-8xl': 96,
+  'text-9xl': 128,
 };
 
 const Map<String, int> _fontWeights = {
   'font-thin': 100,
+  'font-extralight': 200,
   'font-light': 300,
   'font-normal': 400,
   'font-medium': 500,
@@ -604,8 +745,8 @@ const Map<String, int> _fontWeights = {
   'font-black': 900,
 };
 
-/// Build a [ViewStyle] from Tailwind-ish utility classes. Only the classes the
-/// renderer honors are recognized; unknown classes are ignored.
+/// Build portable [ViewStyle] hints from Tailwind-ish utility classes.
+/// Original class tokens are retained alongside the recognized hints.
 ViewStyle? styleFromClasses(List<String> classes, {String? id}) {
   double? padding;
   double? px;
@@ -614,29 +755,69 @@ ViewStyle? styleFromClasses(List<String> classes, {String? id}) {
   double? pb;
   double? pl;
   double? pr;
+  double? margin;
+  double? mx;
+  double? my;
+  double? mt;
+  double? mb;
+  double? ml;
+  double? mr;
   double? fontSize;
   int? fontWeight;
+  double? letterSpacing;
+  double? lineHeight;
   String? textAlign;
+  int? lineClamp;
+  String? textOverflow;
   String? fg;
   String? bg;
   double? radius;
+  double? opacity;
+  double? borderWidth;
+  String? borderColor;
   bool? italic;
   bool? underline;
   bool? strikethrough;
-
-  double? spacingUnit(String rest) {
-    final n = int.tryParse(rest);
-    return n == null ? null : n * 4.0;
-  }
 
   for (final c in classes) {
     if (_fontSizes.containsKey(c)) {
       fontSize = _fontSizes[c];
       continue;
     }
+    if (c.startsWith('text-[') && c.endsWith(']')) {
+      final size = _spacingUnit(c.substring('text-'.length));
+      if (size != null && size > 0) fontSize = size;
+    }
     if (_fontWeights.containsKey(c)) {
       fontWeight = _fontWeights[c];
       continue;
+    }
+    if (c.startsWith('leading-')) {
+      final token = c.substring('leading-'.length);
+      final height = switch (token) {
+        'none' => 1.0,
+        'tight' => 1.25,
+        'snug' => 1.375,
+        'normal' => 1.5,
+        'relaxed' => 1.625,
+        'loose' => 2.0,
+        'px' => 1.0,
+        _ => _spacingUnit(token),
+      };
+      if (height != null && height > 0) lineHeight = height;
+    }
+    if (c.startsWith('tracking-')) {
+      final token = c.substring('tracking-'.length);
+      final spacing = switch (token) {
+        'tighter' => -0.8,
+        'tight' => -0.4,
+        'normal' => 0.0,
+        'wide' => 0.4,
+        'wider' => 0.8,
+        'widest' => 1.6,
+        _ => token.startsWith('[') ? _spacingUnit(token) : null,
+      };
+      if (spacing != null) letterSpacing = spacing;
     }
     if (c == 'italic') {
       italic = true;
@@ -650,23 +831,54 @@ ViewStyle? styleFromClasses(List<String> classes, {String? id}) {
       strikethrough = true;
       continue;
     }
+    if (c == 'truncate') textOverflow = 'truncate';
+    if (c == 'text-ellipsis') textOverflow = 'ellipsis';
+    if (c == 'text-clip') textOverflow = 'clip';
+    if (c.startsWith('line-clamp-')) {
+      final count = int.tryParse(c.substring('line-clamp-'.length), radix: 10);
+      if (count != null && count > 0 && count <= 2147483647) {
+        lineClamp = count;
+      }
+    }
     if (c == 'text-left') textAlign = 'left';
     if (c == 'text-center') textAlign = 'center';
     if (c == 'text-right') textAlign = 'right';
-    if (c.startsWith('p-')) padding = spacingUnit(c.substring(2)) ?? padding;
-    if (c.startsWith('px-')) px = spacingUnit(c.substring(3)) ?? px;
-    if (c.startsWith('py-')) py = spacingUnit(c.substring(3)) ?? py;
-    if (c.startsWith('pt-')) pt = spacingUnit(c.substring(3)) ?? pt;
-    if (c.startsWith('pb-')) pb = spacingUnit(c.substring(3)) ?? pb;
-    if (c.startsWith('pl-')) pl = spacingUnit(c.substring(3)) ?? pl;
-    if (c.startsWith('pr-')) pr = spacingUnit(c.substring(3)) ?? pr;
+    if (c.startsWith('p-')) padding = _spacingUnit(c.substring(2)) ?? padding;
+    if (c.startsWith('px-')) px = _spacingUnit(c.substring(3)) ?? px;
+    if (c.startsWith('py-')) py = _spacingUnit(c.substring(3)) ?? py;
+    if (c.startsWith('pt-')) pt = _spacingUnit(c.substring(3)) ?? pt;
+    if (c.startsWith('pb-')) pb = _spacingUnit(c.substring(3)) ?? pb;
+    if (c.startsWith('pl-')) pl = _spacingUnit(c.substring(3)) ?? pl;
+    if (c.startsWith('pr-')) pr = _spacingUnit(c.substring(3)) ?? pr;
+    margin = _marginClass(c, 'm-', margin);
+    mx = _marginClass(c, 'mx-', mx);
+    my = _marginClass(c, 'my-', my);
+    mt = _marginClass(c, 'mt-', mt);
+    mb = _marginClass(c, 'mb-', mb);
+    ml = _marginClass(c, 'ml-', ml);
+    mr = _marginClass(c, 'mr-', mr);
     if (c.startsWith('rounded')) {
-      radius = _roundedValue(c);
+      radius = _roundedValue(c) ?? radius;
+    }
+    if (c.startsWith('opacity-')) {
+      final percentage = double.tryParse(c.substring('opacity-'.length));
+      if (percentage != null && percentage.isFinite) {
+        opacity = percentage.clamp(0, 100) / 100;
+      }
+    }
+    if (c == 'border') borderWidth = 1;
+    if (c.startsWith('border-')) {
+      final token = c.substring('border-'.length);
+      final width = token.startsWith('[')
+          ? _spacingUnit(token)
+          : num.tryParse(token)?.toDouble();
+      if (width != null && width.isFinite && width >= 0) borderWidth = width;
     }
     final color = _colorClass(c);
     if (color != null) {
       if (color.$1 == 'text') fg = color.$2;
       if (color.$1 == 'bg') bg = color.$2;
+      if (color.$1 == 'border') borderColor = color.$2;
     }
   }
 
@@ -680,12 +892,26 @@ ViewStyle? styleFromClasses(List<String> classes, {String? id}) {
     paddingBottom: pb,
     paddingLeft: pl,
     paddingRight: pr,
+    margin: margin,
+    marginHorizontal: mx,
+    marginVertical: my,
+    marginTop: mt,
+    marginBottom: mb,
+    marginLeft: ml,
+    marginRight: mr,
     fontSize: fontSize,
     fontWeight: fontWeight,
+    letterSpacing: letterSpacing,
+    lineHeight: lineHeight,
     textAlign: textAlign,
+    lineClamp: lineClamp,
+    textOverflow: textOverflow,
     foregroundColor: fg,
     backgroundColor: bg,
     cornerRadius: radius,
+    opacity: opacity,
+    borderWidth: borderWidth,
+    borderColor: borderColor,
     italic: italic,
     underline: underline,
     strikethrough: strikethrough,
@@ -693,7 +919,12 @@ ViewStyle? styleFromClasses(List<String> classes, {String? id}) {
   return style.isEmpty ? null : style;
 }
 
-double _roundedValue(String c) {
+double? _roundedValue(String c) {
+  if (c.startsWith('rounded-[') && c.endsWith(']')) {
+    final radius = _spacingUnit(c.substring('rounded-'.length));
+    if (radius != null && radius >= 0) return radius;
+    return 8; // Preserve the established malformed arbitrary-radius fallback.
+  }
   switch (c) {
     case 'rounded-none':
       return 0;
@@ -712,17 +943,21 @@ double _roundedValue(String c) {
     case 'rounded-full':
       return 999;
   }
-  return 8;
+  return null;
 }
 
-/// Recognize a small, fixed palette of `text-*` / `bg-*` / `border-*` classes
-/// and return a hex string. Only named tokens map — no arbitrary values.
+/// Recognize palette and CSS hex text/background/border classes.
 (String, String)? _colorClass(String c) {
-  for (final prefix in const ['text-', 'bg-']) {
+  for (final prefix in const ['text-', 'bg-', 'border-']) {
     if (c.startsWith(prefix)) {
       final name = c.substring(prefix.length);
       final hex = _palette[name];
       if (hex != null) return (prefix.substring(0, prefix.length - 1), hex);
+      if (name.startsWith('[#') && name.endsWith(']')) {
+        final arbitrary = normalizeCssHex(name.substring(1, name.length - 1));
+        if (arbitrary != null)
+          return (prefix.substring(0, prefix.length - 1), arbitrary);
+      }
     }
   }
   return null;
@@ -733,12 +968,12 @@ const Map<String, String> _palette = {
   'black': '#000000',
   'transparent': '#00000000',
   'muted': '#8d8980',
-  'red-500': '#ef4444',
-  'green-500': '#22c55e',
-  'blue-500': '#3b82f6',
-  'blue-900': '#1e3a8a',
-  'amber-500': '#f59e0b',
-  'slate-500': '#64748b',
+  'red-500': '#fb2c36',
+  'green-500': '#00c950',
+  'blue-500': '#2b7fff',
+  'blue-900': '#1c398e',
+  'amber-500': '#fe9a00',
+  'slate-500': '#62748e',
 };
 
 List<double> _parseSparklineValues(String? raw) {

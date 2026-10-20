@@ -4,11 +4,10 @@ use console::style;
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_embedded::{write_ppm, Ui};
 use crepuscularity_lvgl::{
-    render_component_file_to_lvgl_xml, render_template_to_lvgl_xml_with_options, LvglOptions,
-    LvglRoot,
+    render_component_file_to_lvgl_xml_with_options, render_nodes_to_lvgl_xml, LvglOptions, LvglRoot,
 };
 use crepuscularity_native::{
-    render_component_file_to_ir, render_template_to_ir, to_json, to_json_pretty,
+    render_component_file_to_ir, render_template_to_ir_with_path, to_json, to_json_pretty,
 };
 
 use crate::build_options::BuildOptions;
@@ -24,11 +23,10 @@ pub struct ManifestBuildArgs {
     pub all: bool,
 }
 
-pub(crate) fn has_manifest_targets(manifest: Option<PathBuf>) -> bool {
-    matches!(
-        crate::crepus_toml::load_manifest_targets(manifest),
-        Ok(Some(targets)) if !targets.is_empty()
-    )
+pub(crate) fn has_manifest_targets(manifest: Option<PathBuf>) -> Result<bool, CrepusCliError> {
+    let targets =
+        crate::crepus_toml::load_manifest_targets(manifest).map_err(CrepusCliError::context)?;
+    Ok(targets.is_some_and(|targets| !targets.is_empty()))
 }
 
 pub(crate) fn execute(args: ManifestBuildArgs) -> Result<(), CrepusCliError> {
@@ -65,6 +63,7 @@ pub(crate) fn execute(args: ManifestBuildArgs) -> Result<(), CrepusCliError> {
         crate::crepus_toml::pick_targets(&targets, target_id.as_deref())
             .map_err(CrepusCliError::context)?
     };
+    validate_target_outputs(&picked)?;
     for target in picked {
         build_target(&target, options)?;
     }
@@ -75,8 +74,9 @@ fn pick_targets_by_selector(
     targets: &[ResolvedTarget],
     selector: &str,
 ) -> Result<Vec<ResolvedTarget>, CrepusCliError> {
-    if let Ok(picked) = crate::crepus_toml::pick_targets(targets, Some(selector)) {
-        return Ok(picked);
+    if targets.iter().any(|target| target.id == selector) {
+        return crate::crepus_toml::pick_targets(targets, Some(selector))
+            .map_err(CrepusCliError::context);
     }
     let normalized = normalize_selector(selector);
     let picked: Vec<ResolvedTarget> = targets
@@ -99,6 +99,47 @@ fn normalize_selector(selector: &str) -> &str {
         "ir" => "native",
         other => other,
     }
+}
+
+// Only known primary output files participate; webext's multi-asset output is separate.
+fn output_file_path(target: &ResolvedTarget) -> Option<PathBuf> {
+    let extension = match target.target_type.as_str() {
+        "native" | "ir" => "json",
+        "lvgl" => "xml",
+        "embedded" => "ppm",
+        "web" => {
+            return Some(
+                target
+                    .out
+                    .clone()
+                    .unwrap_or_else(|| target.dir.join("dist"))
+                    .join("index.html"),
+            )
+        }
+        _ => return None,
+    };
+    Some(target.out.clone().unwrap_or_else(|| {
+        target
+            .dir
+            .join("dist")
+            .join(format!("{}.{extension}", target.id))
+    }))
+}
+
+fn validate_target_outputs(targets: &[ResolvedTarget]) -> Result<(), CrepusCliError> {
+    let outputs: Vec<_> = targets
+        .iter()
+        .filter_map(|target| {
+            output_file_path(target)
+                .map(|path| (format!("{} ({})", target.id, target.target_type), path))
+        })
+        .collect();
+    crepuscularity_core::output_paths::validate_output_paths(
+        outputs
+            .iter()
+            .map(|(label, path)| (label.as_str(), path.as_path())),
+    )
+    .map_err(CrepusCliError::context)
 }
 
 fn build_target(target: &ResolvedTarget, options: BuildOptions) -> Result<(), CrepusCliError> {
@@ -145,7 +186,11 @@ fn build_lvgl_target(
     let template = std::fs::read_to_string(&template_path)
         .map_err(|e| CrepusCliError::io(e, template_path.clone()))?;
     let ctx = target_context(target, template_path.parent().map(PathBuf::from));
-    let name = target.name.clone().unwrap_or_else(|| target.id.clone());
+    let name = target
+        .name
+        .clone()
+        .or_else(|| target.component.clone())
+        .unwrap_or_else(|| target.id.clone());
     let root = match target.root.as_deref().unwrap_or("component") {
         "screen" => LvglRoot::Screen,
         "component" => LvglRoot::Component,
@@ -155,16 +200,18 @@ fn build_lvgl_target(
             )))
         }
     };
+    let options = LvglOptions { name, root };
     let xml = if let Some(component) = &target.component {
-        render_component_file_to_lvgl_xml(&template, component, &ctx)
+        render_component_file_to_lvgl_xml_with_options(&template, component, &ctx, &options)
     } else {
-        render_template_to_lvgl_xml_with_options(&template, &ctx, &LvglOptions { name, root })
+        let nodes = crepuscularity_core::parse_template_with_path(&template, Some(&template_path))
+            .map_err(|e| {
+                CrepusCliError::context(format!("parse lvgl target {:?}: {e}", target.id))
+            })?;
+        render_nodes_to_lvgl_xml(&nodes, &ctx, &options)
     }
     .map_err(|e| CrepusCliError::context(format!("render lvgl target {:?}: {e}", target.id)))?;
-    let out = target
-        .out
-        .clone()
-        .unwrap_or_else(|| target.dir.join("dist").join(format!("{}.xml", target.id)));
+    let out = output_file_path(target).expect("render target has an output file");
     write_output(&out, xml.as_bytes());
     eprintln!(
         "{} {} {}",
@@ -186,7 +233,7 @@ fn build_native_target(
     let ir = if let Some(component) = &target.component {
         render_component_file_to_ir(&template, component, &ctx)
     } else {
-        render_template_to_ir(&template, &ctx)
+        render_template_to_ir_with_path(&template, &ctx, Some(&template_path))
     }
     .map_err(|e| CrepusCliError::context(format!("render native target {:?}: {e}", target.id)))?;
     let json = if target.root.as_deref() == Some("pretty") {
@@ -197,10 +244,7 @@ fn build_native_target(
     .map_err(|e| {
         CrepusCliError::context(format!("serialize native target {:?}: {e}", target.id))
     })?;
-    let out = target
-        .out
-        .clone()
-        .unwrap_or_else(|| target.dir.join("dist").join(format!("{}.json", target.id)));
+    let out = output_file_path(target).expect("render target has an output file");
     write_output(&out, json.as_bytes());
     eprintln!(
         "{} {} {}",
@@ -222,10 +266,10 @@ fn build_embedded_target(
         .height
         .ok_or_else(|| CrepusCliError::context("embedded target needs height"))?;
     let template_path = resolve_template_path(target);
-    let template = std::fs::read_to_string(&template_path)
-        .map_err(|e| CrepusCliError::io(e, template_path.clone()))?;
     let ctx = target_context(target, template_path.parent().map(PathBuf::from));
-    let mut ui_view = Ui::new(width, height, &template);
+    let mut ui_view = Ui::from_path(width, height, &template_path).map_err(|e| {
+        CrepusCliError::context(format!("load embedded target {:?}: {e}", target.id))
+    })?;
     if let Some(component) = &target.component {
         ui_view.set_component(component.clone());
     }
@@ -238,10 +282,7 @@ fn build_embedded_target(
     ui_view.render_into(&mut ppm).map_err(|e| {
         CrepusCliError::context(format!("render embedded target {:?}: {e}", target.id))
     })?;
-    let out = target
-        .out
-        .clone()
-        .unwrap_or_else(|| target.dir.join("dist").join(format!("{}.ppm", target.id)));
+    let out = output_file_path(target).expect("render target has an output file");
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| CrepusCliError::io(e, parent.to_path_buf()))?;
     }
@@ -321,4 +362,97 @@ fn write_output(path: &Path, bytes: &[u8]) {
     }
     std::fs::write(path, bytes)
         .unwrap_or_else(|e| ui::error(&format!("write {}: {e}", path.display())));
+}
+
+#[cfg(test)]
+mod selector_tests {
+    use super::*;
+
+    #[test]
+    fn matching_duplicate_id_does_not_fall_back_to_type_selection() {
+        let manifest = crate::crepus_toml::CrepusManifest::parse(
+            r#"[[targets]]
+type = "web"
+id = "web"
+site = "one"
+[[targets]]
+type = "web"
+id = "web"
+site = "two"
+"#,
+        )
+        .unwrap();
+        let mut targets = manifest.resolved_targets(Path::new("/manifest"));
+        let error = pick_targets_by_selector(&targets, "web").unwrap_err();
+        assert!(error.to_string().contains("ambiguous"), "{error}");
+        targets[0].id = "one".into();
+        targets[1].id = "two".into();
+        assert_eq!(pick_targets_by_selector(&targets, "web").unwrap().len(), 2);
+        assert_eq!(pick_targets_by_selector(&targets, "one").unwrap().len(), 1);
+    }
+    fn targets(source: &str, root: &Path) -> Vec<ResolvedTarget> {
+        crate::crepus_toml::CrepusManifest::parse(source)
+            .unwrap()
+            .resolved_targets(root)
+    }
+
+    #[test]
+    fn output_preflight_rejects_duplicate_explicit_files_before_any_build() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = targets(
+            r#"[[targets]]
+type = "native"
+id = "one"
+out = "shared/result"
+[[targets]]
+type = "lvgl"
+id = "two"
+out = "shared/result"
+"#,
+            root.path(),
+        );
+        assert!(validate_target_outputs(&selected).is_err());
+        assert!(!root.path().join("shared").exists());
+    }
+
+    #[test]
+    fn output_preflight_rejects_native_ir_default_alias_collisions() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = targets(
+            r#"[[targets]]
+type = "native"
+id = "same"
+[[targets]]
+type = "ir"
+id = "same"
+"#,
+            root.path(),
+        );
+        assert!(validate_target_outputs(&selected).is_err());
+    }
+
+    #[test]
+    fn output_preflight_keeps_distinct_files_in_a_shared_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = targets(
+            r#"[[targets]]
+type = "native"
+id = "same"
+[[targets]]
+type = "lvgl"
+id = "same"
+[[targets]]
+type = "embedded"
+id = "same"
+[[targets]]
+type = "web"
+id = "web"
+"#,
+            root.path(),
+        );
+        validate_target_outputs(&selected).unwrap();
+        assert!(output_file_path(&selected[3])
+            .unwrap()
+            .ends_with("dist/index.html"));
+    }
 }

@@ -37,13 +37,77 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.serialization.json.JsonElement
 
 object CrepusActions {
+    private val executor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task, "crepus-actions").apply { isDaemon = true }
+        }
     var dispatch: (String) -> String = { "{}" }
     var resultSink: (String) -> Unit = {}
 
     fun perform(action: String) {
-        resultSink(dispatch(action))
+        val dispatch = dispatch
+        val resultSink = resultSink
+        executor.execute {
+            val result = try {
+                dispatch(action)
+            } catch (error: Exception) {
+                CrepusRustActions.queuedChangeError(error)
+            }
+            val delivered = java.util.concurrent.CountDownLatch(1)
+            check(android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    resultSink(result)
+                } finally {
+                    delivered.countDown()
+                }
+            }) { "main looper unavailable" }
+            awaitDelivery(delivered)
+        }
+    }
+
+    private fun awaitDelivery(delivered: java.util.concurrent.CountDownLatch) {
+        var interrupted = false
+        while (true) {
+            try {
+                delivered.await()
+                break
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
+    }
+
+    fun performChange(action: String?, bind: String, value: JsonElement) {
+        val resultSink = resultSink
+        val snapshot = runCatching {
+            val valueJson = value.toString()
+            valueJson to CrepusStateStore.snapshotDraft(valueJson)
+        }.getOrElse { error ->
+            resultSink(CrepusRustActions.queuedChangeError(error))
+            return
+        }
+        val valueJson = snapshot.first
+        val sequence = CrepusStateStore.beginDraft(bind, snapshot.second)
+        executor.execute {
+            val result = CrepusRustActions.dispatchQueuedChange(action ?: "", bind, valueJson)
+            val delivered = java.util.concurrent.CountDownLatch(1)
+            check(android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    resultSink(result)
+                } finally {
+                    try {
+                        CrepusStateStore.clearDraft(bind, sequence)
+                    } finally {
+                        delivered.countDown()
+                    }
+                }
+            }) { "main looper unavailable" }
+            awaitDelivery(delivered)
+        }
     }
 }
 

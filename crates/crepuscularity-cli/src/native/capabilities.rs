@@ -153,6 +153,27 @@ pub const CAPABILITIES: &[CapabilitySpec] = &[
     CapabilitySpec { name: "deep-links", aliases: &["deeplinks", "deep-link", "url-events"], cargo_feature: "deep-links", android_manifest: "", ios_project: "", host: add_deep_links_host },
 ];
 
+// Keep existing permission text when capabilities share a usage-description key.
+fn generated_info_plist_settings(source: &str, ios_project: &str, usage_only: bool) -> String {
+    let mut settings = String::new();
+    for line in ios_project.lines() {
+        if let Some((key, _)) = ios_info_plist_key(line) {
+            if source
+                .lines()
+                .filter_map(ios_info_plist_key)
+                .any(|(existing, _)| existing == key)
+            {
+                continue;
+            }
+        } else if usage_only {
+            continue;
+        }
+        settings.push_str(line);
+        settings.push('\n');
+    }
+    settings
+}
+
 pub fn add_capability(capability: &str, root: &Path) -> Result<(), CrepusCliError> {
     let capability = capability.to_ascii_lowercase();
     let spec = CAPABILITIES
@@ -191,38 +212,28 @@ pub fn add_capability(capability: &str, root: &Path) -> Result<(), CrepusCliErro
             .map_err(|e| CrepusCliError::io(e, project.to_path_buf()))?;
         if source.contains("INFOPLIST_FILE: App/Info.plist") {
             add_ios_info_plist_key(root, spec.ios_project)?;
-        } else if (spec.name == "geolocation"
-            && !source.contains("INFOPLIST_KEY_NSLocationWhenInUseUsageDescription"))
-            || (spec.name == "photo-library"
-                && !source.contains("INFOPLIST_KEY_NSPhotoLibraryUsageDescription"))
-            || (spec.name == "camera" && !source.contains("INFOPLIST_KEY_NSCameraUsageDescription"))
-            || (spec.name == "video"
-                && !source.contains("INFOPLIST_KEY_NSMicrophoneUsageDescription"))
-            || (spec.name == "microphone"
-                && !source.contains("INFOPLIST_KEY_NSMicrophoneUsageDescription"))
-            || (spec.name == "calendar"
-                && !source.contains("INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription"))
-            || (spec.name == "contacts"
-                && !source.contains("INFOPLIST_KEY_NSContactsUsageDescription"))
-        {
-            source = source.replace(
-                "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n",
-                &format!(
-                    "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n{}",
-                    spec.ios_project
-                ),
-            );
-            fs::write(&project, source)
-                .map_err(|e| CrepusCliError::io(e, project.to_path_buf()))?;
-        } else if (spec.name == "bluetooth" || spec.name == "permissions")
-            && !source.contains("CoreBluetooth")
-        {
-            source = source.replace(
-                "        OTHER_LDFLAGS: \"-lcrepus_mobile_actions\"\n",
-                spec.ios_project,
-            );
-            fs::write(&project, source)
-                .map_err(|e| CrepusCliError::io(e, project.to_path_buf()))?;
+        } else {
+            let mut changed = false;
+            if (spec.name == "bluetooth" || spec.name == "permissions")
+                && !source.contains("CoreBluetooth")
+            {
+                let linked = generated_info_plist_settings(&source, spec.ios_project, false);
+                let anchor = "        OTHER_LDFLAGS: \"-lcrepus_mobile_actions\"\n";
+                if source.contains(anchor) && !linked.is_empty() {
+                    source = source.replace(anchor, &linked);
+                    changed = true;
+                }
+            }
+            let missing = generated_info_plist_settings(&source, spec.ios_project, true);
+            let anchor = "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n";
+            if !missing.is_empty() && source.contains(anchor) {
+                source = source.replace(anchor, &format!("{anchor}{missing}"));
+                changed = true;
+            }
+            if changed {
+                fs::write(&project, source)
+                    .map_err(|e| CrepusCliError::io(e, project.to_path_buf()))?;
+            }
         }
     }
     (spec.host)(root)?;
@@ -362,7 +373,10 @@ pub fn ios_info_plist_keys(project: &str) -> String {
 pub fn ios_info_plist_key(setting: &str) -> Option<(String, &str)> {
     let setting = setting.trim();
     let (key, value) = setting.split_once(": ")?;
-    let key = key.strip_prefix("INFOPLIST_KEY_NS")?;
+    let key = key
+        .trim()
+        .trim_matches(['"', '\''])
+        .strip_prefix("INFOPLIST_KEY_NS")?;
     Some((format!("NS{key}"), value.trim_matches('"')))
 }
 
@@ -726,6 +740,37 @@ pub fn add_toast_host(root: &Path) -> Result<(), CrepusCliError> {
     Ok(())
 }
 
+fn migrate_ios_picker_registry(mut source: String) -> String {
+    source = source
+        .replace(
+            "private var delegates: [FilePickerDelegate]",
+            "private var delegates: [NSObject]",
+        )
+        .replace(
+            "func retain(delegate: FilePickerDelegate)",
+            "func retain(delegate: NSObject)",
+        )
+        .replace(
+            "func clear(delegate: FilePickerDelegate)",
+            "func clear(delegate: NSObject)",
+        )
+        .replace(
+            "    private static func errorJson",
+            "    fileprivate static func errorJson",
+        )
+        .replace(
+            "    private static func stringify",
+            "    fileprivate static func stringify",
+        );
+    if !source.contains("var isActive: Bool { !delegates.isEmpty }") {
+        source = source.replace(
+            "private var delegates: [NSObject] = []",
+            "private var delegates: [NSObject] = []\n\n    var isActive: Bool { !delegates.isEmpty }",
+        );
+    }
+    source
+}
+
 pub fn add_video_host(root: &Path) -> Result<(), CrepusCliError> {
     let android = android_actions_path(root)?;
     let mut source =
@@ -733,7 +778,7 @@ pub fn add_video_host(root: &Path) -> Result<(), CrepusCliError> {
     if !source.contains("videoValue") {
         source = source.replace("import android.content.Context\n", "import android.app.Activity\nimport android.content.Context\nimport android.provider.MediaStore\n");
         source = source.replace("    private var openDocuments: (() -> Unit)? = null\n", "    private var openDocuments: (() -> Unit)? = null\n    private var pendingVideoAction: String? = null\n    private var captureVideo: (() -> Unit)? = null\n");
-        source = source.replace("        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n", "        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n        val video = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->\n            val action = pendingVideoAction ?: return@registerForActivityResult\n            pendingVideoAction = null\n            val uri = result.data?.data\n            if (result.resultCode != Activity.RESULT_OK || uri == null) emit(videoCancelledJson(action)) else emit(videoResultJson(action, uri))\n        }\n        captureVideo = { video.launch(Intent(MediaStore.ACTION_VIDEO_CAPTURE)) }\n");
+        source = source.replace("        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n", "        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n        val video = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->\n            val action = synchronized(this) { pendingVideoAction.also { pendingVideoAction = null } } ?: return@registerForActivityResult\n            val uri = result.data?.data\n            emit(runCatching { if (result.resultCode != Activity.RESULT_OK || uri == null) videoCancelledJson(action) else videoResultJson(action, uri) }.getOrElse { error -> errorJson(action, error.message ?: error.toString()) })\n        }\n        captureVideo = { video.launch(Intent(MediaStore.ACTION_VIDEO_CAPTURE)) }\n");
         source = source.replace(
             "        when (capability) {\n",
             "        when (capability) {\n            \"video\" -> videoValue(method)\n",
@@ -745,6 +790,7 @@ pub fn add_video_host(root: &Path) -> Result<(), CrepusCliError> {
     let mut source =
         fs::read_to_string(&ios).map_err(|e| CrepusCliError::io(e, ios.to_path_buf()))?;
     if !source.contains("videoValue") {
+        source = migrate_ios_picker_registry(source);
         source = source.replace("        switch capability {\n", "        switch capability {\n        case \"video\":\n            return try videoValue(method: method)\n");
         source = source.replace(
             "\n    private static func dispatchHostAction",
@@ -946,8 +992,8 @@ pub fn add_image_picker_host(root: &Path) -> Result<(), CrepusCliError> {
             "        when (capability) {\n            \"imagePicker\" -> imagePickerValue(method)\n",
         );
         source = source.replace(
-            "        when (action) {\n            \"import_files\" -> {\n",
-            "        when (action) {\n            \"pick_media\" -> {\n                pendingPickerAction = action\n                openMedia?.invoke() ?: emit(errorJson(action, \"media picker unavailable\"))\n                pendingJson(action)\n            }\n            \"import_files\" -> {\n",
+            "        when (action) {\n",
+            "        when (action) {\n            \"pick_media\" -> synchronized(this) { runCatching {\n                val open = openMedia ?: error(\"media picker unavailable\")\n                check(pendingPickerAction == null) { \"picker already active\" }\n                pendingPickerAction = action\n                try {\n                    open()\n                    pendingJson(action)\n                } catch (error: Exception) {\n                    pendingPickerAction = null\n                    throw error\n                }\n            }.getOrElse { error -> errorJson(action, error.message ?: error.toString()) } }\n",
         );
         source = source.replace(
             "    private fun dispatchHostAction",
@@ -959,6 +1005,7 @@ pub fn add_image_picker_host(root: &Path) -> Result<(), CrepusCliError> {
     let mut source =
         fs::read_to_string(&ios).map_err(|e| CrepusCliError::io(e, ios.to_path_buf()))?;
     if !source.contains("imagePickerValue") {
+        source = migrate_ios_picker_registry(source);
         source = source.replace("import UIKit\n", "import PhotosUI\nimport UIKit\n");
         source = source.replace(
             "        switch action {\n        case \"import_files\":\n",
@@ -1050,7 +1097,7 @@ pub fn add_camera_host(root: &Path) -> Result<(), CrepusCliError> {
         );
         source = source.replace(
             "        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n",
-            "        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n        val camera = activity.registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->\n            val action = pendingCameraAction ?: return@registerForActivityResult\n            pendingCameraAction = null\n            if (bitmap == null) emit(cameraCancelledJson(action)) else emit(cameraResultJson(action, bitmap))\n        }\n        captureCameraPhoto = { camera.launch(null) }\n",
+            "        openDocuments = { filePicker.launch(arrayOf(\"*/*\")) }\n        val camera = activity.registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->\n            val action = synchronized(this) { pendingCameraAction.also { pendingCameraAction = null } } ?: return@registerForActivityResult\n            emit(runCatching { if (bitmap == null) cameraCancelledJson(action) else cameraResultJson(action, bitmap) }.getOrElse { error -> errorJson(action, error.message ?: error.toString()) })\n        }\n        captureCameraPhoto = { camera.launch(null) }\n",
         );
         source = source.replace(
             "        when (capability) {\n",
@@ -1066,6 +1113,7 @@ pub fn add_camera_host(root: &Path) -> Result<(), CrepusCliError> {
     let mut source =
         fs::read_to_string(&ios).map_err(|e| CrepusCliError::io(e, ios.to_path_buf()))?;
     if !source.contains("cameraValue") {
+        source = migrate_ios_picker_registry(source);
         source = source.replace(
             "        switch capability {\n",
             "        switch capability {\n        case \"camera\":\n            return try cameraValue(method: method)\n",

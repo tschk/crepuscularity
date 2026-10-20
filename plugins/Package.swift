@@ -11,6 +11,11 @@ let package = Package(
             name: "CrepuscularityPlugin",
             path: "swift",
             sources: ["CrepuscularityPlugin.swift"]
+        ),
+        .testTarget(
+            name: "CrepuscularityPluginTests",
+            dependencies: ["CrepuscularityPlugin"],
+            path: "swift-tests"
         )
     ]
 )

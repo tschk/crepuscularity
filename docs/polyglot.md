@@ -38,6 +38,8 @@ crepus native ir --stdin-json
     "main.crepus": "div\n  \"Hello\""
   },
   "template": "div\n  \"Hello\"",
+  "filename": "main.crepus",
+  "baseDir": ".",
   "context": {
     "name": "Ada"
   },
@@ -46,6 +48,24 @@ crepus native ir --stdin-json
 ```
 
 When `files` and `entry` are present, they win over `template`. Context supports scalar values and arrays of objects for loop contexts.
+
+For `template` input, optional `filename` selects the parser frontend (for example,
+`App.svelte` or `Page.astro`). `baseDir` sets the directory for relative includes.
+
+## Java HTML convenience API
+
+Java `renderHtml(path, context)` delegates to the canonical `crepus render` command.
+It returns source HTML tags, web-renderer attributes and handler metadata, retaining
+all rendered nodes and escaping text through Rust. Hosts attach their own event
+listeners to that metadata. `renderIr` continues to expose View IR JSON.
+
+The Java adapter passes an owned temporary JSON context file, including for an
+empty context, so an adjacent `context.toml` is not loaded implicitly. The file
+is removed after success or failure. Use the CLI built from the matching checkout:
+HTML JSON contexts share native IR validation (scalars and arrays of scalar values
+or objects with scalar fields). Unsupported nesting fails before HTML output.
+Files with a `.json` extension must contain valid JSON; the ordinary TOML context
+route remains available.
 
 ## ABI Boundary
 

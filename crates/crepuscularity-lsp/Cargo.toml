@@ -20,5 +20,6 @@ path = "src/lib.rs"
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync"] }
 tower-lsp = { version = "0.20", features = ["runtime-tokio"] }
+tower = { version = "0.4", features = ["util"], default-features = false }
 
 [dev-dependencies]
