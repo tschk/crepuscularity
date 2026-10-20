@@ -34,6 +34,7 @@ export 'src/view_ir.dart'
         StackNode,
         ScrollNode,
         ButtonNode,
+        ButtonLabelPart,
         ToggleNode,
         CheckboxNode,
         ProgressNode,

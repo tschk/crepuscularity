@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 crepuscularity-web = { path = "../../../crates/crepuscularity-web", features = ["dom"] }
-wasm-bindgen = "=0.2.121"
+wasm-bindgen = "=0.2.126"
 
 # Detach from the repo root workspace so `cargo build --target wasm32-unknown-unknown` works here.
 [workspace]

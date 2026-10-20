@@ -5,6 +5,9 @@ final class CrepuscularityAbiSession
     private FFI $ffi;
     private FFI\CData $session;
 
+    // A clone would share the native pointer and release the same session twice.
+    private function __clone(): void {}
+
     public function __construct(?string $libPath = null)
     {
         $root = dirname(__DIR__, 2);
@@ -44,6 +47,9 @@ CDEF, $libPath ?: (getenv('CREPUS_ABI_LIB') ?: $defaultLib));
 
     public function setTemplate(string $template, ?string $baseDir = null): void
     {
+        if (str_contains($template, "\0") || ($baseDir !== null && str_contains($baseDir, "\0"))) {
+            throw new InvalidArgumentException('template and baseDir must not contain NUL bytes');
+        }
         $this->check($this->ffi->crepus_session_set_template_string($this->session, $template, $baseDir));
     }
 
@@ -65,6 +71,9 @@ CDEF, $libPath ?: (getenv('CREPUS_ABI_LIB') ?: $defaultLib));
     public function dispatchEvent(string|array $event): array
     {
         $payload = is_array($event) ? json_encode($event, JSON_THROW_ON_ERROR) : $event;
+        if (str_contains($payload, "\0")) {
+            throw new InvalidArgumentException('event payload must not contain literal NUL bytes');
+        }
         return $this->takeJson($this->ffi->crepus_session_dispatch_event_json($this->session, $payload));
     }
 

@@ -52,11 +52,14 @@ You should see the dashboard from `ui.crepus` on the panel. Default pins are in 
 
 ### Panel byte order
 
-If colors look wrong, regenerate `frame.bin` after changing byte order on the host:
+Keep `frame.bin` in little-endian RGB565 order: the firmware's direct
+`panel.blit_full(FRAME)` decodes that format before mipidsi encodes the SPI transfer.
+Use the host simulator's default panel configuration when exporting this file.
+Do not byte-swap it with the ST7789 preset. If red and blue are reversed on a
+physical module, check the controller's RGB/BGR channel-order configuration.
 
-```rust
-Ui::new(240, 320, template).panel(PanelConfig::st7789_240x320()) // BGR
-```
+This differs from `Ui::flush(&mut panel)`: the STM32 adapter requests native
+framebuffer bytes there, so `flush_framebuffer` bypasses panel byte swapping.
 
 ## Roadmap (STM32)
 
