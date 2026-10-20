@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use js_sys::{Array, Function, Promise, Reflect};
 use serde::{de::DeserializeOwned, Serialize};
@@ -187,16 +187,24 @@ pub async fn call_callback_method(
     let args = args.to_vec();
     let promise = Promise::new(&mut |resolve, reject| {
         let callback_reject = reject.clone();
-        let callback = Closure::once_into_js(move |value: JsValue| {
+        // shortcut: pending calls retain callbacks; add cancellation when browser APIs support it.
+        let owner = Rc::new(RefCell::new(None::<Closure<dyn FnMut(JsValue)>>));
+        let callback_owner = Rc::clone(&owner);
+        let callback = Closure::once(move |value: JsValue| {
+            // Break ownership on invocation or a synchronous API failure.
+            let _callback = callback_owner.borrow_mut().take();
             if let Some(error) = last_error() {
                 let _ = callback_reject.call1(&JsValue::UNDEFINED, &JsValue::from_str(&error));
             } else {
                 let _ = resolve.call1(&JsValue::UNDEFINED, &value);
             }
         });
+        let callback_js: JsValue = callback.as_ref().clone();
+        *owner.borrow_mut() = Some(callback);
         let mut with_callback = args.clone();
-        with_callback.push(callback);
+        with_callback.push(callback_js);
         if let Err(error) = apply(&function, &this, &with_callback) {
+            owner.borrow_mut().take();
             let _ = reject.call1(&JsValue::UNDEFINED, &JsValue::from_str(&error.to_string()));
         }
     });

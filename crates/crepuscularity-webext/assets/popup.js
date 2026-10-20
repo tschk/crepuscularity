@@ -9,6 +9,8 @@ const viewHelp = document.getElementById("view-help");
 const viewCrepus = document.getElementById("view-crepus");
 
 const DEFAULTS = { enabled: true, autoRender: false };
+const revisions = { enabled: 0, autoRender: 0 };
+const pendingWrites = { enabled: 0, autoRender: 0 };
 
 function showView(which) {
   if (viewMain) viewMain.hidden = which !== "main";
@@ -17,6 +19,8 @@ function showView(which) {
 }
 
 async function syncState() {
+  const requested = { ...revisions };
+  const writing = { ...pendingWrites };
   const data = await browserApi.storage.sync
     .get(DEFAULTS)
     .catch(() => DEFAULTS);
@@ -24,8 +28,12 @@ async function syncState() {
 
   const enabledCb = document.getElementById("enabled");
   const autoRenderCb = document.getElementById("autoRender");
-  if (enabledCb) enabledCb.checked = settings.enabled;
-  if (autoRenderCb) autoRenderCb.checked = settings.autoRender;
+  if (enabledCb && !writing.enabled && requested.enabled === revisions.enabled) {
+    enabledCb.checked = settings.enabled;
+  }
+  if (autoRenderCb && !writing.autoRender && requested.autoRender === revisions.autoRender) {
+    autoRenderCb.checked = settings.autoRender;
+  }
 }
 
 syncState();
@@ -64,8 +72,14 @@ document.addEventListener("change", async (e) => {
 
   const action = actionEl.dataset.action;
   if (action === "set-enabled") {
+    revisions.enabled++;
+    pendingWrites.enabled++;
     await browserApi.storage.sync.set({ enabled: actionEl.checked }).catch(() => {});
+    pendingWrites.enabled--;
   } else if (action === "set-auto-render") {
+    revisions.autoRender++;
+    pendingWrites.autoRender++;
     await browserApi.storage.sync.set({ autoRender: actionEl.checked }).catch(() => {});
+    pendingWrites.autoRender--;
   }
 });

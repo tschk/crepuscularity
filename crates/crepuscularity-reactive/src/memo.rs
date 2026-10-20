@@ -1,21 +1,39 @@
 use std::rc::Rc;
 
 use crate::runtime::{
-    alloc_id, clear_observer_sources, enter_observer, mark_subscribers_dirty, remove_node,
-    track_read, AnyNode, MemoEqFn, MemoNode, MemoRunFn, NodeId, State, NODES,
+    alloc_id, enter_memo, mark_subscribers_dirty, remove_node, run_observer, track_read, AnyNode,
+    MemoEqFn, MemoNode, MemoRunFn, NodeId, State, NODES,
 };
 
 /// Cached reactive computation that notifies dependents only when its value changes.
+///
+/// Memo handles belong to the thread that created their reactive graph.
+/// They cannot be moved to another thread or shared across threads.
+///
+/// ```compile_fail
+/// use crepuscularity_reactive::Memo;
+/// let memo = Memo::new(|| 1);
+/// std::thread::spawn(move || { std::hint::black_box(memo.get()); });
+/// ```
+///
+/// ```compile_fail
+/// use crepuscularity_reactive::Memo;
+/// let memo = Memo::new(|| 1);
+/// std::thread::scope(|scope| {
+///     let shared = &memo;
+///     scope.spawn(move || { std::hint::black_box(shared.get()); });
+/// });
+/// ```
 pub struct Memo<T: Clone + PartialEq + 'static> {
     pub(crate) id: NodeId,
-    _marker: std::marker::PhantomData<T>,
+    _marker: std::marker::PhantomData<(T, Rc<()>)>,
 }
 
 impl<T: Clone + PartialEq + 'static> Memo<T> {
     /// Create a lazy memo. The closure runs on the first [`Memo::get`] call.
     pub fn new(f: impl Fn() -> T + 'static) -> Self {
         let id = alloc_id();
-        let run: MemoRunFn = Rc::new(move || Box::new(f()) as Box<dyn std::any::Any>);
+        let run: MemoRunFn = Rc::new(move || Rc::new(f()) as Rc<dyn std::any::Any>);
         let eq_fn: MemoEqFn = Rc::new(|a: &dyn std::any::Any, b: &dyn std::any::Any| {
             match (a.downcast_ref::<T>(), b.downcast_ref::<T>()) {
                 (Some(a), Some(b)) => a == b,
@@ -27,6 +45,7 @@ impl<T: Clone + PartialEq + 'static> Memo<T> {
                 id,
                 AnyNode::Memo(MemoNode {
                     state: State::Dirty,
+                    revision: 0,
                     sources: vec![],
                     subscribers: std::collections::HashSet::new(),
                     run,
@@ -45,18 +64,18 @@ impl<T: Clone + PartialEq + 'static> Memo<T> {
     pub fn get(&self) -> T {
         track_read(self.id);
         run_memo_if_needed(self.id);
-        NODES.with(|nodes| {
+        let cached = NODES.with(|nodes| {
             let nodes = nodes.borrow();
             match nodes.get(&self.id) {
-                Some(AnyNode::Memo(m)) => m
-                    .cached
-                    .as_ref()
-                    .and_then(|v| v.downcast_ref::<T>())
-                    .cloned()
-                    .expect("memo cached value must be T"),
+                Some(AnyNode::Memo(m)) => m.cached.as_ref().map(Rc::clone),
                 _ => panic!("memo node not found"),
             }
-        })
+        });
+        cached
+            .as_ref()
+            .and_then(|value| value.downcast_ref::<T>())
+            .cloned()
+            .expect("memo cached value must be T")
     }
 
     /// Remove this memo from the reactive graph.
@@ -78,66 +97,122 @@ impl<T: Clone + PartialEq + 'static> Clone for Memo<T> {
 
 /// Recompute memo if its state is not Clean.
 pub(crate) fn run_memo_if_needed(id: NodeId) {
-    let state = NODES.with(|nodes| {
-        let nodes = nodes.borrow();
-        match nodes.get(&id) {
-            Some(AnyNode::Memo(m)) => m.state,
-            _ => State::Clean,
+    loop {
+        let snapshot = NODES.with(|nodes| {
+            let nodes = nodes.borrow();
+            match nodes.get(&id) {
+                Some(AnyNode::Memo(m)) => Some((m.state, m.revision)),
+                _ => None,
+            }
+        });
+        match snapshot {
+            None | Some((State::Clean, _)) => return,
+            Some((State::Dirty, _)) => run_memo(id),
+            Some((State::Check, _)) => validate_memo_sources(id),
         }
-    });
+        // Recheck after user comparisons/destructors, which may invalidate us or
+        // install a newer cache through a nested computation.
+    }
+}
 
-    match state {
-        State::Clean => {
-            // Nothing to do — cached value is valid.
-        }
-        State::Check | State::Dirty => {
-            // In both cases re-run the computation.
-            // (Check means an upstream changed; we run and compare to decide if
-            //  our own subscribers need notification. Dirty means we're definitely stale.)
-            run_memo(id);
+// Known dependency traversal uses heap frames.
+// shortcut: user computations still recurse; revisit for deep cold memo chains.
+fn validate_memo_sources(id: NodeId) {
+    enum Frame {
+        Visit(NodeId),
+        Finish(NodeId, u64, crate::runtime::ActiveMemoGuard),
+    }
+    let mut pending = vec![Frame::Visit(id)];
+    while let Some(frame) = pending.pop() {
+        match frame {
+            Frame::Visit(id) => {
+                let snapshot = NODES.with(|nodes| match nodes.borrow().get(&id) {
+                    Some(AnyNode::Memo(memo)) => Some((memo.state, memo.revision)),
+                    _ => None,
+                });
+                match snapshot {
+                    None | Some((State::Clean, _)) => {}
+                    Some((State::Dirty, _)) => run_memo_if_needed(id),
+                    Some((State::Check, revision)) => {
+                        let active = enter_memo();
+                        let sources = NODES.with(|nodes| {
+                            nodes
+                                .borrow()
+                                .get(&id)
+                                .and_then(AnyNode::sources)
+                                .map(<[NodeId]>::to_vec)
+                                .unwrap_or_default()
+                        });
+                        pending.push(Frame::Finish(id, revision, active));
+                        pending.extend(sources.into_iter().rev().map(Frame::Visit));
+                    }
+                }
+            }
+            Frame::Finish(id, revision, active) => {
+                NODES.with(|nodes| {
+                    if let Some(AnyNode::Memo(memo)) = nodes.borrow_mut().get_mut(&id) {
+                        if memo.state == State::Check && memo.revision == revision {
+                            memo.state = State::Clean;
+                        }
+                    }
+                });
+                drop(active);
+                pending.push(Frame::Visit(id));
+            }
         }
     }
 }
 
 /// Run the memo computation, update cached value, and notify subscribers if the value changed.
 pub(crate) fn run_memo(id: NodeId) {
-    clear_observer_sources(id);
-
+    let _active = enter_memo();
     let run = NODES.with(|nodes| {
         let nodes = nodes.borrow();
         match nodes.get(&id) {
-            Some(AnyNode::Memo(m)) => Some(Rc::clone(&m.run)),
+            Some(AnyNode::Memo(m)) => Some((Rc::clone(&m.run), m.revision)),
             _ => None,
         }
     });
 
-    let new_value = run.map(|f| {
-        let _observer = enter_observer(id);
-        f()
-    });
+    let Some((run, revision)) = run else {
+        return;
+    };
+    let new_val = run_observer(id, || run());
 
-    if let Some(new_val) = new_value {
-        let (had_cached, changed) = NODES.with(|nodes| {
+    {
+        let snapshot = NODES.with(|nodes| {
             let nodes = nodes.borrow();
             match nodes.get(&id) {
-                Some(AnyNode::Memo(m)) => match &m.cached {
-                    Some(old) => (true, !(m.eq_fn)(old.as_ref(), new_val.as_ref())),
-                    None => (false, true),
-                },
-                _ => (false, true),
+                Some(AnyNode::Memo(m)) => {
+                    Some((m.cached.as_ref().map(Rc::clone), Rc::clone(&m.eq_fn)))
+                }
+                _ => None,
             }
         });
-
-        NODES.with(|nodes| {
+        let (had_cached, changed) = match &snapshot {
+            Some((Some(old), equal)) => (true, !equal(old.as_ref(), new_val.as_ref())),
+            _ => (false, true),
+        };
+        let mut pending_value = Some(new_val);
+        let (committed, previous) = NODES.with(|nodes| {
             if let Some(AnyNode::Memo(m)) = nodes.borrow_mut().get_mut(&id) {
-                m.cached = Some(new_val);
-                m.state = State::Clean;
+                if m.revision == revision {
+                    let previous = m
+                        .cached
+                        .replace(pending_value.take().expect("new memo value"));
+                    m.state = State::Clean;
+                    return (true, previous);
+                }
             }
+            (false, None)
         });
 
-        if had_cached && changed {
+        if committed && had_cached && changed {
             mark_subscribers_dirty(id);
         }
+        drop(previous);
+        drop(snapshot);
+        drop(pending_value);
     }
 }
 
@@ -199,5 +274,137 @@ mod tests {
         assert_eq!(memo.get(), 2);
         signal.set(5);
         assert_eq!(memo.get(), 10);
+    }
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum CallbackPhase {
+        Clone,
+        Equal,
+        Drop,
+    }
+
+    struct ReentrantValue {
+        value: i32,
+        callback: Rc<dyn Fn(CallbackPhase)>,
+    }
+
+    impl Clone for ReentrantValue {
+        fn clone(&self) -> Self {
+            (self.callback)(CallbackPhase::Clone);
+            Self {
+                value: self.value,
+                callback: Rc::clone(&self.callback),
+            }
+        }
+    }
+
+    impl PartialEq for ReentrantValue {
+        fn eq(&self, other: &Self) -> bool {
+            (self.callback)(CallbackPhase::Equal);
+            self.value == other.value
+        }
+    }
+
+    impl Drop for ReentrantValue {
+        fn drop(&mut self) {
+            (self.callback)(CallbackPhase::Drop);
+        }
+    }
+
+    fn callback_can_drop_last_signal(phase: CallbackPhase) {
+        let signal = Signal::new(42);
+        let id = signal.id;
+        let owned = Rc::new(std::cell::RefCell::new(Some(signal)));
+        let callback: Rc<dyn Fn(CallbackPhase)> = Rc::new(move |current| {
+            if current == phase {
+                drop(owned.borrow_mut().take());
+            }
+        });
+        let source = Signal::new(0);
+        let memo = Memo::new({
+            let source = source.clone();
+            move || ReentrantValue {
+                value: source.get(),
+                callback: Rc::clone(&callback),
+            }
+        });
+        run_memo(memo.id);
+        if phase == CallbackPhase::Clone {
+            drop(memo.get());
+        } else {
+            source.set(1);
+        }
+        assert!(!NODES.with(|nodes| nodes.borrow().contains_key(&id)));
+        memo.dispose();
+    }
+
+    #[test]
+    fn cloned_memo_values_can_release_the_last_signal_handle() {
+        callback_can_drop_last_signal(CallbackPhase::Clone);
+    }
+
+    #[test]
+    fn memo_equality_can_release_the_last_signal_handle() {
+        callback_can_drop_last_signal(CallbackPhase::Equal);
+    }
+
+    #[test]
+    fn replaced_cached_values_can_release_the_last_signal_handle() {
+        callback_can_drop_last_signal(CallbackPhase::Drop);
+    }
+
+    #[test]
+    fn equality_can_dispose_its_memo_before_new_value_installation() {
+        let source = Signal::new(0);
+        let owner = Rc::new(std::cell::RefCell::new(None::<Memo<ReentrantValue>>));
+        let released = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let memo = Memo::new({
+            let source = source.clone();
+            let owner = owner.clone();
+            let released = released.clone();
+            move || {
+                let signal = Signal::new(source.get());
+                released.borrow_mut().push(signal.id);
+                let signal = std::cell::RefCell::new(Some(signal));
+                let owner = owner.clone();
+                ReentrantValue {
+                    value: source.get(),
+                    callback: Rc::new(move |phase| {
+                        if phase == CallbackPhase::Equal {
+                            if let Some(memo) = owner.borrow_mut().take() {
+                                memo.dispose();
+                            }
+                        }
+                        if phase == CallbackPhase::Drop {
+                            drop(signal.borrow_mut().take());
+                        }
+                    }),
+                }
+            }
+        });
+        let id = memo.id;
+        run_memo(id);
+        *owner.borrow_mut() = Some(memo.clone());
+        source.set(1);
+        assert!(!NODES.with(|nodes| nodes.borrow().contains_key(&id)));
+        for signal in released.borrow().iter() {
+            assert!(!NODES.with(|nodes| nodes.borrow().contains_key(signal)));
+        }
+    }
+
+    #[test]
+    fn signal_handles_can_outlive_graph_thread_local_teardown() {
+        std::thread::spawn(|| {
+            thread_local! {
+                static LATE: std::cell::RefCell<Option<Signal<i32>>> = const { std::cell::RefCell::new(None) };
+            }
+            LATE.with(|late| {
+                let signal = Signal::new(1);
+                let captured = signal.clone();
+                let memo = Memo::new(move || captured.get());
+                assert_eq!(memo.get(), 1);
+                *late.borrow_mut() = Some(signal);
+                // Memo graph retention is intentional; its closure drops during TLS teardown.
+            });
+        }).join().unwrap();
     }
 }
