@@ -82,7 +82,7 @@ pub fn spinner(msg: &str) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
-            .unwrap()
+            .unwrap_or_else(|_| ProgressStyle::default_spinner())
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ "),
     );
     pb.enable_steady_tick(Duration::from_millis(80));
