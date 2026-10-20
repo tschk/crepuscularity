@@ -18,7 +18,7 @@ mod tests {
     fn test_read_write_text_happy_path() {
         let res = write_text("test_clipboard_content");
         if res.is_ok() {
-            let read = read_text().unwrap();
+            let read = read_text().expect("read_text should succeed if write_text succeeded");
             assert_eq!(read, "test_clipboard_content");
         } else {
             // If clipboard is not available on the system, skip happy path assertion
