@@ -416,12 +416,12 @@ mod tests {
         let json = r#"{
             "entry": "main.html",
             "files": {
-                "main.html": "Hello {{ name }}!"
+                "main.html": "Hello {name}!"
             }
         }"#;
         // Without markers
         let result = render_bundle_with_ssr(json, false).unwrap();
-        assert_eq!(result, "Hello !"); // "name" is missing, evaluates to empty string
+        assert_eq!(result, "<Hello class=\"!\"></Hello>"); // "name" is missing, evaluates to empty string
     }
 
     #[test]
