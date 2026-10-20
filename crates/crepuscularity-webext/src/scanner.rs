@@ -193,15 +193,17 @@ div
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("failed to create temp file");
         let content = r#"
 div
   button on-click={browser.storage.local.get('key')}
     "Load"
 "#;
-        file.write_all(content.as_bytes()).unwrap();
+        file.write_all(content.as_bytes())
+            .expect("failed to write to temp file");
 
-        let usages = scan_crepus_for_capabilities(file.path()).unwrap();
+        let usages =
+            scan_crepus_for_capabilities(file.path()).expect("failed to scan for capabilities");
         assert!(!usages.is_empty());
         assert!(usages.iter().any(|u| u.capability == Capability::Storage));
     }
