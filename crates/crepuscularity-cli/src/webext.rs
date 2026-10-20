@@ -682,8 +682,8 @@ fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedEx
             .filter(|target| target.target_type == "webext")
             .filter(|target| target_id.map(|id| target.id == id).unwrap_or(true))
             .collect();
-        match webext.as_slice() {
-            [target] => {
+        match (webext.as_slice(), target_id) {
+            ([target], _) => {
                 return LoadedExtensionManifest {
                     manifest: target.webext.clone().unwrap_or_else(|| {
                         ui::error(&format!(
@@ -695,13 +695,13 @@ fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedEx
                     config: target.webext_config.clone(),
                 };
             }
-            [] if target_id.is_some() => ui::error(&format!(
+            ([], Some(id)) => ui::error(&format!(
                 "no webext target {:?} in {}",
-                target_id.unwrap(),
+                id,
                 crepus_toml.display()
             )),
-            [] => {}
-            many => ui::error(&format!(
+            ([], None) => {}
+            (many, _) => ui::error(&format!(
                 "{} defines {} webext targets; pass --target ID",
                 crepus_toml.display(),
                 many.len()
