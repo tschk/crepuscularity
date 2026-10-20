@@ -97,23 +97,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn passes_javascript_through() {
+    fn passes_javascript_through() -> Result<(), String> {
         let source = "function run() { return 1; }";
-        assert_eq!(
-            prepare_guest_source(Path::new("guest.js"), source).unwrap(),
-            source
-        );
+        assert_eq!(prepare_guest_source(Path::new("guest.js"), source)?, source);
+        Ok(())
     }
 
     #[test]
-    fn strips_export_before_transforming_typescript() {
+    fn strips_export_before_transforming_typescript() -> Result<(), String> {
         let out = prepare_guest_source(
             Path::new("guest.ts"),
             "export function run(value: number): number { return value + 1; }",
-        )
-        .unwrap();
+        )?;
         assert!(out.contains("function run(value)"));
         assert!(!out.contains("export"));
         assert!(!out.contains(": number"));
+        Ok(())
     }
 }
