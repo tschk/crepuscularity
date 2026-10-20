@@ -17,10 +17,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
+use notify::{recommended_watcher, Event, EventKind};
 
 use crate::build_options::BuildOptions;
-use crate::builder::{cargo_build, find_bin_name, kill_child};
+#[path = "dev_watch.rs"]
+mod project_watch;
+
+use crate::builder::{cargo_build, find_bin_selection, kill_child, BinSelection};
 use crate::crepus_toml::{find_manifest_upward, load_manifest_targets};
 use crate::events::CompilerEvent;
 use crate::hud::{open_hud_window, DevStatus, HudState};
@@ -86,7 +89,7 @@ pub fn run(
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     };
 
-    let bin_name = find_bin_name(&cwd, bin_override.as_deref()).unwrap_or_else(|| {
+    let bin_name = find_bin_selection(&cwd, bin_override.as_deref()).unwrap_or_else(|| {
         ui::error("could not determine binary name — add [[bin]] to Cargo.toml or use --bin");
     });
 
@@ -104,7 +107,7 @@ pub fn run(
 }
 
 /// Terminal-only dev loop — no GPUI HUD, just rebuild + relaunch on file change.
-fn run_terminal(cwd: PathBuf, bin_name: String, options: BuildOptions, emit_events: bool) {
+fn run_terminal(cwd: PathBuf, bin_name: BinSelection, options: BuildOptions, emit_events: bool) {
     eprintln!(
         "  {} dev (terminal) — {bin_name} in {}",
         ui::arrow(),
@@ -132,13 +135,7 @@ fn run_terminal(cwd: PathBuf, bin_name: String, options: BuildOptions, emit_even
         }
     };
 
-    let src = cwd.join("src");
-    if src.exists() {
-        watcher.watch(&src, RecursiveMode::Recursive).ok();
-    }
-    watcher
-        .watch(&cwd.join("Cargo.toml"), RecursiveMode::NonRecursive)
-        .ok();
+    project_watch::watch_project(&mut watcher, &cwd);
 
     let mut child = do_build_launch_terminal(&cwd, &bin_name, options, None, emit_events);
 
@@ -151,6 +148,7 @@ fn run_terminal(cwd: PathBuf, bin_name: String, options: BuildOptions, emit_even
                     while rx.try_recv().is_ok() {}
                     std::thread::sleep(Duration::from_millis(30));
                 }
+                project_watch::watch_project(&mut watcher, &cwd);
                 eprintln!("  {} change detected — rebuilding…", ui::arrow());
                 child = do_build_launch_terminal(&cwd, &bin_name, options, child, emit_events);
             }
@@ -180,7 +178,7 @@ fn run_terminal(cwd: PathBuf, bin_name: String, options: BuildOptions, emit_even
 
 fn do_build_launch_terminal(
     cwd: &PathBuf,
-    bin_name: &str,
+    bin_name: &BinSelection,
     options: BuildOptions,
     old_child: Option<Child>,
     emit_events: bool,
@@ -199,13 +197,22 @@ fn do_build_launch_terminal(
     }
 
     let t0 = Instant::now();
-    let outcome = cargo_build(cwd, options, None);
+    let mut outcome = cargo_build(cwd, options, None);
     let elapsed_ms = t0.elapsed().as_millis() as u64;
+    let bin_path = outcome.executable_for(bin_name);
+    if let (true, Err(message)) = (outcome.success, &bin_path) {
+        eprintln!("  {} {message}", ui::err());
+        outcome.success = false;
+        outcome.errors.push(crate::hud::BuildError {
+            level: "error".into(),
+            message: message.clone(),
+            ..Default::default()
+        });
+    }
 
-    if outcome.success {
+    if let (true, Ok((bin_name, bin_path))) = (outcome.success, bin_path) {
         if emit_events {
-            let output = locate_binary(cwd, options.cargo_profile(), bin_name);
-            CompilerEvent::compilation_success(elapsed_ms, output).emit();
+            CompilerEvent::compilation_success(elapsed_ms, bin_path.clone()).emit();
         }
 
         eprintln!(
@@ -213,7 +220,6 @@ fn do_build_launch_terminal(
             ui::ok()
         );
 
-        let bin_path = locate_binary(cwd, options.cargo_profile(), bin_name);
         match Command::new(&bin_path).current_dir(cwd).spawn() {
             Ok(c) => {
                 if emit_events {
@@ -236,14 +242,14 @@ fn do_build_launch_terminal(
 }
 
 /// GPUI HUD dev loop — original behavior with DevHUD window.
-fn run_hud(cwd: PathBuf, bin_name: String, options: BuildOptions, emit_events: bool) {
-    let shared = Arc::new(Mutex::new(HudState::new(bin_name.clone())));
+fn run_hud(cwd: PathBuf, bin_name: BinSelection, options: BuildOptions, emit_events: bool) {
+    let shared = Arc::new(Mutex::new(HudState::new(bin_name.name().to_owned())));
     let shutdown = Arc::new(AtomicBool::new(false));
 
     // Emit server started event
     if emit_events {
         CompilerEvent::dev_server_started(
-            bin_name.clone(),
+            bin_name.name().to_owned(),
             vec![cwd.join("src"), cwd.join("Cargo.toml")],
         )
         .emit();
@@ -279,7 +285,7 @@ fn background_loop(
     shared: Arc<Mutex<HudState>>,
     shutdown: Arc<AtomicBool>,
     cwd: PathBuf,
-    bin_name: String,
+    bin_name: BinSelection,
     options: BuildOptions,
     emit_events: bool,
 ) {
@@ -306,13 +312,7 @@ fn background_loop(
         }
     };
 
-    let src = cwd.join("src");
-    if src.exists() {
-        watcher.watch(&src, RecursiveMode::Recursive).ok();
-    }
-    watcher
-        .watch(&cwd.join("Cargo.toml"), RecursiveMode::NonRecursive)
-        .ok();
+    project_watch::watch_project(&mut watcher, &cwd);
 
     // Initial build + launch
     let mut child = do_build_launch(&shared, &cwd, &bin_name, options, None, emit_events);
@@ -341,6 +341,7 @@ fn background_loop(
                     while rx.try_recv().is_ok() {}
                     std::thread::sleep(Duration::from_millis(30));
                 }
+                project_watch::watch_project(&mut watcher, &cwd);
                 eprintln!("  {} change detected — rebuilding…", crate::ui::arrow());
                 child = do_build_launch(&shared, &cwd, &bin_name, options, child, emit_events);
             }
@@ -372,36 +373,10 @@ fn background_loop(
     }
 }
 
-/// Find the compiled binary, checking the workspace root target dir first.
-///
-/// In a workspace, `cargo build` places binaries in `{workspace_root}/target/`
-/// rather than in the crate's own directory. We use `cargo locate-project
-/// --workspace` to find the workspace root, then fall back to `{cwd}/target/`.
-fn locate_binary(cwd: &std::path::Path, profile: &str, bin_name: &str) -> PathBuf {
-    // Ask cargo where the workspace root is
-    let workspace_root = std::process::Command::new("cargo")
-        .args(["locate-project", "--workspace", "--message-format", "plain"])
-        .current_dir(cwd)
-        .output()
-        .ok()
-        .and_then(|out| {
-            if out.status.success() {
-                let s = String::from_utf8(out.stdout).ok()?;
-                let p = PathBuf::from(s.trim());
-                p.parent().map(|d| d.to_path_buf())
-            } else {
-                None
-            }
-        });
-
-    let target_base = workspace_root.unwrap_or_else(|| cwd.to_path_buf());
-    target_base.join("target").join(profile).join(bin_name)
-}
-
 fn do_build_launch(
     shared: &Arc<Mutex<HudState>>,
     cwd: &PathBuf,
-    bin_name: &str,
+    bin_name: &BinSelection,
     options: BuildOptions,
     old_child: Option<Child>,
     emit_events: bool,
@@ -427,20 +402,28 @@ fn do_build_launch(
     }
 
     let t0 = Instant::now();
-    let outcome = cargo_build(cwd, options, Some(shared.clone()));
+    let mut outcome = cargo_build(cwd, options, Some(shared.clone()));
     let elapsed_ms = t0.elapsed().as_millis() as u64;
+    let bin_path = outcome.executable_for(bin_name);
+    if let (true, Err(message)) = (outcome.success, &bin_path) {
+        eprintln!("  {} {message}", ui::err());
+        outcome.success = false;
+        outcome.errors.push(crate::hud::BuildError {
+            level: "error".into(),
+            message: message.clone(),
+            ..Default::default()
+        });
+    }
 
-    if outcome.success {
+    if let (true, Ok((bin_name, bin_path))) = (outcome.success, bin_path) {
         // Emit compilation success
         if emit_events {
-            let output = locate_binary(cwd, options.cargo_profile(), bin_name);
-            CompilerEvent::compilation_success(elapsed_ms, output).emit();
+            CompilerEvent::compilation_success(elapsed_ms, bin_path.clone()).emit();
         }
 
         if let Ok(mut s) = shared.lock() {
             s.status = DevStatus::Running { elapsed_ms };
         }
-        let bin_path = locate_binary(cwd, options.cargo_profile(), bin_name);
 
         eprintln!(
             "  {} built in {elapsed_ms} ms — launching {bin_name}",

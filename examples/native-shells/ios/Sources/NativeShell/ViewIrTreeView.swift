@@ -72,7 +72,7 @@ public struct ViewNodeView: View {
 
         case .scroll(let axis, let style, let children):
             let gap: CGFloat = 8
-            ScrollView {
+            ScrollView(axis == .row ? .horizontal : .vertical) {
                 switch axis {
                 case .column:
                     VStack(alignment: .leading, spacing: gap) {
@@ -222,17 +222,17 @@ extension Color {
         var t = hex.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("#") { t.removeFirst() }
         guard t.count == 6 || t.count == 8 else { return nil }
-        var n: UInt64 = 0
-        guard Scanner(string: t).scanHexInt64(&n) else { return nil }
+        guard t.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }),
+              let n = UInt64(t, radix: 16) else { return nil }
         let a: Double
         let r: Double
         let g: Double
         let b: Double
         if t.count == 8 {
-            a = Double((n & 0xFF00_0000) >> 24) / 255
-            r = Double((n & 0x00FF_0000) >> 16) / 255
-            g = Double((n & 0x0000_FF00) >> 8) / 255
-            b = Double(n & 0x0000_00FF) / 255
+            r = Double((n & 0xFF00_0000) >> 24) / 255
+            g = Double((n & 0x00FF_0000) >> 16) / 255
+            b = Double((n & 0x0000_FF00) >> 8) / 255
+            a = Double(n & 0x0000_00FF) / 255
         } else {
             a = 1
             r = Double((n & 0xFF0000) >> 16) / 255

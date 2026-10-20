@@ -232,7 +232,7 @@ fn finish_elements(
         };
         if !object.properties.iter().any(|property| matches!(property, ObjectPropertyKind::ObjectProperty(property) if property.key.static_name().is_some_and(|name| metadata.element_markers.iter().any(|marker| marker == name.as_ref())))) { continue; }
         let mut layers = Vec::new();
-        for property in &object.properties {
+        for (index, property) in object.properties.iter().enumerate() {
             let ObjectPropertyKind::ObjectProperty(property) = property else {
                 return Err("invalid intrinsic Svelte spread property".into());
             };
@@ -240,13 +240,20 @@ fn finish_elements(
                 return Err("invalid intrinsic Svelte spread key".into());
             };
             let raw = render(source, property.value.span(), &edits);
-            let value = if matches!(
-                property.value.get_inner_expression(),
-                Expression::ArrowFunctionExpression(_)
-            ) {
-                format!("({raw})()")
-            } else {
-                raw
+            let value = match property.value.get_inner_expression() {
+                Expression::ArrowFunctionExpression(arrow)
+                    if arrow.params.is_empty() && arrow.expression && !arrow.r#async =>
+                {
+                    if let Some(Statement::ExpressionStatement(statement)) =
+                        arrow.body.statements.first()
+                    {
+                        format!("({})", render(source, statement.expression.span(), &edits))
+                    } else {
+                        format!("({raw})()")
+                    }
+                }
+                Expression::ArrowFunctionExpression(_) => format!("({raw})()"),
+                _ => raw,
             };
             if metadata
                 .element_markers
@@ -256,11 +263,15 @@ fn finish_elements(
                 if !consumed.insert(name.to_string()) {
                     return Err("duplicate intrinsic Svelte spread marker".into());
                 }
-                // Snapshot here: getters precede evaluation of the next source layer.
-                let realm = &globals.realm;
-                layers.push(format!(
-                    "{realm}.Object.assign({realm}.Object.create(null),{value})"
-                ));
+                if index + 1 < object.properties.len() {
+                    // Snapshot here: getters precede evaluation of the next source layer.
+                    let realm = &globals.realm;
+                    layers.push(format!(
+                        "{realm}.Object.assign({realm}.Object.create(null),{value})"
+                    ));
+                } else {
+                    layers.push(value);
+                }
             } else {
                 let name = if name == "className" {
                     "class"

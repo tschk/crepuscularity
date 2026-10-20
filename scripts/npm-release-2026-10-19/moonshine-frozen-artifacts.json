@@ -1,0 +1,252 @@
+{
+  "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+  "checks": {
+    "test": 0,
+    "typecheck": 0,
+    "typecheck:native": 0,
+    "check:packages": 0,
+    "check:catalog": 0,
+    "check:adapters": 0
+  },
+  "tests": {
+    "passed": 2546,
+    "skipped": 5,
+    "failed": 0
+  },
+  "packages": [
+    {
+      "name": "@tschk/moonshine-react-router",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-react-router-0.4.49.tgz",
+      "sha512": "2de0fc187c25a7056f7b5df491c0cd4a610ea01e012c93925e85e51b3d832b07c19f2e28f1b13223ade32780121f97d8f448dab0dce817eac0342230f132dc0c",
+      "fileCount": 11,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-router",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-router-0.4.49.tgz",
+      "sha512": "b71193b6f4921632213d0319f6b118dfd6231476a03ca6b5a327ee6419716ab7f2a87c3cd315e789e69ac907b55230c00f05ff7d7d5811ae4ff0f16635437cee",
+      "fileCount": 10,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-deploy-bun",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-deploy-bun-0.4.49.tgz",
+      "sha512": "96e228b73afc7f047d5717cb8d3d665f8e45c808380bb03c9a73d3691934089c624beb5a11a53184d7d88d8faf7afb74d9c6b5a772e66911b59f22905623c9fc",
+      "fileCount": 3,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-0.4.49.tgz",
+      "sha512": "a649467f982663198f37b7a47e1dd5845578171cee5a89a47e12e555590822f19632118abba496dbea7a4615930d32ec31d68b9f66d9e680a1c7a0b92ac5ae89",
+      "fileCount": 13,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-next",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-next-0.4.49.tgz",
+      "sha512": "d6894c6f627489d94c68f29857e326344fcea9a1f83e6e6fdfcd12e60890036af00adb7978e471bc4cb44812b640fece083a750dc967adf02b15d93aed167e21",
+      "fileCount": 14,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-react",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-react-0.4.49.tgz",
+      "sha512": "58740e81d032ec48929f806cc6e6aea81d1834b6e7ea153362de95db89eaac2af3066b043cda27b3382d7a613cc05c7422291381f4a6b9f7fb0893ca92fa90d7",
+      "fileCount": 7,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-shaders",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-shaders-0.4.49.tgz",
+      "sha512": "9d1640b16f51c3982aa4dcc079e9bc604aaa23ab8d4c1cd8c669d4f2a8b9d56de2597e55ea7f440b96c362ce08666d5c7fef5d05f1bc8dfa8188a35e1042d347",
+      "fileCount": 3,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-server",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-server-0.4.49.tgz",
+      "sha512": "f4d69bd394711e51aea1cf10a2a1ab23aafe71d35a5555c921b3f0d3200569a68236d50897ff579a78f2875cd01a31f99f69233c4755dc51500d60a6d370f8a1",
+      "fileCount": 8,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-framework",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-framework-0.4.49.tgz",
+      "sha512": "7fbccaee1c7beeea51b613c54562a87ceabffff1c55c10b11c66af33ae11da6627df33331946f80cf20e76057eefe5cdc776881a08227f72f473c9f8878f3a92",
+      "fileCount": 12,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-waku",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-waku-0.4.49.tgz",
+      "sha512": "b282d5d75fc8026f043a072ab0efb9f45b5829b1ef11706a3c497b40fb0155278a50b3929f6c1367e8e1bb43e656d602bbbfeba8a42dc42390770c8045e53009",
+      "fileCount": 8,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-tanstack",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-tanstack-0.4.49.tgz",
+      "sha512": "db3233036395d203d0b7fccb5d72c11acbe86dd0f7499184764c87de960ea38f4b82e6e18261c68be136fd4a930fed65a0549f76903e7fb0730e31c51f290971",
+      "fileCount": 10,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/crepus-moonshine",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-crepus-moonshine-0.4.49.tgz",
+      "sha512": "5d881f55bc1bcb62e02f829329e3ab999cf0c2473d6e9dc2b98afd970f005cc88d048114e86e49ce0dd078760c1e3dd2258384f414d2e5575ad560a44e57b9f0",
+      "fileCount": 5,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-cli",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-cli-0.4.49.tgz",
+      "sha512": "bdf73ad93fe4ddb66a09dc092a017bfefaabdc42c67f6a963d92198d11cb082929c54f81e5954449f9ddf252ab6816c1ab8a40760c8ce228eec65b00c70d548c",
+      "fileCount": 25,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-compiler",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-compiler-0.4.49.tgz",
+      "sha512": "ecb1c10a50e38af31a8d8cb336cb01f8e90875daa1ab6a3869cd6ea00b5e724507c65e1316609c37a25facb957a097f9dc7ed71b06ed81ca4d2f968ac55e6965",
+      "fileCount": 14,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-solid",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-solid-0.4.49.tgz",
+      "sha512": "e604f0e10c568d62bd1efae6e6a24a845f536e287c50fdb5a803f3ea0df4fbc9a86957a1a3855542af6f41c03821037daa4bf724735a1cd643d986b52cdf9027",
+      "fileCount": 25,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-adapter-conformance",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-adapter-conformance-0.4.49.tgz",
+      "sha512": "ee174727b05c485f14c0a9a697653700bd0082e32e13b4a5b6e490a43ecad55fb826d0a71e346faf917329e5dd7f6c21ad1b5d0336e3af6363577dbe8a1f7587",
+      "fileCount": 5,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-deploy-cloudflare",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-deploy-cloudflare-0.4.49.tgz",
+      "sha512": "0219add4b4eaa8b8776a320c138c36691c5ed2b78734009bb65446e8f69bee8469dbb8d313530a34e833203012c645d6e1ee7359ac1eb5d3746584c907086c32",
+      "fileCount": 3,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-deploy-vercel",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-deploy-vercel-0.4.49.tgz",
+      "sha512": "783221391a59aae0d25b66345ef5993d161f6f199d0179a4160e8ac4c690b8f258277cc79c08e3a4330fefc2834ff8d25a43ec76bbc4f1cc392abf0460ab8694",
+      "fileCount": 3,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-deploy-node",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-deploy-node-0.4.49.tgz",
+      "sha512": "841e05da999df4e1ed440ae61380e079dd72cb7f7c8511a673910be448a78b39b0d1ba7135aaf7cf0b88bef81d32a53aba830580b27685273eb8214317ea7075",
+      "fileCount": 3,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-components",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-components-0.4.49.tgz",
+      "sha512": "48368d38727bf33529c30beccf554c16ac22a3412aac452db940e4cbb8c4ef2ebc6969fed0f6f36999a3ce41a584f2f6c5af0e56f12052220501872d1889fd85",
+      "fileCount": 100,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-vue",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-vue-0.4.49.tgz",
+      "sha512": "382974f545fd14c7fa73df44b82022d6ef6c1e721ec7c7df0afc1ebf10ebfc3eb0d105f14bc06709b5065f10774c88cb77293b70e3f8cfe64160304f06f2c862",
+      "fileCount": 26,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-dom",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-dom-0.4.49.tgz",
+      "sha512": "b35046a8ddd05b05ab00989f9042a04277842972641535a5f2c55de083313e06d7a1da5dfb6f2b70a408d051100cf9d7def321b2fdebad4f31031b0cb21e39c9",
+      "fileCount": 32,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-angular",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-angular-0.4.49.tgz",
+      "sha512": "14b25105f1b7e620dfb0a193ecce3f8c9b6cafedc79de8f033bd05b1fe1f4294bf71f2be526d93dfa8dcb331a9ab8720b5510affa21557e9ea63c8e259f65248",
+      "fileCount": 6,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-nuxt",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-nuxt-0.4.49.tgz",
+      "sha512": "219dce1e6aa0596e002850b5374962a9f094d514dd68140426e112e4aaff151ec9d075b1b9e852c32c59b724651e59b26b38739fcc6bd5b4adc63a74690f4b16",
+      "fileCount": 6,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-svelte",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-svelte-0.4.49.tgz",
+      "sha512": "c34f87f9f33c7b68e719bb877739d0219bdb3db81cd92d3f2fbb61d1c7364b7b08fc79442542ea58b9801427522dd5b29161431d4dbb5a28f19871fb3ee0ef88",
+      "fileCount": 41,
+      "exportsPresent": true
+    },
+    {
+      "name": "@tschk/moonshine-astro",
+      "version": "0.4.49",
+      "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+      "artifact": "tschk-moonshine-astro-0.4.49.tgz",
+      "sha512": "e7510da91caf1807902a301e70a6fcc6e4034a63072c4e48f42267bc11d86b761ca4c75c86140aa34f8e17ff25e2e7afc839aad60f7024f1b4a1a316bc76048c",
+      "fileCount": 6,
+      "exportsPresent": true
+    }
+  ]
+}

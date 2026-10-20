@@ -6,8 +6,8 @@ license = "ISC"
 publish = false
 
 [dependencies]
-crepuscularity-embedded = { path = "../../../../crates/crepuscularity-embedded", version = "0.1.15", features = ["std", "macros"] }
+crepuscularity-embedded = { path = "../../../../crates/crepuscularity-embedded", version = "0.2.0", features = ["std", "macros"] }
 crepuscularity-embedded-macros = { path = "../../../../crates/crepuscularity-embedded-macros", version = "0.1.2" }
 
 [build-dependencies]
-crepuscularity-core = { path = "../../../../crates/crepuscularity-core", version = "0.4.16" }
+crepuscularity-core = { path = "../../../../crates/crepuscularity-core", version = "0.6.0" }

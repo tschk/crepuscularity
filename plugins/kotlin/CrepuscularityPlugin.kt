@@ -1,9 +1,11 @@
 package dev.crepuscularity.plugin
 
-import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.OutputStreamWriter
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.FutureTask
 
 data class ViewIr(val version: Int, val json: String)
 data class Event(val handler: String, val payload: Any? = null)
@@ -40,27 +42,52 @@ class ViewSession(val path: String, context: Map<String, Any?> = emptyMap()) {
 
 object CrepuscularityPlugin {
     fun renderIr(path: String, context: Map<String, Any?> = emptyMap()): ViewIr {
-        val bin = System.getenv("CREPUS_BIN") ?: "crepus"
-        val process = ProcessBuilder(bin, "native", "ir", "--stdin-json").redirectErrorStream(true).start()
-        OutputStreamWriter(process.outputStream, Charsets.UTF_8).use {
-            it.write(toJson(mapOf("template" to Files.readString(Path.of(path)), "context" to context)))
-        }
-        val stdout = ByteArrayOutputStream()
-        process.inputStream.transferTo(stdout)
-        val code = process.waitFor()
-        val json = stdout.toString(Charsets.UTF_8)
-        if (code != 0) error(json)
-        val version = if (json.contains("\"version\":5") || json.contains("\"version\": 5")) 5 else -1
+        val templatePath = Path.of(path).toAbsolutePath()
+        val template = Files.readString(templatePath)
+        val json = runCli(listOf("native", "ir", "--stdin-json"),
+            toJson(mapOf("template" to template, "context" to context, "filename" to path,
+                "baseDir" to templatePath.parent.toString())))
+        val version = Regex("\"version\"\\s*:\\s*(\\d+)").find(json)
+            ?.groupValues?.get(1)?.toIntOrNull() ?: error("IR version missing or invalid")
         return ViewIr(version, json)
     }
 
     fun renderHtml(path: String, context: Map<String, Any?> = emptyMap()): String {
-        val content = renderIr(path, context).json.substringAfter("\"content\":\"", "").substringBefore("\"")
-        return "<div data-crepus-kind=\"stack\" data-axis=\"column\">${escapeHtml(content)}</div>"
+        val contextFile = Files.createTempFile("crepus-kotlin-context-", ".json")
+        try {
+            Files.writeString(contextFile, toJson(context), Charsets.UTF_8)
+            return runCli(listOf("render", Path.of(path).toAbsolutePath().toString(),
+                "--ctx", contextFile.toString()), "")
+        } finally {
+            Files.deleteIfExists(contextFile)
+        }
     }
 
-    private fun escapeHtml(value: String): String =
-        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+    private fun runCli(arguments: List<String>, input: String): String {
+        val bin = System.getenv("CREPUS_BIN") ?: "crepus"
+        val process = ProcessBuilder(listOf(bin) + arguments).start()
+        val stderr = FutureTask { process.errorStream.readBytes().toString(Charsets.UTF_8) }
+        Thread(stderr, "crepus-kotlin-stderr").apply { isDaemon = true }.start()
+        // Start draining stdout before writing a potentially large request.
+        val stdout = FutureTask { process.inputStream.readBytes() }
+        Thread(stdout, "crepus-kotlin-stdout").apply { isDaemon = true }.start()
+        try {
+            var writeError: IOException? = null
+            try {
+                OutputStreamWriter(process.outputStream, Charsets.UTF_8).use { it.write(input) }
+            } catch (error: IOException) {
+                writeError = error
+            }
+            val output = stdout.get()
+            val code = process.waitFor()
+            val diagnostic = stderr.get()
+            if (code != 0) error(diagnostic)
+            if (writeError != null) throw writeError
+            return Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(output)).toString()
+        } finally {
+            process.destroy()
+        }
+    }
 
     private fun toJson(value: Any?): String = when (value) {
         null -> "null"
@@ -85,7 +112,7 @@ object CrepuscularityPlugin {
                 '\n' -> append("\\n")
                 '\r' -> append("\\r")
                 '\t' -> append("\\t")
-                else -> if (ch < ' ') append("\\u%04x".format(ch.code)) else append(ch)
+                else -> if (ch < ' ' || Character.isSurrogate(ch)) append("\\u%04x".format(ch.code)) else append(ch)
             }
         }
         append('"')

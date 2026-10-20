@@ -1,0 +1,18 @@
+div
+  for group in {groups}
+    input bind=group.title @change="sync"
+    for item in {group.items}
+      input bind=group.title @change="sync"
+      input bind=item.title @change="sync"
+      toggle bind=group.enabled @change="sync"
+      slider bind=item.amount @change="sync"
+      text "{group.title}: {item.title}"
+      if {group.enabled == item.enabled}
+        text "Both enabled"
+    input bind=group.title @change="sync"
+  for item in {items}
+    input bind=item.title @change="sync"
+    for item in {item.children}
+      input bind=item.title @change="sync"
+      text "{item.title}"
+    input bind=item.title @change="sync"

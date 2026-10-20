@@ -5,6 +5,8 @@
 pub use crepuscularity_core::build;
 pub use crepuscularity_macros::{view, view_file};
 pub use crepuscularity_runtime;
+// Retain direct access to the pinned native host APIs.
+pub use gpui;
 pub use gpui::*;
 pub use gpui_platform;
 pub use pollster::block_on;

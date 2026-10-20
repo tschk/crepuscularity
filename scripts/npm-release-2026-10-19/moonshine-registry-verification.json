@@ -1,0 +1,184 @@
+[
+  {
+    "name": "@tschk/moonshine-react-router",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-react-router/-/moonshine-react-router-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-router",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-router/-/moonshine-router-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-deploy-bun",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-deploy-bun/-/moonshine-deploy-bun-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine/-/moonshine-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-next",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-next/-/moonshine-next-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-react",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-react/-/moonshine-react-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-shaders",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-shaders/-/moonshine-shaders-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-server",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-server/-/moonshine-server-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-framework",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-framework/-/moonshine-framework-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-waku",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-waku/-/moonshine-waku-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-tanstack",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-tanstack/-/moonshine-tanstack-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/crepus-moonshine",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/crepus-moonshine/-/crepus-moonshine-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-cli",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-cli/-/moonshine-cli-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-compiler",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-compiler/-/moonshine-compiler-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-solid",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-solid/-/moonshine-solid-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-adapter-conformance",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-adapter-conformance/-/moonshine-adapter-conformance-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-deploy-cloudflare",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-deploy-cloudflare/-/moonshine-deploy-cloudflare-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-deploy-vercel",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-deploy-vercel/-/moonshine-deploy-vercel-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-deploy-node",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-deploy-node/-/moonshine-deploy-node-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-components",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-components/-/moonshine-components-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-vue",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-vue/-/moonshine-vue-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-dom",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-dom/-/moonshine-dom-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-angular",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-angular/-/moonshine-angular-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-nuxt",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-nuxt/-/moonshine-nuxt-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-svelte",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-svelte/-/moonshine-svelte-0.4.49.tgz"
+  },
+  {
+    "name": "@tschk/moonshine-astro",
+    "version": "0.4.49",
+    "available": true,
+    "sha512Matches": true,
+    "tarball": "https://registry.npmjs.org/@tschk/moonshine-astro/-/moonshine-astro-0.4.49.tgz"
+  }
+]

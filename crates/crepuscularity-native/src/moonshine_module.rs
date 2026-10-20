@@ -863,7 +863,24 @@ impl<'a> Visit<'a> for Inspect<'_> {
             }
         }
         if component {
-            self.has_component_children |= !node.children.is_empty();
+            let simple_ssr_option = self.ssr
+                && self.svelte_component_props
+                && matches!(
+                    &node.opening_element.name,
+                    JSXElementName::IdentifierReference(name)
+                        if name.name.starts_with("__CrepusSourceOption")
+                )
+                && node.opening_element.attributes.len() == 1
+                && matches!(
+                    node.opening_element.attributes.first(),
+                    Some(JSXAttributeItem::Attribute(attribute))
+                        if matches!(
+                            &attribute.name,
+                            JSXAttributeName::Identifier(name)
+                                if name.name.starts_with("__crepusOptionBox")
+                        )
+                );
+            self.has_component_children |= !simple_ssr_option && !node.children.is_empty();
             for child in &node.children {
                 match child {
                     JSXChild::Element(node) => self.once_spans.push((node.span, true)),
@@ -977,6 +994,15 @@ pub fn compile_moonshine_module_with_resolver(
             ..ModuleHints::default()
         },
     )
+}
+
+pub(crate) fn compile_moonshine_module_with_hints(
+    source: &str,
+    path: &Path,
+    target: MoonshineModuleTarget,
+    hints: ModuleHints<'_>,
+) -> Result<MoonshineModule, String> {
+    compile_module(source, path, target, false, hints)
 }
 
 pub(crate) fn compile_moonshine_svelte_module(
@@ -1916,9 +1942,13 @@ fn transparent_ssr_helpers(
         {
             continue;
         }
+        let is_simple_option =
+            helper.name.starts_with("__CrepusSourceOption") && call.arguments.len() == 3;
         if call.optional
-            || call.arguments.len() != 2
+            || (!is_simple_option && call.arguments.len() != 2)
             || matches!(call.arguments.get(1), Some(Argument::SpreadElement(_)))
+            || (is_simple_option
+                && matches!(call.arguments.get(2), Some(Argument::SpreadElement(_))))
         {
             return Err("invalid normalized SSR helper call".into());
         }
@@ -1927,10 +1957,11 @@ fn transparent_ssr_helpers(
         // Match h's nullish-to-empty-object contract. Object literals cannot be
         // nullish; other expressions are evaluated once, without assuming that
         // future normalized descriptor producers can never return undefined.
-        let nullish = !matches!(
-            argument,
-            Argument::ObjectExpression(_) | Argument::NullLiteral(_)
-        );
+        let nullish = !is_simple_option
+            && !matches!(
+                argument,
+                Argument::ObjectExpression(_) | Argument::NullLiteral(_)
+            );
         if matches!(argument, Argument::NullLiteral(_)) {
             edits.push((props.start as usize, props.end as usize, "{}".into()));
         } else if nullish {
@@ -2410,6 +2441,92 @@ fn component_getters(
                     Some(Argument::Identifier(_) | Argument::StaticMemberExpression(_))
                 )
             {
+                let simple_ssr_option = self.ssr
+                    && self.svelte_component_props
+                    && matches!(
+                        node.arguments.first(),
+                        Some(Argument::Identifier(name))
+                            if name.name.starts_with("__CrepusSourceOption")
+                    )
+                    && matches!(
+                        node.arguments.get(1),
+                        Some(Argument::ObjectExpression(object))
+                            if object.properties.len() == 1
+                                && matches!(
+                                    object.properties.first(),
+                                    Some(ObjectPropertyKind::ObjectProperty(property))
+                                        if !property.shorthand
+                                            && property
+                                                .key
+                                                .static_name()
+                                                .is_some_and(|key| key.starts_with("__crepusOptionBox"))
+                                )
+                    );
+                if simple_ssr_option {
+                    let Argument::ObjectExpression(object) = &node.arguments[1] else {
+                        unreachable!();
+                    };
+                    let ObjectPropertyKind::ObjectProperty(property) = &object.properties[0] else {
+                        unreachable!();
+                    };
+                    let value_span = property.value.span();
+                    self.edits.push((
+                        object.span.start as usize,
+                        value_span.start as usize,
+                        String::new(),
+                    ));
+                    if node.arguments.len() == 2 {
+                        self.edits.push((
+                            value_span.end as usize,
+                            object.span.end as usize,
+                            ", undefined".into(),
+                        ));
+                    } else {
+                        let first = node.arguments[2].span();
+                        let last = node.arguments.last().unwrap().span();
+                        let single = node.arguments.len() == 3;
+                        self.edits.push((
+                            value_span.end as usize,
+                            first.start as usize,
+                            if single { ", ".into() } else { ", [".into() },
+                        ));
+                        for argument in node.arguments.iter().skip(2) {
+                            let is_static_or_cached =
+                                argument.as_expression().is_some_and(|value| {
+                                    matches!(
+                                        value.get_inner_expression(),
+                                        Expression::StringLiteral(_)
+                                            | Expression::NumericLiteral(_)
+                                            | Expression::BooleanLiteral(_)
+                                            | Expression::NullLiteral(_)
+                                    ) || matches!(
+                                        value.get_inner_expression(),
+                                        Expression::CallExpression(call)
+                                            if self
+                                                .cached_helpers
+                                                .iter()
+                                                .any(|helper| call.callee.is_specific_id(helper))
+                                    )
+                                });
+                            if !is_static_or_cached {
+                                let span = argument.span();
+                                self.edits.push((
+                                    span.start as usize,
+                                    span.start as usize,
+                                    "() => (".into(),
+                                ));
+                                self.edits
+                                    .push((span.end as usize, span.end as usize, ")".into()));
+                            }
+                        }
+                        if !single {
+                            self.edits
+                                .push((last.end as usize, last.end as usize, "]".into()));
+                        }
+                    }
+                    walk::walk_call_expression(self, node);
+                    return;
+                }
                 let props_open = if self.typed_props {
                     self.props_used = true;
                     let callee = node.callee.span();
@@ -2674,7 +2791,7 @@ fn component_getters(
         } else {
             ("", "read")
         };
-        output = format!("import {{hSource as {source_alias}}} from \"@tschk/moonshine-dom/ssr\";\nimport {{peekComponentContext as {source_peek},withComponentConsumer as {source_enter}}} from \"@tschk/moonshine-dom/component\";\nfunction {source_child}{generic}({parameter}){{const consumer={source_peek}();return()=>consumer?{source_enter}(consumer,read):read();}}\n{output}");
+        output = format!("import {{hSource as {source_alias}}} from \"@tschk/moonshine-dom/ssr\";\nimport {{peekComponentContext as {source_peek},withComponentConsumer as {source_enter}}} from \"@tschk/moonshine-dom/component\";\nfunction {source_child}{generic}({parameter}){{const consumer={source_peek}();return consumer?()=>{source_enter}(consumer,read):read;}}\n{output}");
     }
     if getters.namespace_used {
         let namespace_factory = if hints.dynamic_namespace_attribute.is_some() {
@@ -2692,7 +2809,7 @@ fn component_getters(
             MoonshineModuleTarget::Ssr => ("@tschk/moonshine-dom/ssr", "SSRChild"),
         };
         let helpers = format!(
-            "\nfunction {props_alias}Descriptors<D>(value:D):{types}.NoInfer<D>{{return value;}}\nfunction {props_alias}<P extends object>(component:(props:P)=>import({host:?}).{child},descriptors:{{[K in keyof P]:{{enumerable?:boolean,get:()=>P[K]}}}}):import({host:?}).{child}{{return {alias}(component,{realm}.Object.create({realm}.Object.prototype,descriptors));}}\n"
+            "\nfunction {props_alias}Descriptors<D>(value:D):{{[K in keyof {types}.NoInfer<D> as K extends symbol ? never : K]:{types}.NoInfer<D>[K]}}{{return value;}}\nfunction {props_alias}<P extends object>(component:(props:P)=>import({host:?}).{child},descriptors:{{[K in keyof P]:{{enumerable?:boolean,get:()=>P[K]}}}}):import({host:?}).{child}{{return {alias}(component,{realm}.Object.create({realm}.Object.prototype,descriptors));}}\n"
         );
         output.insert_str(module_preamble_end(&parsed.program), &helpers);
     }
@@ -3334,6 +3451,35 @@ mod svelte_component_prop_tests {
         assert!(output.contains("get: cached("), "{output}");
         assert!(output.contains("[referenceSymbol]:"), "{output}");
         assert!(!output.contains("get: () => cached"));
+    }
+    #[test]
+    fn vue_property_keys_rewrite_intrinsic_and_typed_component_markers() {
+        let source = "import Child from \"./child.vue\";\nexport default function C(){return <div><input elMarker={cb}/><Child compMarker={binding} label={text}/></div>}";
+        let compiled = compile_moonshine_module_with_hints(
+            source,
+            Path::new("refs.tsx"),
+            MoonshineModuleTarget::Dom,
+            ModuleHints {
+                property_keys: &[("elMarker", "\"ref\""), ("compMarker", "referenceSymbol")],
+                ..ModuleHints::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            compiled.source.contains("[\"ref\"]: cb"),
+            "{}",
+            compiled.source
+        );
+        assert!(
+            compiled.source.contains("[referenceSymbol]: {"),
+            "{}",
+            compiled.source
+        );
+        assert!(
+            compiled.source.contains("as K extends symbol ? never : K"),
+            "{}",
+            compiled.source
+        );
     }
 }
 

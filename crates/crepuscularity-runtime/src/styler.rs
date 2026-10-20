@@ -17,6 +17,74 @@ use crepuscularity_core::tailwind::{
     parse_opacity_percentage, resolve_css_color, LengthToken,
 };
 
+/// Apply a complete class list to an identified GPUI element. State styles are
+/// accumulated before attachment: GPUI permits only one hover style per element.
+pub fn apply_element_classes<E>(
+    mut element: E,
+    classes: impl IntoIterator<Item = impl AsRef<str>>,
+    ctx: Option<&TemplateContext>,
+) -> E
+where
+    E: gpui::StatefulInteractiveElement + gpui::Styled,
+{
+    use gpui::Refineable;
+
+    let mut hover = gpui::div();
+    let mut focus = gpui::div();
+    let mut active = gpui::div();
+    let mut states = [false; 3];
+    for class in classes {
+        let class = class.as_ref();
+        let class = class
+            .strip_prefix("gpui:")
+            .or_else(|| class.strip_prefix("gui:"))
+            .unwrap_or(class);
+        if let Some(class) = class.strip_prefix("hover:") {
+            hover = apply_class_with_ctx(hover, class, ctx);
+            states[0] = true;
+        } else if let Some(class) = class.strip_prefix("focus:") {
+            focus = apply_class_with_ctx(focus, class, ctx);
+            states[1] = true;
+        } else if let Some(class) = class.strip_prefix("active:") {
+            active = apply_class_with_ctx(active, class, ctx);
+            states[2] = true;
+        } else {
+            let mut scratch = gpui::div();
+            *scratch.style() = element.style().clone();
+            scratch = apply_class_with_ctx(scratch, class, ctx);
+            *element.style() = scratch.style().clone();
+            element = match class {
+                "overflow-auto" | "overflow-scroll" => element.overflow_scroll(),
+                "overflow-x-auto" | "overflow-x-scroll" => element.overflow_x_scroll(),
+                "overflow-y-auto" | "overflow-y-scroll" => element.overflow_y_scroll(),
+                _ => element,
+            };
+        }
+    }
+    if states[0] {
+        let style = hover.style().clone();
+        element = element.hover(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    if states[1] {
+        let style = focus.style().clone();
+        element = element.focus(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    if states[2] {
+        let style = active.style().clone();
+        element = element.active(|mut current| {
+            current.refine(&style);
+            current
+        });
+    }
+    element
+}
+
 /// Apply a class to a div, optionally resolving `{expr}` placeholders against context.
 pub fn apply_class(d: Div, class: &str) -> Div {
     apply_class_with_ctx(d, class, None)

@@ -355,13 +355,43 @@ pub fn apply_android_config(android_dir: &Path, cfg: &MobileAndroidConfig) {
     });
 }
 
+fn kotlin_line_comment_start(source: &str) -> usize {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (offset, character) in source.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if quoted && character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            quoted = !quoted;
+        } else if !quoted && source[offset..].starts_with("//") {
+            return offset;
+        }
+    }
+    source.len()
+}
+
 pub fn replace_kotlin_string_assignment(src: &str, key: &str, value: &str) -> String {
     src.lines()
         .map(|line| {
             let trimmed = line.trim_start();
-            if trimmed.starts_with(key) {
+            let assignment = trimmed
+                .strip_prefix(key)
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .filter(|rest| !rest.starts_with('='));
+            if assignment.is_some() {
                 let indent_len = line.len() - trimmed.len();
-                format!("{}{} = \"{}\"", &line[..indent_len], key, value)
+                let comment = &trimmed[kotlin_line_comment_start(trimmed)..];
+                let separator = if comment.is_empty() { "" } else { " " };
+                format!(
+                    "{}{} = \"{}\"{}{}",
+                    &line[..indent_len],
+                    key,
+                    value,
+                    separator,
+                    comment
+                )
             } else {
                 line.to_string()
             }
@@ -521,7 +551,8 @@ pub fn gradle_kts_value(src: &str, key: &str) -> Option<String> {
         let line = line.trim();
         let rest = line.strip_prefix(key)?.trim_start();
         let rest = rest.strip_prefix('=')?.trim();
-        Some(rest.trim_matches('"').to_string())
+        let end = kotlin_line_comment_start(rest);
+        Some(rest[..end].trim_end().trim_matches('"').to_string())
     })
 }
 

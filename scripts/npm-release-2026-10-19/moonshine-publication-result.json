@@ -1,0 +1,23 @@
+{
+  "observedAt": "2026-10-19T11:53:40.319000+00:00",
+  "sourceCommit": "e7fe5764e6ddd96d6caa8d8a3694bf37f763591e",
+  "packageCount": 26,
+  "version": "0.4.49",
+  "publicMetadataAndDownloadedHashes": "passed all26",
+  "cleanSourceChecks": {
+    "testsPassed": 2546,
+    "testsSkipped": 5,
+    "testsFailed": 0,
+    "typecheck": "passed",
+    "typecheckNative": "passed",
+    "packageCatalogAdapterChecks": "passed"
+  },
+  "registryOnlyInstall": "passed all26",
+  "installedAcceptance": [
+    "signal and memo updates",
+    "Svelte runes export",
+    "parser bridge using published WASM0.1.4",
+    "CLI executable --help"
+  ],
+  "publisher": "installed npm CLI under Bun; temporary IP exemption honored"
+}

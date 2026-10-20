@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-embedded"
-version = "0.1.23"
+version = "0.2.0"
 edition = "2021"
 license = "ISC"
 description = "UNSTABLE: embedded RGB565 framebuffer rendering for .crepus — still in development, largely untested on real hardware."
@@ -29,8 +29,9 @@ embassy-stm32 = [
 esp-idf = ["dep:esp-idf-sys"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", optional = true }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12", optional = true }
+crepuscularity-colors = { path = "../crepuscularity-colors", version = "0.1.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0", optional = true }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.13", optional = true }
 mipidsi = { version = "0.8.0", optional = true }
 display-interface = { version = "0.5.0", optional = true }
 display-interface-spi = { version = "0.5.0", optional = true }
@@ -44,6 +45,6 @@ static_cell = { version = "2.1.0", optional = true }
 esp-idf-sys = { version = "0.36", optional = true, default-features = false }
 
 [dev-dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
 tempfile = { workspace = true }
 sha2 = { workspace = true }

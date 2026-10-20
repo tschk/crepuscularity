@@ -2,7 +2,7 @@
   "name": "crepuscularity-vscode",
   "displayName": "Crepuscularity",
   "description": "Syntax highlighting, snippets, and crepus-lsp diagnostics for .crepus templates.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "crepuscularity",
   "author": "Max Carter <max@undivisible.dev>",
   "license": "ISC",
@@ -93,7 +93,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "bun run compile",
-    "test": "node ./out/test/runTest.js",
+    "test": "bun test tests",
+    "test:integration": "bun run compile && bun ./out/test/runTest.js",
     "lint": "bun x eslint src --ext ts || true"
   },
   "dependencies": {

@@ -203,7 +203,7 @@ fn run_top_level_build(
         || manifest.is_some()
         || all
         || selector.is_some()
-        || crate::target_build::has_manifest_targets(manifest.clone());
+        || crate::target_build::has_manifest_targets(manifest.clone())?;
     if use_manifest {
         return crate::target_build::execute(ManifestBuildArgs {
             options,

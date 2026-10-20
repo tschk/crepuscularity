@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-core"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "ISC"
 description = "Parser, AST, and expression evaluation for the Crepuscularity .crepus DSL (UNSTABLE; in active development)."
