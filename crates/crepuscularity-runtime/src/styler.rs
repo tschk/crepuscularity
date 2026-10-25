@@ -243,6 +243,15 @@ fn apply_static(d: Div, class: &str) -> Result<Div, Div> {
 
 #[allow(clippy::result_large_err)]
 fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
+    apply_layout_basics(d, class)
+        .or_else(|d| apply_flexbox(d, class))
+        .or_else(|d| apply_sizing(d, class))
+        .or_else(|d| apply_grid(d, class))
+        .or_else(|d| apply_alignment(d, class))
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_basics(d: Div, class: &str) -> Result<Div, Div> {
     Ok(match class {
         // ── Display ──
         "block" => d.block(),
@@ -285,6 +294,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d
         }
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_flexbox(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Flex direction ──
         "flex-row" => d.flex_row(),
         "flex-row-reverse" => d.flex_row_reverse(),
@@ -331,6 +347,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "content-evenly" => d.content_evenly(),
         "content-stretch" => d.content_stretch(),
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_sizing(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Sizing (predefined) ──
         "w-0" => d.w(px(0.)),
         "w-px" => d.w_px(),
@@ -349,6 +372,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "max-w-full" => d.max_w_full(),
         "max-h-full" => d.max_h_full(),
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_grid(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Grid ──
         "grid-cols-1" => d.grid_cols(1),
         "grid-cols-2" => d.grid_cols(2),
@@ -375,6 +405,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "row-start-auto" => d.row_start_auto(),
         "row-end-auto" => d.row_end_auto(),
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_alignment(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Align self ──
         "self-start" => {
             let mut d = d;
