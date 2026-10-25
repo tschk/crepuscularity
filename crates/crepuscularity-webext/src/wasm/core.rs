@@ -330,3 +330,42 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use wasm_bindgen_test::*;
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestData {
+        name: String,
+        count: i32,
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_and_from_js() {
+        let data = TestData {
+            name: "test".to_string(),
+            count: 42,
+        };
+
+        let js_val = to_js(&data).expect("failed to convert to js");
+        assert!(!js_val.is_undefined() && !js_val.is_null());
+
+        let result: TestData = from_js(js_val).expect("failed to convert from js");
+        assert_eq!(data, result);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_from_js_error() {
+        let js_val = JsValue::UNDEFINED;
+
+        let result: std::result::Result<TestData, BrowserError> = from_js(js_val);
+        assert!(result.is_err());
+        match result {
+            Err(BrowserError::Serde(_)) => {}
+            _ => panic!("Expected Serde error"),
+        }
+    }
+}
