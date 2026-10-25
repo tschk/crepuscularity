@@ -261,38 +261,7 @@ pub fn run(opts: ServeOptions) {
     let dev_root = site_dir.join(crate::web::WEB_DEV_ARTIFACT_DIR);
 
     let head = load_site_head(&site_dir);
-    if let Some(docs) = opts.meta.as_ref().and_then(|meta| meta.docs.as_ref()) {
-        let docs_theme = DocsHookTheme {
-            accent: head.theme.accent.clone(),
-            accent_soft: head.theme.accent_soft.clone(),
-            surface: head.theme.surface.clone(),
-            text: head.theme.text.clone(),
-            muted: head.theme.muted.clone(),
-            border: head.theme.border.clone(),
-        };
-        let docs_src = docs_src_path(&site_dir, docs);
-        let docs_out = dev_root.join("docs");
-        match run_docs_hook(&site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
-            Ok(()) => eprintln!(
-                "  {} docs → {} (serve at /docs/)",
-                console::style("✓").green(),
-                docs_out.display()
-            ),
-            Err(e) => eprintln!(
-                "  {} could not mirror docs: {}",
-                console::style("⚠").yellow(),
-                e
-            ),
-        }
-        start_docs_markdown_watcher(
-            site_dir.clone(),
-            docs.clone(),
-            docs_src,
-            docs_out,
-            docs_theme.clone(),
-            head.page_title.clone(),
-        );
-    }
+    setup_docs_hook(&site_dir, &dev_root, &opts, &head);
 
     // Build initial virtual file map.
     let vfm: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -353,6 +322,46 @@ pub fn run(opts: ServeOptions) {
 }
 
 // ── Virtual file map ─────────────────────────────────────────────────────────
+
+fn setup_docs_hook(
+    site_dir: &Path,
+    dev_root: &Path,
+    opts: &ServeOptions,
+    head: &crate::web::build::SiteHead,
+) {
+    if let Some(docs) = opts.meta.as_ref().and_then(|meta| meta.docs.as_ref()) {
+        let docs_theme = DocsHookTheme {
+            accent: head.theme.accent.clone(),
+            accent_soft: head.theme.accent_soft.clone(),
+            surface: head.theme.surface.clone(),
+            text: head.theme.text.clone(),
+            muted: head.theme.muted.clone(),
+            border: head.theme.border.clone(),
+        };
+        let docs_src = docs_src_path(site_dir, docs);
+        let docs_out = dev_root.join("docs");
+        match run_docs_hook(site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
+            Ok(()) => eprintln!(
+                "  {} docs → {} (serve at /docs/)",
+                console::style("✓").green(),
+                docs_out.display()
+            ),
+            Err(e) => eprintln!(
+                "  {} could not mirror docs: {}",
+                console::style("⚠").yellow(),
+                e
+            ),
+        }
+        start_docs_markdown_watcher(
+            site_dir.to_path_buf(),
+            docs.clone(),
+            docs_src,
+            docs_out,
+            docs_theme.clone(),
+            head.page_title.clone(),
+        );
+    }
+}
 
 /// Walk `site_dir` recursively and load every `*.crepus` file into `vfm`.
 fn load_all_crepus(site_dir: &Path, vfm: &Arc<RwLock<HashMap<String, String>>>) {
