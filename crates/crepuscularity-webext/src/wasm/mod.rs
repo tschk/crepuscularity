@@ -1,7 +1,7 @@
 pub mod action;
 pub mod bookmarks;
 pub mod commands;
-mod core;
+pub mod core;
 pub mod generated;
 pub mod history;
 pub mod runtime;
