@@ -841,6 +841,43 @@ mod tests {
     }
 
     #[test]
+    fn reads_config_in_root() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("tauri.conf.json"),
+            r#"{"build":{"frontendDist":"dist"}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(root.path().join("dist")).unwrap();
+        fs::write(
+            root.path().join("dist").join("crepus-bundle.json"),
+            r#"{"entry":"main.crepus","files":{"main.crepus":"div\n  \"Hello\""}}"#,
+        )
+        .unwrap();
+        let project = TauriProject::open(root.path()).unwrap();
+        assert_eq!(project.version(), TauriVersion::V2);
+        assert_eq!(
+            project.frontend_dist(),
+            root.path().canonicalize().unwrap().join("dist")
+        );
+    }
+
+    #[test]
+    fn reads_config_in_root_missing_build() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("tauri.conf.json"), r#"{}"#).unwrap();
+        let err = TauriProject::open(root.path()).unwrap_err();
+        assert_eq!(err, "tauri config missing build object");
+    }
+
+    #[test]
+    fn reads_config_in_root_malformed() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("tauri.conf.json"), "{ malformed").unwrap();
+        assert!(TauriProject::open(root.path()).is_err());
+    }
+
+    #[test]
     fn reads_application_metadata() {
         let root = project(
             "tauri.conf.json",
