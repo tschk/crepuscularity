@@ -629,17 +629,22 @@ pub fn compile_moonshine_vue_with_resolver(
     for node in &nodes {
         occupied_names.template(node);
     }
-    let fresh = |prefix: &str| {
-        (0usize..)
-            .map(|i| format!("{prefix}{i}"))
-            .find(|name| {
-                !source.contains(name)
-                    && !occupied_names
-                        .0
-                        .iter()
-                        .any(|occupied| occupied.starts_with(name.as_str()))
-            })
-            .expect("finite source cannot occupy every generated identifier")
+    let mut name_buf = String::new();
+    let mut fresh = |prefix: &str| {
+        use std::fmt::Write;
+        for i in 0usize.. {
+            name_buf.clear();
+            write!(&mut name_buf, "{prefix}{i}").unwrap();
+            if !source.contains(&name_buf)
+                && !occupied_names
+                    .0
+                    .iter()
+                    .any(|occupied| occupied.starts_with(name_buf.as_str()))
+            {
+                return name_buf.clone();
+            }
+        }
+        unreachable!("finite source cannot occupy every generated identifier")
     };
     let props = fresh("__crepusVueProps");
     let emitter = fresh("__crepusVueEmitter");
