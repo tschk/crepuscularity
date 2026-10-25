@@ -211,6 +211,23 @@ pub fn scaffold_mobile_app(name: &str) {
     .unwrap_or_else(|e| ui::error(&e.to_string()));
 
     // Step 3: replace generic names with app-specific ones (after codegen).
+    rename_scaffolded_files(&root, &name_snake, &name_pascal);
+
+    ui::success(&format!(
+        "scaffolded mobile app '{}' at '{name}'",
+        name_pascal,
+    ));
+    eprintln!();
+    eprintln!("{}", style("Next steps").dim());
+    eprintln!("  cd {name}");
+    eprintln!("  # Edit your template:");
+    eprintln!("  vim views/main.crepus");
+    eprintln!("  # Regenerate + build:");
+    eprintln!("  crepus mobile build --platform ios");
+    eprintln!("  crepus mobile build --platform android");
+}
+
+fn rename_scaffolded_files(root: &Path, name_snake: &str, name_pascal: &str) {
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
     let r_2 = format!("dev.crepuscularity.{name_snake}");
@@ -283,19 +300,6 @@ pub fn scaffold_mobile_app(name: &str) {
             let _ = fs::write(&cargo_lock, updated);
         }
     }
-
-    ui::success(&format!(
-        "scaffolded mobile app '{}' at '{name}'",
-        name_pascal,
-    ));
-    eprintln!();
-    eprintln!("{}", style("Next steps").dim());
-    eprintln!("  cd {name}");
-    eprintln!("  # Edit your template:");
-    eprintln!("  vim views/main.crepus");
-    eprintln!("  # Regenerate + build:");
-    eprintln!("  crepus mobile build --platform ios");
-    eprintln!("  crepus mobile build --platform android");
 }
 
 pub fn run_codegen_full(
