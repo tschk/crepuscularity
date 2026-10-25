@@ -227,27 +227,26 @@ fn validate_templates(site_dir: &Path) {
 // ── Public entry point ───────────────────────────────────────────────────────
 
 /// Run the dev server, blocking until the process is killed.
-pub fn run(opts: ServeOptions) {
-    let site_dir = std::fs::canonicalize(&opts.site_dir).unwrap_or_else(|_| opts.site_dir.clone());
-
-    // Validate all templates at startup.
+fn startup_validate_templates(site_dir: &std::path::Path) {
     let validate_start = Instant::now();
     eprintln!("\n  {} validating templates…", console::style("→").dim());
-    validate_templates(&site_dir);
+    validate_templates(site_dir);
     let validate_elapsed = validate_start.elapsed();
     eprintln!(
         "  {} templates validated in {:.2}s",
         console::style("✓").green(),
         validate_elapsed.as_secs_f64()
     );
+}
 
+fn startup_ensure_wasm(site_dir: &std::path::Path) {
     let wasm_start = Instant::now();
     eprintln!(
         "  {} compiling dev WASM → {}",
         console::style("→").dim(),
         console::style(format!("{}/", crate::web::WEB_DEV_ARTIFACT_DIR)).cyan()
     );
-    if let Err(e) = ensure_web_dev_artifacts(&site_dir) {
+    if let Err(e) = ensure_web_dev_artifacts(site_dir) {
         eprintln!("  {} {}", console::style("✗").red().bold(), e);
         std::process::exit(1);
     }
@@ -257,10 +256,14 @@ pub fn run(opts: ServeOptions) {
         console::style("✓").green(),
         wasm_elapsed.as_secs_f64()
     );
+}
 
-    let dev_root = site_dir.join(crate::web::WEB_DEV_ARTIFACT_DIR);
-
-    let head = load_site_head(&site_dir);
+fn setup_docs_if_enabled(
+    opts: &ServeOptions,
+    site_dir: &std::path::Path,
+    dev_root: &std::path::Path,
+) {
+    let head = load_site_head(site_dir);
     if let Some(docs) = opts.meta.as_ref().and_then(|meta| meta.docs.as_ref()) {
         let docs_theme = DocsHookTheme {
             accent: head.theme.accent.clone(),
@@ -270,9 +273,9 @@ pub fn run(opts: ServeOptions) {
             muted: head.theme.muted.clone(),
             border: head.theme.border.clone(),
         };
-        let docs_src = docs_src_path(&site_dir, docs);
+        let docs_src = docs_src_path(site_dir, docs);
         let docs_out = dev_root.join("docs");
-        match run_docs_hook(&site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
+        match run_docs_hook(site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
             Ok(()) => eprintln!(
                 "  {} docs → {} (serve at /docs/)",
                 console::style("✓").green(),
@@ -285,7 +288,7 @@ pub fn run(opts: ServeOptions) {
             ),
         }
         start_docs_markdown_watcher(
-            site_dir.clone(),
+            site_dir.to_path_buf(),
             docs.clone(),
             docs_src,
             docs_out,
@@ -293,6 +296,18 @@ pub fn run(opts: ServeOptions) {
             head.page_title.clone(),
         );
     }
+}
+
+pub fn run(opts: ServeOptions) {
+    let site_dir = std::fs::canonicalize(&opts.site_dir).unwrap_or_else(|_| opts.site_dir.clone());
+
+    // Validate all templates at startup.
+    startup_validate_templates(&site_dir);
+    startup_ensure_wasm(&site_dir);
+
+    let dev_root = site_dir.join(crate::web::WEB_DEV_ARTIFACT_DIR);
+
+    setup_docs_if_enabled(&opts, &site_dir, &dev_root);
 
     // Build initial virtual file map.
     let vfm: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
