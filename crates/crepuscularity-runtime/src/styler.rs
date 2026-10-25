@@ -243,6 +243,15 @@ fn apply_static(d: Div, class: &str) -> Result<Div, Div> {
 
 #[allow(clippy::result_large_err)]
 fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
+    apply_layout_display(d, class)
+        .or_else(|d| apply_layout_overflow(d, class))
+        .or_else(|d| apply_layout_flex_grid(d, class))
+        .or_else(|d| apply_layout_alignment(d, class))
+        .or_else(|d| apply_layout_sizing(d, class))
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_display(d: Div, class: &str) -> Result<Div, Div> {
     Ok(match class {
         // ── Display ──
         "block" => d.block(),
@@ -258,6 +267,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "absolute" => d.absolute(),
         "relative" => d.relative(),
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_overflow(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Overflow ──
         "overflow-hidden" => d.overflow_hidden(),
         "overflow-x-hidden" => d.overflow_x_hidden(),
@@ -285,6 +301,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d
         }
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_flex_grid(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Flex direction ──
         "flex-row" => d.flex_row(),
         "flex-row-reverse" => d.flex_row_reverse(),
@@ -305,49 +328,6 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "grow-0" => d.flex_none(),
         "shrink" => d.flex_shrink(1.0),
         "shrink-0" => d.flex_shrink_0(),
-
-        // ── Justify content ──
-        "justify-start" => d.justify_start(),
-        "justify-end" => d.justify_end(),
-        "justify-center" => d.justify_center(),
-        "justify-between" => d.justify_between(),
-        "justify-around" => d.justify_around(),
-        "justify-evenly" => d.justify_evenly(),
-
-        // ── Align items ──
-        "items-start" => d.items_start(),
-        "items-end" => d.items_end(),
-        "items-center" => d.items_center(),
-        "items-baseline" => d.items_baseline(),
-        "items-stretch" => d.items_stretch(),
-
-        // ── Align content ──
-        "content-normal" => d.content_normal(),
-        "content-center" => d.content_center(),
-        "content-start" => d.content_start(),
-        "content-end" => d.content_end(),
-        "content-between" => d.content_between(),
-        "content-around" => d.content_around(),
-        "content-evenly" => d.content_evenly(),
-        "content-stretch" => d.content_stretch(),
-
-        // ── Sizing (predefined) ──
-        "w-0" => d.w(px(0.)),
-        "w-px" => d.w_px(),
-        "w-full" => d.w_full(),
-        "w-auto" => d.w_auto(),
-        "h-0" => d.h(px(0.)),
-        "h-px" => d.h_px(),
-        "h-full" => d.h_full(),
-        "h-auto" => d.h_auto(),
-        "size-full" => d.size_full(),
-        "size-auto" => d.size_auto(),
-        "min-w-0" => d.min_w(px(0.)),
-        "min-w-full" => d.min_w_full(),
-        "min-h-0" => d.min_h(px(0.)),
-        "min-h-full" => d.min_h_full(),
-        "max-w-full" => d.max_w_full(),
-        "max-h-full" => d.max_h_full(),
 
         // ── Grid ──
         "grid-cols-1" => d.grid_cols(1),
@@ -374,6 +354,38 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "row-span-full" => d.row_span_full(),
         "row-start-auto" => d.row_start_auto(),
         "row-end-auto" => d.row_end_auto(),
+
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_alignment(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
+        // ── Justify content ──
+        "justify-start" => d.justify_start(),
+        "justify-end" => d.justify_end(),
+        "justify-center" => d.justify_center(),
+        "justify-between" => d.justify_between(),
+        "justify-around" => d.justify_around(),
+        "justify-evenly" => d.justify_evenly(),
+
+        // ── Align items ──
+        "items-start" => d.items_start(),
+        "items-end" => d.items_end(),
+        "items-center" => d.items_center(),
+        "items-baseline" => d.items_baseline(),
+        "items-stretch" => d.items_stretch(),
+
+        // ── Align content ──
+        "content-normal" => d.content_normal(),
+        "content-center" => d.content_center(),
+        "content-start" => d.content_start(),
+        "content-end" => d.content_end(),
+        "content-between" => d.content_between(),
+        "content-around" => d.content_around(),
+        "content-evenly" => d.content_evenly(),
+        "content-stretch" => d.content_stretch(),
 
         // ── Align self ──
         "self-start" => {
@@ -407,6 +419,31 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d
         }
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_layout_sizing(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
+        // ── Sizing (predefined) ──
+        "w-0" => d.w(px(0.)),
+        "w-px" => d.w_px(),
+        "w-full" => d.w_full(),
+        "w-auto" => d.w_auto(),
+        "h-0" => d.h(px(0.)),
+        "h-px" => d.h_px(),
+        "h-full" => d.h_full(),
+        "h-auto" => d.h_auto(),
+        "size-full" => d.size_full(),
+        "size-auto" => d.size_auto(),
+        "min-w-0" => d.min_w(px(0.)),
+        "min-w-full" => d.min_w_full(),
+        "min-h-0" => d.min_h(px(0.)),
+        "min-h-full" => d.min_h_full(),
+        "max-w-full" => d.max_w_full(),
+        "max-h-full" => d.max_h_full(),
+
         // ── Aspect ratio ──
         "aspect-square" => {
             let mut d = d;
@@ -423,6 +460,7 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d.style().aspect_ratio = None;
             d
         }
+
         _ => return Err(d),
     })
 }
