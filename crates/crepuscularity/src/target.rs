@@ -351,4 +351,29 @@ device = "STM32F411"
         assert!(artifacts[0].contents.contains(r#"<screen name="Dash">"#));
         assert!(artifacts[0].contents.contains("STM32F411"));
     }
+
+    #[test]
+    fn manifest_parses_basic() {
+        let src = r#"
+[[targets]]
+type = "web"
+"#;
+        let manifest = Manifest::parse(src).expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 1);
+        assert_eq!(manifest.targets[0].target_type, "web");
+    }
+
+    #[test]
+    fn manifest_parses_empty() {
+        let src = "";
+        let manifest = Manifest::parse(src).expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 0);
+    }
+
+    #[test]
+    fn manifest_parse_error() {
+        let src = "invalid toml";
+        let res = Manifest::parse(src);
+        assert!(res.is_err());
+    }
 }
