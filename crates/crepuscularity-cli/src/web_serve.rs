@@ -738,7 +738,15 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
         Ok(n) => n,
         Err(_) => return,
     };
-    let request = std::str::from_utf8(&buf[..n]).unwrap_or("");
+    let (method, path) = parse_request_line(&buf[..n]);
+
+    let _span = tracing::info_span!("dev_request", %method, %path).entered();
+
+    route_request(method, path, stream, ctx);
+}
+
+fn parse_request_line(buf: &[u8]) -> (&str, &str) {
+    let request = std::str::from_utf8(buf).unwrap_or("");
     let first_line = request.lines().next().unwrap_or("");
 
     // Parse method + path.
@@ -747,9 +755,10 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
     let raw_path = parts.next().unwrap_or("/");
     // Strip query string.
     let path = raw_path.split('?').next().unwrap_or(raw_path);
+    (method, path)
+}
 
-    let _span = tracing::info_span!("dev_request", %method, %path).entered();
-
+fn route_request(method: &str, path: &str, mut stream: TcpStream, ctx: DevRequestContext) {
     match (method, path) {
         ("GET", "/dev-reload") => {
             long_poll_sse(stream, ctx.generation, ctx.last_sse_msg);
