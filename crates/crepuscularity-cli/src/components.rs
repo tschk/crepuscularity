@@ -224,12 +224,33 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         ],
     };
 
-    let selected: Vec<(ComponentTarget, String)> = if let Some(comp) = disk_comp {
+    let selected = resolve_targets(wanted, disk_comp, crate_meta.as_ref());
+
+    if selected.is_empty() {
+        return Err(CrepusCliError::context(format!(
+            "component {id:?} has no path for target {:?}",
+            target.unwrap_or(ComponentTarget::Moonshine)
+        )));
+    }
+
+    print_component_info(id, display, disk_comp, &root);
+    print_path_hints(&selected, &root);
+    print_guidance();
+
+    Ok(())
+}
+
+fn resolve_targets(
+    wanted: Vec<ComponentTarget>,
+    disk_comp: Option<&CatalogComponent>,
+    crate_meta: Option<&crepuscularity_components::ComponentMeta>,
+) -> Vec<(ComponentTarget, String)> {
+    if let Some(comp) = disk_comp {
         wanted
             .into_iter()
             .filter_map(|t| path_for_target(comp, t).map(|p| (t, p)))
             .collect()
-    } else if let Some(meta) = &crate_meta {
+    } else if let Some(meta) = crate_meta {
         wanted
             .into_iter()
             .filter_map(|t| {
@@ -247,15 +268,15 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
             .collect()
     } else {
         vec![]
-    };
-
-    if selected.is_empty() {
-        return Err(CrepusCliError::context(format!(
-            "component {id:?} has no path for target {:?}",
-            target.unwrap_or(ComponentTarget::Moonshine)
-        )));
     }
+}
 
+fn print_component_info(
+    id: &str,
+    display: &str,
+    disk_comp: Option<&CatalogComponent>,
+    root: &Path,
+) {
     println!("component: {id}");
     println!("name:      {display}");
     if let Some(comp) = disk_comp {
@@ -270,8 +291,11 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         }
     }
     println!();
+}
+
+fn print_path_hints(selected: &[(ComponentTarget, String)], root: &Path) {
     println!("Install / copy path hints:");
-    for (t, path) in &selected {
+    for (t, path) in selected {
         if matches!(t, ComponentTarget::Moonshine) {
             println!(
                 "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
@@ -285,6 +309,9 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         println!("  {:<10} {}  [{status}]", target_key(*t), path);
     }
     println!();
+}
+
+fn print_guidance() {
     println!("Guidance:");
     println!(
         "  • Copy or symlink the target package into your app, or depend on it once published."
@@ -298,7 +325,6 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
     println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
     println!("  • GPUI: include the gpui package module from your desktop crate.");
     println!("  • See `crepus moonshine dep` for @tschk package snippets.");
-    Ok(())
 }
 
 fn themes() -> Result<(), CrepusCliError> {
