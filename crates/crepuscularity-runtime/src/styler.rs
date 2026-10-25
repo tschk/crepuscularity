@@ -826,6 +826,42 @@ type LengthPropEntry = (&'static str, fn(Div, Length) -> Div);
 type DefiniteLengthPropEntry = (&'static str, fn(Div, DefiniteLength) -> Div);
 
 fn apply_dynamic(d: Div, class: &str) -> Div {
+    let d = match try_apply_length_props(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_definite_length_props(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_border_radius(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_border_widths(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_grid_placement(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_typography(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    let d = match try_apply_layout_and_effects(d, class) {
+        Ok(d) => return d,
+        Err(d) => d,
+    };
+    match try_apply_colors(d, class) {
+        Ok(d) => d,
+        Err(d) => d,
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn try_apply_length_props(d: Div, class: &str) -> Result<Div, Div> {
     // ── Length properties (support auto) ──
     const LENGTH_PROPS: &[LengthPropEntry] = &[
         ("w-", |d, v| d.w(v)),
@@ -858,13 +894,17 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                     "w-" | "h-" | "min-w-" | "min-h-" | "max-w-" | "max-h-" | "size-" | "basis-"
                 ) && matches!(len, Length::Definite(value) if value.to_pixels(px(1.0).into(), px(1.0)) < px(0.0))
                 {
-                    return d;
+                    return Ok(d);
                 }
-                return apply(d, len);
+                return Ok(apply(d, len));
             }
         }
     }
+    Err(d)
+}
 
+#[allow(clippy::result_large_err)]
+fn try_apply_definite_length_props(d: Div, class: &str) -> Result<Div, Div> {
     // ── DefiniteLength properties (no auto) ──
     const DEFINITE_PROPS: &[DefiniteLengthPropEntry] = &[
         ("p-", |d, v| d.p(v)),
@@ -883,13 +923,17 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(len) = parse_definite_length(rest) {
                 if len.to_pixels(px(1.0).into(), px(1.0)) < px(0.0) {
-                    return d;
+                    return Ok(d);
                 }
-                return apply(d, len);
+                return Ok(apply(d, len));
             }
         }
     }
+    Err(d)
+}
 
+#[allow(clippy::result_large_err)]
+fn try_apply_border_radius(d: Div, class: &str) -> Result<Div, Div> {
     // ── Arbitrary border radius: rounded-[Npx], rounded-t-[Npx], etc. ──
     for (prefix, apply_fn) in &[
         (
@@ -929,12 +973,16 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+                    return Ok(apply_fn(d, abs));
                 }
             }
         }
     }
+    Err(d)
+}
 
+#[allow(clippy::result_large_err)]
+fn try_apply_border_widths(d: Div, class: &str) -> Result<Div, Div> {
     // ── Arbitrary border widths: border-t-[Npx], border-[Npx] etc. ──
     for (prefix, apply_fn) in &[
         (
@@ -958,64 +1006,72 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+                    return Ok(apply_fn(d, abs));
                 }
             }
         }
     }
+    Err(d)
+}
 
+#[allow(clippy::result_large_err)]
+fn try_apply_grid_placement(d: Div, class: &str) -> Result<Div, Div> {
     // ── Grid placement: col-span-N, col-start-N, col-end-N, row-span-N, etc. ──
     if let Some(rest) = class.strip_prefix("col-span-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.col_span(n);
+            return Ok(d.col_span(n));
         }
     }
     if let Some(rest) = class.strip_prefix("col-start-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_start(n);
+            return Ok(d.col_start(n));
         }
     }
     if let Some(rest) = class.strip_prefix("col-end-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_end(n);
+            return Ok(d.col_end(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-span-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.row_span(n);
+            return Ok(d.row_span(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-start-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_start(n);
+            return Ok(d.row_start(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-end-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_end(n);
+            return Ok(d.row_end(n));
         }
     }
     // Dynamic grid-cols-N and grid-rows-N beyond the static 1-12
     if let Some(rest) = class.strip_prefix("grid-cols-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_cols(n);
+            return Ok(d.grid_cols(n));
         }
     }
     if let Some(rest) = class.strip_prefix("grid-rows-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_rows(n);
+            return Ok(d.grid_rows(n));
         }
     }
+    Err(d)
+}
 
+#[allow(clippy::result_large_err)]
+fn try_apply_typography(d: Div, class: &str) -> Result<Div, Div> {
     // ── tracking-* (letter-spacing) — gpui-ce provides letter_spacing natively ──
     {
         match class {
-            "tracking-tighter" => return d.letter_spacing(px(-2.0)),
-            "tracking-tight" => return d.letter_spacing(px(-1.0)),
-            "tracking-normal" => return d.letter_spacing(px(0.)),
-            "tracking-wide" => return d.letter_spacing(px(1.5)),
-            "tracking-wider" => return d.letter_spacing(px(3.0)),
-            "tracking-widest" => return d.letter_spacing(px(5.0)),
+            "tracking-tighter" => return Ok(d.letter_spacing(px(-2.0))),
+            "tracking-tight" => return Ok(d.letter_spacing(px(-1.0))),
+            "tracking-normal" => return Ok(d.letter_spacing(px(0.))),
+            "tracking-wide" => return Ok(d.letter_spacing(px(1.5))),
+            "tracking-wider" => return Ok(d.letter_spacing(px(3.0))),
+            "tracking-widest" => return Ok(d.letter_spacing(px(5.0))),
             _ => {}
         }
         if let Some(rest) = class.strip_prefix("tracking-[") {
@@ -1023,14 +1079,75 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                 if let Some(abs) = parse_absolute_length(inner) {
                     let px_val = abs.to_pixels(px(16.0));
                     if !f32::from(px_val).is_finite() {
-                        return d;
+                        return Ok(d);
                     }
-                    return d.letter_spacing(px_val);
+                    return Ok(d.letter_spacing(px_val));
                 }
             }
         }
     }
 
+    // ── line-clamp-N ──
+    if let Some(rest) = class.strip_prefix("line-clamp-") {
+        if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
+            return Ok(d.line_clamp(n));
+        }
+    }
+
+    // ── font-['Family'] or font-[Family] ──
+    if let Some(rest) = class.strip_prefix("font-[") {
+        if let Some(inner) = rest.strip_suffix(']') {
+            let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
+            if !family.trim().is_empty() {
+                return Ok(d.font_family(family));
+            }
+        }
+    }
+
+    // ── text-[size] — arbitrary text size ──
+    if let Some(rest) = class.strip_prefix("text-[") {
+        if let Some(inner) = rest.strip_suffix(']') {
+            // Color values fall through to the shared color-family handling.
+            if let Some(len) = parse_nonnegative_absolute_length(inner) {
+                return Ok(d.text_size(len));
+            }
+        }
+    }
+
+    // ── leading-[value] — arbitrary line height ──
+    if let Some(rest) = class.strip_prefix("leading-[") {
+        if let Some(inner) = rest.strip_suffix(']') {
+            if let Some(abs) = parse_nonnegative_absolute_length(inner) {
+                return Ok(d.line_height(abs));
+            }
+        }
+    }
+
+    // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
+    if let Some(rest) = class.strip_prefix("decoration-[") {
+        if let Some(inner) = rest.strip_suffix(']') {
+            if inner.starts_with('#') {
+                if let Some(color) = parse_runtime_hex_color(inner) {
+                    return Ok(d.text_decoration_color(color));
+                }
+            }
+        }
+    }
+    if let Some(rest) = class.strip_prefix("decoration-") {
+        // decoration-family-shade
+        if let Some(dash_pos) = rest.rfind('-') {
+            let family = &rest[..dash_pos];
+            let shade = &rest[dash_pos + 1..];
+            if let Some(hex) = tailwind_color(family, shade) {
+                return Ok(d.text_decoration_color(rgb(hex)));
+            }
+        }
+    }
+    Err(d)
+}
+
+#[allow(clippy::result_large_err)]
+fn try_apply_layout_and_effects(d: Div, class: &str) -> Result<Div, Div> {
     // ── aspect-[N/M] or aspect-[N] — arbitrary aspect ratio ──
     if let Some(rest) = class.strip_prefix("aspect-[") {
         if let Some(inner) = rest.strip_suffix(']') {
@@ -1046,7 +1163,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             if let Some(r) = ratio.filter(|r| r.is_finite() && *r > 0.0) {
                 let mut d = d;
                 d.style().aspect_ratio = Some(r);
-                return d;
+                return Ok(d);
             }
         }
     }
@@ -1057,45 +1174,9 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             if let Some(abs) = parse_absolute_length(inner) {
                 let spread = abs.to_pixels(px(16.0));
                 if !f32::from(spread).is_finite() {
-                    return d;
+                    return Ok(d);
                 }
-                return apply_ring(d, spread, false);
-            }
-        }
-    }
-
-    // ── line-clamp-N ──
-    if let Some(rest) = class.strip_prefix("line-clamp-") {
-        if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
-            return d.line_clamp(n);
-        }
-    }
-
-    // ── font-['Family'] or font-[Family] ──
-    if let Some(rest) = class.strip_prefix("font-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
-            if !family.trim().is_empty() {
-                return d.font_family(family);
-            }
-        }
-    }
-
-    // ── text-[size] — arbitrary text size ──
-    if let Some(rest) = class.strip_prefix("text-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            // Color values fall through to the shared color-family handling.
-            if let Some(len) = parse_nonnegative_absolute_length(inner) {
-                return d.text_size(len);
-            }
-        }
-    }
-
-    // ── leading-[value] — arbitrary line height ──
-    if let Some(rest) = class.strip_prefix("leading-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                return d.line_height(abs);
+                return Ok(apply_ring(d, spread, false));
             }
         }
     }
@@ -1103,37 +1184,20 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     // ── opacity-N ──
     if let Some(rest) = class.strip_prefix("opacity-") {
         if let Some(opacity) = parse_opacity_percentage(rest) {
-            return d.opacity(opacity);
+            return Ok(d.opacity(opacity));
         }
     }
+    Err(d)
+}
 
-    // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
-    if let Some(rest) = class.strip_prefix("decoration-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if inner.starts_with('#') {
-                if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_decoration_color(color);
-                }
-            }
-        }
-    }
-    if let Some(rest) = class.strip_prefix("decoration-") {
-        // decoration-family-shade
-        if let Some(dash_pos) = rest.rfind('-') {
-            let family = &rest[..dash_pos];
-            let shade = &rest[dash_pos + 1..];
-            if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_decoration_color(rgb(hex));
-            }
-        }
-    }
-
+#[allow(clippy::result_large_err)]
+fn try_apply_colors(d: Div, class: &str) -> Result<Div, Div> {
     // ── text-bg: text-bg-[#hex] or text-bg-family-shade ──
     if let Some(rest) = class.strip_prefix("text-bg-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             if inner.starts_with('#') {
                 if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_bg(color);
+                    return Ok(d.text_bg(color));
                 }
             }
         }
@@ -1143,7 +1207,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             let family = &rest[..dash_pos];
             let shade = &rest[dash_pos + 1..];
             if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_bg(rgb(hex));
+                return Ok(d.text_bg(rgb(hex)));
             }
         }
     }
@@ -1159,10 +1223,10 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             if rest.starts_with('[') && rest.ends_with(']') {
                 let inner = &rest[1..rest.len() - 1];
                 if inner.starts_with('#') {
-                    return match parse_runtime_hex_color(inner) {
+                    return Ok(match parse_runtime_hex_color(inner) {
                         Some(color) => apply_color(d, prefix, color),
                         None => d,
-                    };
+                    });
                 }
                 // hsla: bg-[hsla(h,s,l,a)]
                 if let Some(hsla_str) = inner.strip_prefix("hsla(") {
@@ -1182,7 +1246,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                                 parts[3].parse::<f32>(),
                             ) {
                                 if ![h, s, l, a].iter().all(|value| value.is_finite()) {
-                                    return d;
+                                    return Ok(d);
                                 }
                                 let color = hsla(
                                     h.rem_euclid(360.0) / 360.0,
@@ -1191,13 +1255,13 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                                     a.clamp(0.0, 1.0),
                                 );
                                 if *prefix == "bg-" {
-                                    return d.bg(color);
+                                    return Ok(d.bg(color));
                                 }
                                 if *prefix == "text-" {
-                                    return d.text_color(color);
+                                    return Ok(d.text_color(color));
                                 }
                                 if *prefix == "border-" {
-                                    return d.border_color(color);
+                                    return Ok(d.border_color(color));
                                 }
                             }
                         }
@@ -1220,7 +1284,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                         {
                             color.alpha = (opacity * 255.0).floor() / 255.0;
                         }
-                        return apply_color(d, prefix, color);
+                        return Ok(apply_color(d, prefix, color));
                     }
                 }
             }
@@ -1229,13 +1293,12 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                 let family = &rest[..dash_pos];
                 let shade = &rest[dash_pos + 1..];
                 if let Some(hex) = tailwind_color(family, shade) {
-                    return apply_fn(d, hex);
+                    return Ok(apply_fn(d, hex));
                 }
             }
         }
     }
-
-    d
+    Err(d)
 }
 
 fn parse_runtime_hex_color(value: &str) -> Option<gpui::Rgba> {
