@@ -699,10 +699,7 @@ fn render_seo_head(head: &SiteHead) -> String {
     format_seo_tags(head, &resolved)
 }
 
-fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
-    let seo = &head.seo;
-    let mut lines = Vec::new();
-
+fn push_basic_seo_tags(lines: &mut Vec<String>, seo: &crate::crepus_toml::SeoConfig) {
     if let Some(canonical) = &seo.canonical {
         lines.push(format!(
             r#"  <link rel="canonical" href="{}">"#,
@@ -747,7 +744,13 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             ));
         }
     }
+}
 
+fn push_og_tags(
+    lines: &mut Vec<String>,
+    seo: &crate::crepus_toml::SeoConfig,
+    resolved: &ResolvedSeoTags<'_>,
+) {
     lines.push(format!(
         r#"  <meta property="og:title" content="{}">"#,
         escape_html(resolved.title)
@@ -790,7 +793,13 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(image_alt)
         ));
     }
+}
 
+fn push_twitter_tags(
+    lines: &mut Vec<String>,
+    seo: &crate::crepus_toml::SeoConfig,
+    resolved: &ResolvedSeoTags<'_>,
+) {
     lines.push(format!(
         r#"  <meta name="twitter:card" content="{}">"#,
         escape_html(resolved.twitter_card)
@@ -827,7 +836,9 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(creator)
         ));
     }
+}
 
+fn push_alternate_tags(lines: &mut Vec<String>, seo: &crate::crepus_toml::SeoConfig) {
     for alt in &seo.alternates {
         let mut attrs = vec![
             r#"rel="alternate""#.to_string(),
@@ -847,7 +858,9 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
         }
         lines.push(format!("  <link {}>", attrs.join(" ")));
     }
+}
 
+fn push_json_ld_tags(lines: &mut Vec<String>, seo: &crate::crepus_toml::SeoConfig) {
     for json in &seo.json_ld {
         if !json.trim().is_empty() {
             lines.push(format!(
@@ -856,7 +869,9 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             ));
         }
     }
+}
 
+fn push_favicon_tags(lines: &mut Vec<String>, seo: &crate::crepus_toml::SeoConfig) {
     if let Some(favicon) = &seo.favicon {
         let href = escape_html(favicon);
         if favicon.ends_with(".svg") {
@@ -884,6 +899,18 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(touch)
         ));
     }
+}
+
+fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
+    let seo = &head.seo;
+    let mut lines = Vec::new();
+
+    push_basic_seo_tags(&mut lines, seo);
+    push_og_tags(&mut lines, seo, resolved);
+    push_twitter_tags(&mut lines, seo, resolved);
+    push_alternate_tags(&mut lines, seo);
+    push_json_ld_tags(&mut lines, seo);
+    push_favicon_tags(&mut lines, seo);
 
     lines.join("\n")
 }
