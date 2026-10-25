@@ -59,63 +59,9 @@ fn convert(dir: &Path, out: &Path, target: TauriTargetArg) -> Result<(), String>
             staging.display()
         ));
     }
-    let result = (|| {
-        crate::native::scaffold_native_app_at(&staging)?;
-        apply_metadata(&staging, &metadata)?;
-        for (path, source) in &bundle.files {
-            let destination = staging.join("views").join(path);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(destination, source).map_err(|e| e.to_string())?;
-            if desktop {
-                let destination = staging.join("desktop/views").join(path);
-                if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                fs::write(destination, source).map_err(|e| e.to_string())?;
-            }
-        }
-        fs::write(
-            staging.join("views/main.crepus"),
-            format!("include {}\n", bundle.entry),
-        )
-        .map_err(|e| e.to_string())?;
-        if desktop {
-            fs::write(
-                staging.join("desktop/views/main.crepus"),
-                format!("include {}\n", bundle.entry),
-            )
-            .map_err(|e| e.to_string())?;
-            write_desktop_project(&staging.join("desktop"), &windows)?;
-        }
-        fs::write(staging.join("fixture.json"), &fixture).map_err(|e| e.to_string())?;
-        if target != TauriTargetArg::Desktop {
-            fs::write(
-                staging.join("android/app/src/main/assets/fixture.json"),
-                &fixture,
-            )
-            .map_err(|e| e.to_string())?;
-            fs::write(
-                staging.join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift"),
-                swift,
-            )
-            .map_err(|e| e.to_string())?;
-            fs::write(
-            staging.join(
-                "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
-            ),
-            kotlin,
-        )
-        .map_err(|e| e.to_string())?;
-        }
-        if target == TauriTargetArg::Desktop {
-            fs::remove_dir_all(staging.join("ios")).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(staging.join("android")).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(staging.join("rust")).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    })();
+    let result = stage_project_files(
+        &staging, &metadata, &bundle, &windows, &fixture, &swift, &kotlin, target, desktop,
+    );
     if let Err(error) = result {
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
@@ -126,6 +72,75 @@ fn convert(dir: &Path, out: &Path, target: TauriTargetArg) -> Result<(), String>
         project.version(),
         out.display()
     );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_project_files(
+    staging: &Path,
+    metadata: &crepuscularity_tauri::TauriMetadata,
+    bundle: &crepuscularity_core::bundle::Bundle,
+    windows: &[crepuscularity_tauri::TauriWindowSpec],
+    fixture: &str,
+    swift: &str,
+    kotlin: &str,
+    target: TauriTargetArg,
+    desktop: bool,
+) -> Result<(), String> {
+    crate::native::scaffold_native_app_at(staging)?;
+    apply_metadata(staging, metadata)?;
+    for (path, source) in &bundle.files {
+        let destination = staging.join("views").join(path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(destination, source).map_err(|e| e.to_string())?;
+        if desktop {
+            let destination = staging.join("desktop/views").join(path);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::write(destination, source).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::write(
+        staging.join("views/main.crepus"),
+        format!("include {}\n", bundle.entry),
+    )
+    .map_err(|e| e.to_string())?;
+    if desktop {
+        fs::write(
+            staging.join("desktop/views/main.crepus"),
+            format!("include {}\n", bundle.entry),
+        )
+        .map_err(|e| e.to_string())?;
+        write_desktop_project(&staging.join("desktop"), windows)?;
+    }
+    fs::write(staging.join("fixture.json"), fixture).map_err(|e| e.to_string())?;
+    if target != TauriTargetArg::Desktop {
+        fs::write(
+            staging.join("android/app/src/main/assets/fixture.json"),
+            fixture,
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            staging.join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift"),
+            swift,
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            staging.join(
+                "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
+            ),
+            kotlin,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if target == TauriTargetArg::Desktop {
+        fs::remove_dir_all(staging.join("ios")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(staging.join("android")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(staging.join("rust")).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
