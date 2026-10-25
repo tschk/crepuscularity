@@ -76,3 +76,76 @@ pub fn flatten_tree(nodes: &[BookmarkTreeNode]) -> Vec<BookmarkTreeNode> {
     }
     flat
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flatten_tree_empty() {
+        let nodes = vec![];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_only_folders() {
+        let nodes = vec![
+            BookmarkTreeNode {
+                id: "1".to_string(),
+                url: None,
+                ..Default::default()
+            },
+            BookmarkTreeNode {
+                id: "2".to_string(),
+                url: None,
+                children: Some(vec![BookmarkTreeNode {
+                    id: "3".to_string(),
+                    url: None,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+        ];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_with_bookmarks() {
+        let nodes = vec![
+            BookmarkTreeNode {
+                id: "1".to_string(),
+                url: None,
+                children: Some(vec![
+                    BookmarkTreeNode {
+                        id: "2".to_string(),
+                        url: Some("https://example.com".to_string()),
+                        ..Default::default()
+                    },
+                    BookmarkTreeNode {
+                        id: "3".to_string(),
+                        url: None,
+                        children: Some(vec![BookmarkTreeNode {
+                            id: "4".to_string(),
+                            url: Some("https://test.com".to_string()),
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            },
+            BookmarkTreeNode {
+                id: "5".to_string(),
+                url: Some("https://hello.com".to_string()),
+                ..Default::default()
+            },
+        ];
+        let flat = flatten_tree(&nodes);
+        assert_eq!(flat.len(), 3);
+        assert_eq!(flat[0].id, "2");
+        assert_eq!(flat[1].id, "4");
+        assert_eq!(flat[2].id, "5");
+    }
+}
