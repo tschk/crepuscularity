@@ -120,7 +120,7 @@ pub(crate) fn transform_props_with_policy(
     let mut declarations = Vec::new();
     let mut aliases = Vec::new();
     let mut props_declarations = 0usize;
-    let mut bindings = Vec::new();
+    let mut bindings = std::collections::HashMap::new();
     for node in nodes.iter() {
         let AstKind::VariableDeclarator(decl) = node.kind() else {
             continue;
@@ -311,10 +311,10 @@ pub(crate) fn transform_props_with_policy(
                     }
                 }
             }
-            bindings.push((
+            bindings.insert(
                 binding.symbol_id.get().unwrap(),
                 decl.kind == VariableDeclarationKind::Const,
-            ));
+            );
             let writable = exported_props.contains(&binding.name.as_str())
                 || semantic
                     .symbol_references(binding.symbol_id.get().unwrap())
@@ -467,16 +467,20 @@ pub(crate) fn transform_props_with_policy(
         let reference = semantic
             .scoping()
             .get_reference(id.reference_id.get().unwrap());
-        let Some((_, constant)) = bindings
-            .iter()
-            .find(|(symbol, _)| Some(*symbol) == reference.symbol_id())
-        else {
+        let symbol_id = reference.symbol_id();
+        let constant = if let Some(sym) = symbol_id {
+            if let Some(&c) = bindings.get(&sym) {
+                c
+            } else {
+                continue;
+            }
+        } else {
             continue;
         };
         if reference.is_type() {
             return Err(fail("prop binding type queries are unsupported"));
         }
-        if *constant && reference.is_write() {
+        if constant && reference.is_write() {
             return Err(fail("assigning to a const prop binding is invalid"));
         }
         let mut reference_span = id.span;
