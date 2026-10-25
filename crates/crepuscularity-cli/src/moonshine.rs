@@ -700,13 +700,23 @@ createApp({ root: Root }).mount("#app");
             )));
         }
 
+        run_cargo(&project)?;
+        let name = get_project_name(&project);
+        let slug = generate_slug(&name);
+        sync_generated_files(&project)?;
+        write_project_configs(&project, &name, &slug)?;
+        run_bundler(&project, t0)?;
+        Ok(())
+    }
+
+    fn run_cargo(project: &Path) -> Result<(), CrepusCliError> {
         eprintln!(
             "{} cargo run (emit generated/ from inlined crepus templates)",
             ui::arrow()
         );
         let status = Command::new("cargo")
             .arg("run")
-            .current_dir(&project)
+            .current_dir(project)
             .status()
             .map_err(|e| {
                 CrepusCliError::context(format!(
@@ -728,17 +738,26 @@ createApp({ root: Root }).mount("#app");
                     .to_string(),
             ));
         }
+        Ok(())
+    }
 
-        let name = project
+    fn get_project_name(project: &Path) -> String {
+        project
             .canonicalize()
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "moon-app".to_string());
-        let slug = name
-            .to_lowercase()
+            .unwrap_or_else(|| "moon-app".to_string())
+    }
+
+    fn generate_slug(name: &str) -> String {
+        name.to_lowercase()
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>();
+            .collect::<String>()
+    }
+
+    fn sync_generated_files(project: &Path) -> Result<(), CrepusCliError> {
+        let generated_app = project.join("generated/app.tsx");
 
         scaffold::ensure_dir(&project.join("src/components")).map_err(CrepusCliError::context)?;
 
@@ -769,10 +788,13 @@ createApp({ root: Root }).mount("#app");
         } else {
             scaffold::write_file(&entry, MAIN_TSX_BOOTSTRAP).map_err(CrepusCliError::context)?;
         }
+        Ok(())
+    }
 
+    fn write_project_configs(project: &Path, name: &str, slug: &str) -> Result<(), CrepusCliError> {
         let (core, crepus, components, local_hint) = match resolve_moonshine_root() {
             Some(root) => {
-                let (c, cr, co) = file_dep_paths(&root, Some(project.as_path()));
+                let (c, cr, co) = file_dep_paths(&root, Some(project));
                 let hint = format!("local moonshine checkout at `{}`", root.display());
                 (c, cr, co, hint)
             }
@@ -788,12 +810,12 @@ createApp({ root: Root }).mount("#app");
         eprintln!("{} {local_hint}", ui::arrow());
 
         let pkg = package_json_template(&core, &crepus, &components);
-        scaffold::write_template(&project.join("package.json"), &pkg, &[("{{slug}}", &slug)])
+        scaffold::write_template(&project.join("package.json"), &pkg, &[("{{slug}}", slug)])
             .map_err(CrepusCliError::context)?;
         scaffold::write_template(
             &project.join("index.html"),
             INDEX_HTML,
-            &[("{{name}}", &name)],
+            &[("{{name}}", name)],
         )
         .map_err(CrepusCliError::context)?;
         scaffold::write_file(&project.join("vite.config.ts"), VITE_CONFIG)
@@ -801,12 +823,16 @@ createApp({ root: Root }).mount("#app");
         scaffold::write_file(&project.join("tsconfig.json"), TSCONFIG)
             .map_err(CrepusCliError::context)?;
 
+        Ok(())
+    }
+
+    fn run_bundler(project: &Path, t0: Instant) -> Result<(), CrepusCliError> {
         match which_bun() {
             Some(_) => {
                 eprintln!("{} bun install", ui::arrow());
-                run_bun(&project, &["install"])?;
+                run_bun(project, &["install"])?;
                 eprintln!("{} bun run build", ui::arrow());
-                run_bun(&project, &["run", "build"])?;
+                run_bun(project, &["run", "build"])?;
                 ui::success(&format!(
                     "built {} in {:?}",
                     project.display(),
@@ -824,7 +850,6 @@ createApp({ root: Root }).mount("#app");
                 eprintln!("    bun run build");
             }
         }
-
         Ok(())
     }
 
