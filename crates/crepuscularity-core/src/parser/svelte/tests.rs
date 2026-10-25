@@ -489,7 +489,6 @@ fn parse_svelte_component_raw_rejects_trailing_markup() {
 }
 
 #[test]
-#[test]
 fn parse_svelte_component_raw_extracts_all_parts() {
     let src = "<script context=\"module\">module</script><script>script</script><style>style</style><p>html</p>";
     let result = parse_svelte_component_raw(src).unwrap();
