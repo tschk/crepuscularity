@@ -256,6 +256,18 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         )));
     }
 
+    print_component_info(id, display, &root, disk_comp);
+    print_path_hints(&root, &selected);
+    print_guidance();
+    Ok(())
+}
+
+fn print_component_info(
+    id: &str,
+    display: &str,
+    root: &Path,
+    disk_comp: Option<&CatalogComponent>,
+) {
     println!("component: {id}");
     println!("name:      {display}");
     if let Some(comp) = disk_comp {
@@ -270,8 +282,11 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         }
     }
     println!();
+}
+
+fn print_path_hints(root: &Path, selected: &[(ComponentTarget, String)]) {
     println!("Install / copy path hints:");
-    for (t, path) in &selected {
+    for (t, path) in selected {
         if matches!(t, ComponentTarget::Moonshine) {
             println!(
                 "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
@@ -285,6 +300,9 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         println!("  {:<10} {}  [{status}]", target_key(*t), path);
     }
     println!();
+}
+
+fn print_guidance() {
     println!("Guidance:");
     println!(
         "  • Copy or symlink the target package into your app, or depend on it once published."
@@ -298,7 +316,6 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
     println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
     println!("  • GPUI: include the gpui package module from your desktop crate.");
     println!("  • See `crepus moonshine dep` for @tschk package snippets.");
-    Ok(())
 }
 
 fn themes() -> Result<(), CrepusCliError> {
