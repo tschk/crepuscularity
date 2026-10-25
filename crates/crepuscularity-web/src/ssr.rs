@@ -363,4 +363,30 @@ mod tests {
         assert_eq!(obj.get("num").unwrap().as_f64().unwrap(), 42.0);
         assert!(obj.get("bool").unwrap().as_bool().unwrap());
     }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_markers_false() {
+        let ctx = TemplateContext::new();
+        let result = render_template_to_html_with_ssr("<div>hello</div>", &ctx, false).unwrap();
+        assert_eq!(result, "<div>hello</div>");
+    }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_markers_true() {
+        let mut ctx = TemplateContext::new();
+        ctx.vars
+            .insert("name".to_string(), TemplateValue::Str("world".to_string()));
+        let result =
+            render_template_to_html_with_ssr("<div>hello {name}</div>", &ctx, true).unwrap();
+        assert!(result.contains("data-crepus-root"));
+        assert!(result.contains("hello world"));
+        assert!(result.contains("__crepus_hydration__"));
+    }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_invalid_template() {
+        let ctx = TemplateContext::new();
+        let result = render_template_to_html_with_ssr("<div>hello {", &ctx, true);
+        assert!(result.is_err());
+    }
 }
