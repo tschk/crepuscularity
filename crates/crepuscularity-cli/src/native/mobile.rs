@@ -72,18 +72,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             dir,
             vars,
             pretty,
-        } => execute(NativeCommands::Sync {
-            args: SyncArgs {
-                template,
-                dir,
-                out: Vec::new(),
-                no_defaults: false,
-                component: None,
-                ctx: None,
-                vars,
-                pretty,
-            },
-        }),
+        } => handle_sync(template, dir, vars, pretty),
         MobileCommands::Codegen {
             template,
             dir,
@@ -98,29 +87,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             target,
             configuration,
             flavor,
-        } => {
-            let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
-            // Auto-codegen before build.
-            run_codegen_full(
-                Some(PathBuf::from("views/main.crepus")),
-                root,
-                match mobile_platform(platform) {
-                    MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
-                    MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
-                    MobilePlatform::All => None,
-                },
-                None,
-                Some("CrepusGeneratedView".into()),
-                &[],
-            )?;
-            run_mobile_build(
-                mobile_platform(platform),
-                dir,
-                target,
-                configuration,
-                flavor,
-            )
-        }
+        } => handle_build(platform, dir, target, configuration, flavor),
         MobileCommands::Run {
             platform,
             dir,
@@ -137,30 +104,87 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             template,
             ctx,
             vars,
-        } => {
-            let parsed = MobileDevArgs {
-                dir,
-                port,
-                platform: mobile_platform(platform),
-                template,
-                ctx_file: ctx,
-                vars: vars
-                    .iter()
-                    .map(|kv| {
-                        kv.split_once('=')
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .unwrap_or_else(|| {
-                                ui::error(&format!("--var expects key=value, got: {kv}"))
-                            })
-                    })
-                    .collect(),
-            };
-            if let Err(e) = run_dev(parsed) {
-                ui::error(&e.to_string());
-            }
-            Ok(())
-        }
+        } => handle_dev(dir, port, platform, template, ctx, vars),
     }
+}
+
+fn handle_sync(
+    template: PathBuf,
+    dir: PathBuf,
+    vars: Vec<String>,
+    pretty: bool,
+) -> Result<(), CrepusCliError> {
+    execute(NativeCommands::Sync {
+        args: SyncArgs {
+            template,
+            dir,
+            out: Vec::new(),
+            no_defaults: false,
+            component: None,
+            ctx: None,
+            vars,
+            pretty,
+        },
+    })
+}
+
+fn handle_build(
+    platform: crate::cli::MobilePlatformArg,
+    dir: Option<PathBuf>,
+    target: crate::native::IosBuildTarget,
+    configuration: String,
+    flavor: String,
+) -> Result<(), CrepusCliError> {
+    let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    // Auto-codegen before build.
+    run_codegen_full(
+        Some(PathBuf::from("views/main.crepus")),
+        root,
+        match mobile_platform(platform) {
+            MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
+            MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
+            MobilePlatform::All => None,
+        },
+        None,
+        Some("CrepusGeneratedView".into()),
+        &[],
+    )?;
+    run_mobile_build(
+        mobile_platform(platform),
+        dir,
+        target,
+        configuration,
+        flavor,
+    )
+}
+
+fn handle_dev(
+    dir: PathBuf,
+    port: u16,
+    platform: crate::cli::MobilePlatformArg,
+    template: PathBuf,
+    ctx: Option<PathBuf>,
+    vars: Vec<String>,
+) -> Result<(), CrepusCliError> {
+    let parsed = MobileDevArgs {
+        dir,
+        port,
+        platform: mobile_platform(platform),
+        template,
+        ctx_file: ctx,
+        vars: vars
+            .iter()
+            .map(|kv| {
+                kv.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .unwrap_or_else(|| ui::error(&format!("--var expects key=value, got: {kv}")))
+            })
+            .collect(),
+    };
+    if let Err(e) = run_dev(parsed) {
+        ui::error(&e.to_string());
+    }
+    Ok(())
 }
 
 pub fn scaffold_mobile_app(name: &str) {
