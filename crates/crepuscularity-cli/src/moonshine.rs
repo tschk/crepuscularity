@@ -649,9 +649,7 @@ result under `generated/` and `crepus moon build` will pick it up.
 /// `crepus moon build` — builds a `crepus moon new` Rust-only project into a
 /// real Moonshine + React + Vite app.
 mod rust_build {
-    use std::env;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::time::Instant;
 
     use super::{
@@ -688,25 +686,14 @@ function Root() {
 createApp({ root: Root }).mount("#app");
 "##;
 
-    pub fn build(dir: Option<PathBuf>) -> Result<(), CrepusCliError> {
-        let t0 = Instant::now();
-        let project = dir.unwrap_or_else(|| PathBuf::from("."));
-
-        if !project.join("Cargo.toml").is_file() {
-            return Err(CrepusCliError::context(format!(
-                "no Cargo.toml in {} — run `crepus moon build` from a project scaffolded by \
-                 `crepus moon new`, or pass --dir",
-                project.display()
-            )));
-        }
-
+    fn run_cargo_emit(project: &Path) -> Result<(), CrepusCliError> {
         eprintln!(
             "{} cargo run (emit generated/ from inlined crepus templates)",
             ui::arrow()
         );
-        let status = Command::new("cargo")
+        let status = std::process::Command::new("cargo")
             .arg("run")
-            .current_dir(&project)
+            .current_dir(project)
             .status()
             .map_err(|e| {
                 CrepusCliError::context(format!(
@@ -719,7 +706,10 @@ createApp({ root: Root }).mount("#app");
                 "`cargo run` failed — fix the errors above and re-run `crepus moon build`",
             ));
         }
+        Ok(())
+    }
 
+    fn sync_generated_files(project: &Path) -> Result<(), CrepusCliError> {
         let generated_app = project.join("generated/app.tsx");
         if !generated_app.is_file() {
             return Err(CrepusCliError::context(
@@ -728,17 +718,6 @@ createApp({ root: Root }).mount("#app");
                     .to_string(),
             ));
         }
-
-        let name = project
-            .canonicalize()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "moon-app".to_string());
-        let slug = name
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>();
 
         scaffold::ensure_dir(&project.join("src/components")).map_err(CrepusCliError::context)?;
 
@@ -769,10 +748,17 @@ createApp({ root: Root }).mount("#app");
         } else {
             scaffold::write_file(&entry, MAIN_TSX_BOOTSTRAP).map_err(CrepusCliError::context)?;
         }
+        Ok(())
+    }
 
+    fn generate_project_config(
+        project: &Path,
+        name: &str,
+        slug: &str,
+    ) -> Result<(), CrepusCliError> {
         let (core, crepus, components, local_hint) = match resolve_moonshine_root() {
             Some(root) => {
-                let (c, cr, co) = file_dep_paths(&root, Some(project.as_path()));
+                let (c, cr, co) = file_dep_paths(&root, Some(project));
                 let hint = format!("local moonshine checkout at `{}`", root.display());
                 (c, cr, co, hint)
             }
@@ -788,12 +774,12 @@ createApp({ root: Root }).mount("#app");
         eprintln!("{} {local_hint}", ui::arrow());
 
         let pkg = package_json_template(&core, &crepus, &components);
-        scaffold::write_template(&project.join("package.json"), &pkg, &[("{{slug}}", &slug)])
+        scaffold::write_template(&project.join("package.json"), &pkg, &[("{{slug}}", slug)])
             .map_err(CrepusCliError::context)?;
         scaffold::write_template(
             &project.join("index.html"),
             INDEX_HTML,
-            &[("{{name}}", &name)],
+            &[("{{name}}", name)],
         )
         .map_err(CrepusCliError::context)?;
         scaffold::write_file(&project.join("vite.config.ts"), VITE_CONFIG)
@@ -801,12 +787,16 @@ createApp({ root: Root }).mount("#app");
         scaffold::write_file(&project.join("tsconfig.json"), TSCONFIG)
             .map_err(CrepusCliError::context)?;
 
+        Ok(())
+    }
+
+    fn run_bun_build(project: &Path, t0: Instant) -> Result<(), CrepusCliError> {
         match which_bun() {
             Some(_) => {
                 eprintln!("{} bun install", ui::arrow());
-                run_bun(&project, &["install"])?;
+                run_bun(project, &["install"])?;
                 eprintln!("{} bun run build", ui::arrow());
-                run_bun(&project, &["run", "build"])?;
+                run_bun(project, &["run", "build"])?;
                 ui::success(&format!(
                     "built {} in {:?}",
                     project.display(),
@@ -824,20 +814,51 @@ createApp({ root: Root }).mount("#app");
                 eprintln!("    bun run build");
             }
         }
+        Ok(())
+    }
+
+    pub fn build(dir: Option<PathBuf>) -> Result<(), CrepusCliError> {
+        let t0 = Instant::now();
+        let project = dir.unwrap_or_else(|| PathBuf::from("."));
+
+        if !project.join("Cargo.toml").is_file() {
+            return Err(CrepusCliError::context(format!(
+                "no Cargo.toml in {} — run `crepus moon build` from a project scaffolded by \
+                 `crepus moon new`, or pass --dir",
+                project.display()
+            )));
+        }
+
+        run_cargo_emit(&project)?;
+
+        let name = project
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "moon-app".to_string());
+        let slug = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>();
+
+        sync_generated_files(&project)?;
+        generate_project_config(&project, &name, &slug)?;
+        run_bun_build(&project, t0)?;
 
         Ok(())
     }
 
     fn which_bun() -> Option<PathBuf> {
-        let path = env::var_os("PATH")?;
-        env::split_paths(&path).find_map(|dir| {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path).find_map(|dir| {
             let candidate = dir.join("bun");
             candidate.is_file().then_some(candidate)
         })
     }
 
     fn run_bun(project: &Path, args: &[&str]) -> Result<(), CrepusCliError> {
-        let status = Command::new("bun")
+        let status = std::process::Command::new("bun")
             .args(args)
             .current_dir(project)
             .status()
