@@ -1,0 +1,181 @@
+<<<<<<< SEARCH
+    route_request(&mut stream, ctx, method, path);
+}
+
+fn route_request(stream: &mut TcpStream, ctx: DevRequestContext, method: &str, path: &str) {
+    match (method, path) {
+        ("GET", "/dev-reload") => {
+            if let Ok(st) = stream.try_clone() {
+                long_poll_sse(st, ctx.generation, ctx.last_sse_msg);
+            }
+        }
+
+        ("GET", "/crepus-bundle.json") => {
+            serve_crepus_bundle(stream, &ctx.vfm, &ctx.entry);
+        }
+
+        ("GET", "/crepus-islands.json") => {
+            serve_dev_fs_file(stream, &ctx.dev_root.join("crepus-islands.json"));
+        }
+
+        ("GET", "/app.js") => {
+            serve_dev_fs_file(stream, &ctx.dev_root.join("app.js"));
+        }
+
+        ("GET", "/vendor/unocss.js") => {
+            serve_dev_fs_file(stream, &ctx.dev_root.join("vendor/unocss.js"));
+        }
+
+        ("GET", p) if p.starts_with("/pkg/") => {
+            serve_pkg_path(stream, p, &ctx.dev_root);
+        }
+
+        ("GET", p) if p.starts_with("/islands/") => {
+            serve_islands_path(stream, p, &ctx.dev_root);
+        }
+
+        ("GET", p) if p.starts_with("/docs") => {
+            serve_docs_path(stream, p, &ctx.dev_root);
+        }
+
+        ("GET", "/" | "/index.html") => {
+            serve_index_document(
+                stream,
+                &ctx.vfm,
+                &ctx.entry,
+                &ctx.site_dir,
+                ctx.meta.as_ref(),
+            );
+        }
+
+        ("GET", p) if p.ends_with(".crepus") || p.ends_with(".html") => {
+            let template_key = p.trim_start_matches('/');
+            let template_key = if template_key.ends_with(".html") {
+                template_key.replace(".html", ".crepus")
+            } else {
+                template_key.to_string()
+            };
+            if template_key == ctx.entry {
+                serve_index_document(
+                    stream,
+                    &ctx.vfm,
+                    &ctx.entry,
+                    &ctx.site_dir,
+                    ctx.meta.as_ref(),
+                );
+            } else {
+                serve_secondary_preview(
+                    stream,
+                    &ctx.vfm,
+                    &template_key,
+                    &ctx.site_dir,
+                    ctx.meta.as_ref(),
+                );
+            }
+        }
+
+        ("GET", p) if p.starts_with("/static/") => {
+            serve_static_file(stream, p, &ctx.site_dir);
+        }
+
+        _ => {
+            let body = "<html><body><h1>404 Not Found</h1></body></html>";
+            let resp = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    }
+}
+=======
+    route_request(stream, ctx, method, path);
+}
+
+fn route_request(mut stream: TcpStream, ctx: DevRequestContext, method: &str, path: &str) {
+    match (method, path) {
+        ("GET", "/dev-reload") => {
+            long_poll_sse(stream, ctx.generation, ctx.last_sse_msg);
+        }
+
+        ("GET", "/crepus-bundle.json") => {
+            serve_crepus_bundle(&mut stream, &ctx.vfm, &ctx.entry);
+        }
+
+        ("GET", "/crepus-islands.json") => {
+            serve_dev_fs_file(&mut stream, &ctx.dev_root.join("crepus-islands.json"));
+        }
+
+        ("GET", "/app.js") => {
+            serve_dev_fs_file(&mut stream, &ctx.dev_root.join("app.js"));
+        }
+
+        ("GET", "/vendor/unocss.js") => {
+            serve_dev_fs_file(&mut stream, &ctx.dev_root.join("vendor/unocss.js"));
+        }
+
+        ("GET", p) if p.starts_with("/pkg/") => {
+            serve_pkg_path(&mut stream, p, &ctx.dev_root);
+        }
+
+        ("GET", p) if p.starts_with("/islands/") => {
+            serve_islands_path(&mut stream, p, &ctx.dev_root);
+        }
+
+        ("GET", p) if p.starts_with("/docs") => {
+            serve_docs_path(&mut stream, p, &ctx.dev_root);
+        }
+
+        ("GET", "/" | "/index.html") => {
+            serve_index_document(
+                &mut stream,
+                &ctx.vfm,
+                &ctx.entry,
+                &ctx.site_dir,
+                ctx.meta.as_ref(),
+            );
+        }
+
+        ("GET", p) if p.ends_with(".crepus") || p.ends_with(".html") => {
+            let template_key = p.trim_start_matches('/');
+            let template_key = if template_key.ends_with(".html") {
+                template_key.replace(".html", ".crepus")
+            } else {
+                template_key.to_string()
+            };
+            if template_key == ctx.entry {
+                serve_index_document(
+                    &mut stream,
+                    &ctx.vfm,
+                    &ctx.entry,
+                    &ctx.site_dir,
+                    ctx.meta.as_ref(),
+                );
+            } else {
+                serve_secondary_preview(
+                    &mut stream,
+                    &ctx.vfm,
+                    &template_key,
+                    &ctx.site_dir,
+                    ctx.meta.as_ref(),
+                );
+            }
+        }
+
+        ("GET", p) if p.starts_with("/static/") => {
+            serve_static_file(&mut stream, p, &ctx.site_dir);
+        }
+
+        _ => {
+            let body = "<html><body><h1>404 Not Found</h1></body></html>";
+            let resp = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    }
+}
+>>>>>>> REPLACE
