@@ -76,3 +76,68 @@ pub fn flatten_tree(nodes: &[BookmarkTreeNode]) -> Vec<BookmarkTreeNode> {
     }
     flat
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flatten_tree_empty() {
+        let nodes = vec![];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_folders_ignored() {
+        let nodes = vec![BookmarkTreeNode {
+            id: "1".to_string(),
+            url: None,
+            ..Default::default()
+        }];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_with_url() {
+        let nodes = vec![BookmarkTreeNode {
+            id: "1".to_string(),
+            url: Some("http://example.com".to_string()),
+            ..Default::default()
+        }];
+        let flat = flatten_tree(&nodes);
+        assert_eq!(flat.len(), 1);
+        assert_eq!(flat[0].id, "1");
+    }
+
+    #[test]
+    fn test_flatten_tree_nested() {
+        let nodes = vec![BookmarkTreeNode {
+            id: "folder1".to_string(),
+            url: None,
+            children: Some(vec![
+                BookmarkTreeNode {
+                    id: "bm1".to_string(),
+                    url: Some("http://bm1.com".to_string()),
+                    ..Default::default()
+                },
+                BookmarkTreeNode {
+                    id: "folder2".to_string(),
+                    url: None,
+                    children: Some(vec![BookmarkTreeNode {
+                        id: "bm2".to_string(),
+                        url: Some("http://bm2.com".to_string()),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        }];
+        let flat = flatten_tree(&nodes);
+        assert_eq!(flat.len(), 2);
+        assert_eq!(flat[0].id, "bm1");
+        assert_eq!(flat[1].id, "bm2");
+    }
+}
