@@ -1,5 +1,5 @@
 use base64::Engine;
-use crepuscularity_core::context::TemplateContext;
+use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_web::{
     render_bundle_with_ssr, render_from_files_with_ssr, render_ssr_document,
     render_template_to_html_with_ssr, SsrDocument,
@@ -174,6 +174,34 @@ fn raw_html_sanitization_ssr() {
         html
     );
     assert!(html.contains("<b>safe</b>"), "Expected safe html: {}", html);
+}
+
+#[test]
+fn test_render_template_to_html_with_ssr_no_markers() {
+    let mut ctx = TemplateContext::new();
+    ctx.vars
+        .insert("name".to_string(), TemplateValue::Str("World".to_string()));
+    let html = render_template_to_html_with_ssr("div\n  \"Hello {name}\"", &ctx, false).unwrap();
+    assert_eq!(html, "<div>Hello World</div>");
+}
+
+#[test]
+fn test_render_template_to_html_with_ssr_with_markers() {
+    let mut ctx = TemplateContext::new();
+    ctx.vars
+        .insert("name".to_string(), TemplateValue::Str("World".to_string()));
+    let html = render_template_to_html_with_ssr("div\n  \"Hello {name}\"", &ctx, true).unwrap();
+
+    assert!(html.contains("Hello World"));
+    assert!(html.contains("data-crepus-id="));
+    assert!(html.contains("__crepus_hydration__"));
+}
+
+#[test]
+fn test_render_template_to_html_with_ssr_parse_error() {
+    let ctx = TemplateContext::new();
+    let res = render_template_to_html_with_ssr("{{ invalid }}", &ctx, true);
+    assert!(res.is_err());
 }
 
 #[test]
