@@ -61,6 +61,36 @@ pub fn mobile_platform(p: crate::cli::MobilePlatformArg) -> MobilePlatform {
     }
 }
 
+fn handle_mobile_build(
+    platform: crate::cli::MobilePlatformArg,
+    dir: Option<PathBuf>,
+    target: IosBuildTarget,
+    configuration: String,
+    flavor: String,
+) -> Result<(), CrepusCliError> {
+    let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    // Auto-codegen before build.
+    run_codegen_full(
+        Some(PathBuf::from("views/main.crepus")),
+        root,
+        match mobile_platform(platform) {
+            MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
+            MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
+            MobilePlatform::All => None,
+        },
+        None,
+        Some("CrepusGeneratedView".into()),
+        &[],
+    )?;
+    run_mobile_build(
+        mobile_platform(platform),
+        dir,
+        target,
+        configuration,
+        flavor,
+    )
+}
+
 pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
     match cmd {
         MobileCommands::New { name } => {
@@ -98,29 +128,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             target,
             configuration,
             flavor,
-        } => {
-            let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
-            // Auto-codegen before build.
-            run_codegen_full(
-                Some(PathBuf::from("views/main.crepus")),
-                root,
-                match mobile_platform(platform) {
-                    MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
-                    MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
-                    MobilePlatform::All => None,
-                },
-                None,
-                Some("CrepusGeneratedView".into()),
-                &[],
-            )?;
-            run_mobile_build(
-                mobile_platform(platform),
-                dir,
-                target,
-                configuration,
-                flavor,
-            )
-        }
+        } => handle_mobile_build(platform, dir, target, configuration, flavor),
         MobileCommands::Run {
             platform,
             dir,
