@@ -323,6 +323,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manifest_parse_success() {
+        let src = r#"
+[[targets]]
+type = "web"
+id = "web-target"
+template = "index.crepus"
+
+[[targets]]
+type = "lvgl"
+id = "dash"
+"#;
+        let manifest = Manifest::parse(src).expect("should parse valid manifest");
+        assert_eq!(manifest.targets.len(), 2);
+        assert_eq!(manifest.targets[0].target_type, "web");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
+        assert_eq!(manifest.targets[1].target_type, "lvgl");
+        assert_eq!(manifest.targets[1].id.as_deref(), Some("dash"));
+    }
+
+    #[test]
+    fn manifest_parse_error() {
+        let src = r#"
+[[targets]
+type = "web"
+"#;
+        let res = Manifest::parse(src);
+        assert!(res.is_err());
+    }
+
+    #[test]
     fn manifest_builds_lvgl_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
