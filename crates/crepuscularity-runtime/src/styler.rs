@@ -243,6 +243,16 @@ fn apply_static(d: Div, class: &str) -> Result<Div, Div> {
 
 #[allow(clippy::result_large_err)]
 fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
+    apply_display(d, class)
+        .or_else(|d| apply_positioning(d, class))
+        .or_else(|d| apply_flex(d, class))
+        .or_else(|d| apply_alignment(d, class))
+        .or_else(|d| apply_sizing(d, class))
+        .or_else(|d| apply_grid(d, class))
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_display(d: Div, class: &str) -> Result<Div, Div> {
     Ok(match class {
         // ── Display ──
         "block" => d.block(),
@@ -253,7 +263,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         // ── Visibility ──
         "visible" => d.visible(),
         "invisible" => d.invisible(),
+        _ => return Err(d),
+    })
+}
 
+#[allow(clippy::result_large_err)]
+fn apply_positioning(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Position ──
         "absolute" => d.absolute(),
         "relative" => d.relative(),
@@ -284,7 +300,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             }
             d
         }
+        _ => return Err(d),
+    })
+}
 
+#[allow(clippy::result_large_err)]
+fn apply_flex(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Flex direction ──
         "flex-row" => d.flex_row(),
         "flex-row-reverse" => d.flex_row_reverse(),
@@ -305,7 +327,13 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "grow-0" => d.flex_none(),
         "shrink" => d.flex_shrink(1.0),
         "shrink-0" => d.flex_shrink_0(),
+        _ => return Err(d),
+    })
+}
 
+#[allow(clippy::result_large_err)]
+fn apply_alignment(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Justify content ──
         "justify-start" => d.justify_start(),
         "justify-end" => d.justify_end(),
@@ -330,50 +358,6 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
         "content-around" => d.content_around(),
         "content-evenly" => d.content_evenly(),
         "content-stretch" => d.content_stretch(),
-
-        // ── Sizing (predefined) ──
-        "w-0" => d.w(px(0.)),
-        "w-px" => d.w_px(),
-        "w-full" => d.w_full(),
-        "w-auto" => d.w_auto(),
-        "h-0" => d.h(px(0.)),
-        "h-px" => d.h_px(),
-        "h-full" => d.h_full(),
-        "h-auto" => d.h_auto(),
-        "size-full" => d.size_full(),
-        "size-auto" => d.size_auto(),
-        "min-w-0" => d.min_w(px(0.)),
-        "min-w-full" => d.min_w_full(),
-        "min-h-0" => d.min_h(px(0.)),
-        "min-h-full" => d.min_h_full(),
-        "max-w-full" => d.max_w_full(),
-        "max-h-full" => d.max_h_full(),
-
-        // ── Grid ──
-        "grid-cols-1" => d.grid_cols(1),
-        "grid-cols-2" => d.grid_cols(2),
-        "grid-cols-3" => d.grid_cols(3),
-        "grid-cols-4" => d.grid_cols(4),
-        "grid-cols-5" => d.grid_cols(5),
-        "grid-cols-6" => d.grid_cols(6),
-        "grid-cols-7" => d.grid_cols(7),
-        "grid-cols-8" => d.grid_cols(8),
-        "grid-cols-9" => d.grid_cols(9),
-        "grid-cols-10" => d.grid_cols(10),
-        "grid-cols-11" => d.grid_cols(11),
-        "grid-cols-12" => d.grid_cols(12),
-        "grid-rows-1" => d.grid_rows(1),
-        "grid-rows-2" => d.grid_rows(2),
-        "grid-rows-3" => d.grid_rows(3),
-        "grid-rows-4" => d.grid_rows(4),
-        "grid-rows-5" => d.grid_rows(5),
-        "grid-rows-6" => d.grid_rows(6),
-        "col-span-full" => d.col_span_full(),
-        "col-start-auto" => d.col_start_auto(),
-        "col-end-auto" => d.col_end_auto(),
-        "row-span-full" => d.row_span_full(),
-        "row-start-auto" => d.row_start_auto(),
-        "row-end-auto" => d.row_end_auto(),
 
         // ── Align self ──
         "self-start" => {
@@ -406,6 +390,30 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d.style().align_self = None;
             d
         }
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_sizing(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
+        // ── Sizing (predefined) ──
+        "w-0" => d.w(px(0.)),
+        "w-px" => d.w_px(),
+        "w-full" => d.w_full(),
+        "w-auto" => d.w_auto(),
+        "h-0" => d.h(px(0.)),
+        "h-px" => d.h_px(),
+        "h-full" => d.h_full(),
+        "h-auto" => d.h_auto(),
+        "size-full" => d.size_full(),
+        "size-auto" => d.size_auto(),
+        "min-w-0" => d.min_w(px(0.)),
+        "min-w-full" => d.min_w_full(),
+        "min-h-0" => d.min_h(px(0.)),
+        "min-h-full" => d.min_h_full(),
+        "max-w-full" => d.max_w_full(),
+        "max-h-full" => d.max_h_full(),
 
         // ── Aspect ratio ──
         "aspect-square" => {
@@ -423,6 +431,38 @@ fn apply_layout(d: Div, class: &str) -> Result<Div, Div> {
             d.style().aspect_ratio = None;
             d
         }
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_grid(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
+        // ── Grid ──
+        "grid-cols-1" => d.grid_cols(1),
+        "grid-cols-2" => d.grid_cols(2),
+        "grid-cols-3" => d.grid_cols(3),
+        "grid-cols-4" => d.grid_cols(4),
+        "grid-cols-5" => d.grid_cols(5),
+        "grid-cols-6" => d.grid_cols(6),
+        "grid-cols-7" => d.grid_cols(7),
+        "grid-cols-8" => d.grid_cols(8),
+        "grid-cols-9" => d.grid_cols(9),
+        "grid-cols-10" => d.grid_cols(10),
+        "grid-cols-11" => d.grid_cols(11),
+        "grid-cols-12" => d.grid_cols(12),
+        "grid-rows-1" => d.grid_rows(1),
+        "grid-rows-2" => d.grid_rows(2),
+        "grid-rows-3" => d.grid_rows(3),
+        "grid-rows-4" => d.grid_rows(4),
+        "grid-rows-5" => d.grid_rows(5),
+        "grid-rows-6" => d.grid_rows(6),
+        "col-span-full" => d.col_span_full(),
+        "col-start-auto" => d.col_start_auto(),
+        "col-end-auto" => d.col_end_auto(),
+        "row-span-full" => d.row_span_full(),
+        "row-start-auto" => d.row_start_auto(),
+        "row-end-auto" => d.row_end_auto(),
         _ => return Err(d),
     })
 }
