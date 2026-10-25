@@ -5,7 +5,10 @@ use oxc_ast::{ast::*, AstKind};
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::{GetSpan, SourceType, Span};
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 type Edit = (usize, usize, String);
 fn render(source: &str, span: Span, edits: &[Edit]) -> String {
@@ -120,7 +123,7 @@ pub(crate) fn transform_props_with_policy(
     let mut declarations = Vec::new();
     let mut aliases = Vec::new();
     let mut props_declarations = 0usize;
-    let mut bindings = Vec::new();
+    let mut bindings = HashMap::new();
     for node in nodes.iter() {
         let AstKind::VariableDeclarator(decl) = node.kind() else {
             continue;
@@ -311,10 +314,10 @@ pub(crate) fn transform_props_with_policy(
                     }
                 }
             }
-            bindings.push((
+            bindings.insert(
                 binding.symbol_id.get().unwrap(),
                 decl.kind == VariableDeclarationKind::Const,
-            ));
+            );
             let writable = exported_props.contains(&binding.name.as_str())
                 || semantic
                     .symbol_references(binding.symbol_id.get().unwrap())
@@ -467,10 +470,7 @@ pub(crate) fn transform_props_with_policy(
         let reference = semantic
             .scoping()
             .get_reference(id.reference_id.get().unwrap());
-        let Some((_, constant)) = bindings
-            .iter()
-            .find(|(symbol, _)| Some(*symbol) == reference.symbol_id())
-        else {
+        let Some(constant) = reference.symbol_id().and_then(|sym| bindings.get(&sym)) else {
             continue;
         };
         if reference.is_type() {
