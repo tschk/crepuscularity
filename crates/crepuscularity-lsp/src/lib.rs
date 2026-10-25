@@ -531,33 +531,47 @@ mod tests {
         Position { line, character }
     }
 
+    fn check_completions(source: &str, pos: Position, expected: &[&str], not_expected: &[&str]) {
+        let items = completion_items(source, pos);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        for e in expected {
+            assert!(
+                labels.contains(e),
+                "expected completion {:?} not found in {:?}",
+                e,
+                labels
+            );
+        }
+        for n in not_expected {
+            assert!(
+                !labels.contains(n),
+                "unexpected completion {:?} found in {:?}",
+                n,
+                labels
+            );
+        }
+    }
+
     #[test]
     fn completion_at_indent_line_start_offers_tags() {
-        let items = completion_items("", position(0, 0));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"div"));
-        assert!(labels.contains(&"if"));
-        assert!(labels.contains(&"for"));
-        assert!(labels.contains(&"slot-rotate"));
+        check_completions(
+            "",
+            position(0, 0),
+            &["div", "if", "for", "slot-rotate"],
+            &[],
+        );
     }
 
     #[test]
     fn completion_after_tag_offers_classes_and_local_aliases() {
         let source = "div \n.lede text-zinc-100 font-medium\n";
-        let items = completion_items(source, position(0, 4));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"flex"));
-        assert!(labels.contains(&"text-white"));
-        assert!(labels.contains(&"lede"), "missing class alias");
+        check_completions(source, position(0, 4), &["flex", "text-white", "lede"], &[]);
     }
 
     #[test]
     fn completion_inside_braces_offers_local_let_bindings() {
         let source = "$: let total = {price * qty}\n$: default qty = 1\ndiv\n  {to";
-        let items = completion_items(source, position(3, 5));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"total"));
-        assert!(labels.contains(&"qty"));
+        check_completions(source, position(3, 5), &["total", "qty"], &[]);
     }
 
     #[test]
@@ -569,56 +583,35 @@ mod tests {
 
     #[test]
     fn jsx_tag_completion_offers_tags() {
-        let items = completion_items("<", position(0, 1));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"div"));
-        assert!(labels.contains(&"if"));
+        check_completions("<", position(0, 1), &["div", "if"], &[]);
     }
 
     #[test]
     fn jsx_partial_tag_still_offers_tags() {
-        let items = completion_items("<div", position(0, 4));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"div"));
-        assert!(labels.contains(&"if"));
+        check_completions("<div", position(0, 4), &["div", "if"], &[]);
     }
 
     #[test]
     fn jsx_attribute_area_offers_classes() {
-        let items = completion_items("<div ", position(0, 5));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"flex"));
-        assert!(labels.contains(&"text-white"));
-        assert!(
-            !labels.contains(&"if"),
-            "attribute slot should not offer tag completions"
-        );
+        check_completions("<div ", position(0, 5), &["flex", "text-white"], &["if"]);
     }
 
     #[test]
     fn indented_jsx_attribute_area_offers_classes() {
         let source = "  <button ";
-        let items = completion_items(source, position(0, 10));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"flex"));
-        assert!(!labels.contains(&"if"));
+        check_completions(source, position(0, 10), &["flex"], &["if"]);
     }
 
     #[test]
     fn jsx_class_attribute_offers_class_completions() {
         let source = r#"<div class=""#;
-        let items = completion_items(source, position(0, 12));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"flex"), "got {labels:?}");
-        assert!(labels.contains(&"text-white"));
+        check_completions(source, position(0, 12), &["flex", "text-white"], &[]);
     }
 
     #[test]
     fn jsx_classname_attribute_offers_class_completions() {
         let source = r#"<div className="tex"#;
-        let items = completion_items(source, position(0, 19));
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"text-white"), "got {labels:?}");
+        check_completions(source, position(0, 19), &["text-white"], &[]);
     }
 
     #[test]
