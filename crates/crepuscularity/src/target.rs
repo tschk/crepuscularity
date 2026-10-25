@@ -323,6 +323,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manifest_parse_valid() {
+        let src = r#"
+[[targets]]
+type = "web"
+"#;
+        let manifest = Manifest::parse(src).expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 1);
+        assert_eq!(manifest.targets[0].target_type, "web");
+    }
+
+    #[test]
+    fn manifest_parse_invalid() {
+        let src = "[[targets]\ntype = \"web\"";
+        let err = Manifest::parse(src).unwrap_err();
+        assert!(err.contains("TOML parse error"));
+    }
+
+    #[test]
     fn manifest_builds_lvgl_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
