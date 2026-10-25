@@ -330,3 +330,29 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use wasm_bindgen_test::*;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    struct TestData {
+        name: String,
+        value: i32,
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_js_and_from_js() {
+        let data = TestData {
+            name: "test".to_string(),
+            value: 42,
+        };
+
+        let js_value = to_js(&data).unwrap();
+        let restored_data: TestData = from_js(js_value).unwrap();
+
+        assert_eq!(data, restored_data);
+    }
+}
