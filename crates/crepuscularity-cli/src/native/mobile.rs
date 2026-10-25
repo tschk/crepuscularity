@@ -186,12 +186,30 @@ pub fn scaffold_mobile_app(name: &str) {
         return;
     }
 
+    regenerate_fixture_and_codegen(&root);
+    apply_app_identifiers(&root, &name_snake, &name_pascal);
+
+    ui::success(&format!(
+        "scaffolded mobile app '{}' at '{name}'",
+        name_pascal,
+    ));
+    eprintln!();
+    eprintln!("{}", style("Next steps").dim());
+    eprintln!("  cd {name}");
+    eprintln!("  # Edit your template:");
+    eprintln!("  vim views/main.crepus");
+    eprintln!("  # Regenerate + build:");
+    eprintln!("  crepus mobile build --platform ios");
+    eprintln!("  crepus mobile build --platform android");
+}
+
+fn regenerate_fixture_and_codegen(root: &Path) {
     // Step 2: regenerate fixture + codegen (before rename, uses nativeshell paths).
     let template = PathBuf::from("views/main.crepus");
     let _ = execute(NativeCommands::Sync {
         args: SyncArgs {
             template: template.clone(),
-            dir: root.clone(),
+            dir: root.to_path_buf(),
             out: Vec::new(),
             no_defaults: false,
             component: None,
@@ -202,14 +220,16 @@ pub fn scaffold_mobile_app(name: &str) {
     });
     run_codegen_full(
         Some(template),
-        root.clone(),
+        root.to_path_buf(),
         None,
         None,
         Some("CrepusGeneratedView".into()),
         &[],
     )
     .unwrap_or_else(|e| ui::error(&e.to_string()));
+}
 
+fn apply_app_identifiers(root: &Path, name_snake: &str, name_pascal: &str) {
     // Step 3: replace generic names with app-specific ones (after codegen).
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
@@ -283,19 +303,6 @@ pub fn scaffold_mobile_app(name: &str) {
             let _ = fs::write(&cargo_lock, updated);
         }
     }
-
-    ui::success(&format!(
-        "scaffolded mobile app '{}' at '{name}'",
-        name_pascal,
-    ));
-    eprintln!();
-    eprintln!("{}", style("Next steps").dim());
-    eprintln!("  cd {name}");
-    eprintln!("  # Edit your template:");
-    eprintln!("  vim views/main.crepus");
-    eprintln!("  # Regenerate + build:");
-    eprintln!("  crepus mobile build --platform ios");
-    eprintln!("  crepus mobile build --platform android");
 }
 
 pub fn run_codegen_full(
