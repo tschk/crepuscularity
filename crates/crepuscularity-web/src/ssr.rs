@@ -363,4 +363,26 @@ mod tests {
         assert_eq!(obj.get("num").unwrap().as_f64().unwrap(), 42.0);
         assert!(obj.get("bool").unwrap().as_bool().unwrap());
     }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_no_markers() {
+        let ctx = TemplateContext::new();
+        let result = render_template_to_html_with_ssr("<div>Hello</div>", &ctx, false).unwrap();
+        assert_eq!(result, "<div>Hello</div>");
+    }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_with_markers() {
+        let ctx = TemplateContext::new();
+        let result = render_template_to_html_with_ssr("<div>Hello</div>", &ctx, true).unwrap();
+        assert!(result.contains("<div>Hello</div>"));
+        assert!(result.contains("<script type=\"application/json\" id=\"__crepus_hydration__\""));
+    }
+
+    #[test]
+    fn test_render_template_to_html_with_ssr_error() {
+        let ctx = TemplateContext::new();
+        let result = render_template_to_html_with_ssr("{% if %}", &ctx, true);
+        assert!(result.is_err());
+    }
 }
