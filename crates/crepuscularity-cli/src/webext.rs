@@ -96,16 +96,16 @@ pub fn runtime_version() -> String {
 }
 
 #[wasm_bindgen]
-pub fn popup_main() { todo!("implement popup scaffolding") }
+pub fn popup_main() { web_sys::console::warn_1(&"Unimplemented: popup scaffolding".into()); }
 
 #[wasm_bindgen]
-pub fn options_main() { todo!("implement options scaffolding") }
+pub fn options_main() { web_sys::console::warn_1(&"Unimplemented: options scaffolding".into()); }
 
 #[wasm_bindgen]
-pub fn content_main() { todo!("implement content script scaffolding") }
+pub fn content_main() { web_sys::console::warn_1(&"Unimplemented: content script scaffolding".into()); }
 
 #[wasm_bindgen]
-pub fn background_main() { todo!("implement background script scaffolding") }
+pub fn background_main() { web_sys::console::warn_1(&"Unimplemented: background script scaffolding".into()); }
 
 #[wasm_bindgen]
 pub fn settings_seed() -> Result<(), JsValue> {
