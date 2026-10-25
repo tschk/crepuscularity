@@ -237,6 +237,7 @@ fn apply_static(d: Div, class: &str) -> Result<Div, Div> {
         .or_else(|d| apply_colors(d, class))
         .or_else(|d| apply_typography(d, class))
         .or_else(|d| apply_borders(d, class))
+        .or_else(|d| apply_border_radius(d, class))
         .or_else(|d| apply_shadows(d, class))
         .or_else(|d| apply_misc(d, class))
 }
@@ -564,6 +565,13 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "border-r-4" => d.border_r_4(),
         "border-r-8" => d.border_r_8(),
 
+        _ => return Err(d),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_border_radius(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Border radius ──
         "rounded-none" => d.rounded_none(),
         "rounded-sm" => d.rounded_sm(),
