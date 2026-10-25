@@ -96,16 +96,16 @@ pub fn runtime_version() -> String {
 }
 
 #[wasm_bindgen]
-pub fn popup_main() { /* TODO: implement popup scaffolding */ }
+pub fn popup_main() { todo!("implement popup scaffolding") }
 
 #[wasm_bindgen]
-pub fn options_main() { /* TODO: implement options scaffolding */ }
+pub fn options_main() { todo!("implement options scaffolding") }
 
 #[wasm_bindgen]
-pub fn content_main() { /* TODO: implement content script scaffolding */ }
+pub fn content_main() { todo!("implement content script scaffolding") }
 
 #[wasm_bindgen]
-pub fn background_main() { /* TODO: implement background script scaffolding */ }
+pub fn background_main() { todo!("implement background script scaffolding") }
 
 #[wasm_bindgen]
 pub fn settings_seed() -> Result<(), JsValue> {
