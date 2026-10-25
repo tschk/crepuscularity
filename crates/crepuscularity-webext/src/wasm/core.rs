@@ -330,3 +330,53 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct TestStruct {
+        string_field: String,
+        int_field: i32,
+        bool_field: bool,
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_and_from_js_primitives() {
+        let string_val = "hello world".to_string();
+        let js_val = to_js(&string_val).unwrap();
+        let back: String = from_js(js_val).unwrap();
+        assert_eq!(string_val, back);
+
+        let int_val = 42;
+        let js_val = to_js(&int_val).unwrap();
+        let back: i32 = from_js(js_val).unwrap();
+        assert_eq!(int_val, back);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_and_from_js_struct() {
+        let original = TestStruct {
+            string_field: "test".to_string(),
+            int_field: 123,
+            bool_field: true,
+        };
+        let js_val = to_js(&original).unwrap();
+        let back: TestStruct = from_js(js_val).unwrap();
+        assert_eq!(original, back);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_from_js_error() {
+        let js_val = JsValue::from_str("not a number");
+        let result: Result<i32> = from_js(js_val);
+        assert!(result.is_err());
+
+        match result {
+            Err(BrowserError::Serde(_)) => {}, // expected
+            _ => panic!("Expected Serde error"),
+        }
+    }
+}
