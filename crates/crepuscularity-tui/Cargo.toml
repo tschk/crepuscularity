@@ -12,7 +12,7 @@ crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", feat
 crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
 crossterm = "0.29"
 notify = { workspace = true }
-ratatui = { workspace = true }
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 rustc-hash = "2.1.3"
 
 [dev-dependencies]
