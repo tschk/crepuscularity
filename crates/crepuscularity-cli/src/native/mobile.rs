@@ -163,6 +163,83 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
     }
 }
 
+fn replace_generic_names(root: &Path, name_snake: &str, name_pascal: &str) {
+    let r_0 = format!("{name_snake}_actions");
+    let r_1 = format!("dev.crepuscularity.{name_snake}");
+    let r_2 = format!("dev.crepuscularity.{name_snake}");
+    let r_3 = format!("dev_crepuscularity_{name_snake}");
+    let r_4 = format!("{name_pascal}App");
+
+    let patterns = &[
+        "crepus_mobile_actions",
+        "dev.crepuscularity.nativeshell",
+        "dev.crepuscularity.mobile",
+        "dev_crepuscularity_nativeshell",
+        "CrepusMobileApp",
+    ];
+    let replace_with = &[
+        r_0.as_str(),
+        r_1.as_str(),
+        r_2.as_str(),
+        r_3.as_str(),
+        r_4.as_str(),
+    ];
+
+    let rewrite_paths: &[&str] = &[
+        "crepus.toml",
+        "rust/Cargo.toml",
+        "rust/src/lib.rs",
+        "ios/crepus.toml",
+        "ios/project.yml",
+        "ios/App/CrepusMobileApp.swift",
+        "android/app/build.gradle.kts",
+        "android/app/src/main/AndroidManifest.xml",
+        "android/app/src/main/java/dev/crepuscularity/nativeshell/MainActivity.kt",
+        "android/app/src/main/java/dev/crepuscularity/nativeshell/CrepusRustActions.kt",
+        "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
+    ];
+
+    for rel in rewrite_paths {
+        let path = root.join(rel);
+        if let Ok(content) = fs::read_to_string(&path) {
+            let mut updated = content.clone();
+            for (from, to) in patterns.iter().zip(replace_with.iter()) {
+                updated = updated.replace(from, to);
+            }
+            if updated != content {
+                let _ = fs::write(&path, updated);
+            }
+        }
+    }
+}
+
+fn rename_app_files(root: &Path, name_snake: &str, name_pascal: &str) {
+    // Rename iOS app file.
+    let old_swift = root.join("ios/App/CrepusMobileApp.swift");
+    let new_swift = root.join(format!("ios/App/{name_pascal}App.swift"));
+    if old_swift.exists() && old_swift != new_swift {
+        let _ = fs::rename(&old_swift, &new_swift);
+    }
+
+    // Rename Android package directory.
+    let old_pkg = root.join("android/app/src/main/java/dev/crepuscularity/nativeshell");
+    let new_pkg = root.join(format!(
+        "android/app/src/main/java/dev/crepuscularity/{name_snake}"
+    ));
+    if old_pkg.exists() && old_pkg != new_pkg {
+        let _ = fs::rename(&old_pkg, &new_pkg);
+    }
+
+    // Rename Cargo.lock package name if present.
+    let cargo_lock = root.join("rust/Cargo.lock");
+    if let Ok(content) = fs::read_to_string(&cargo_lock) {
+        let updated = content.replace("crepus_mobile_actions", &format!("{name_snake}_actions"));
+        if updated != content {
+            let _ = fs::write(&cargo_lock, updated);
+        }
+    }
+}
+
 pub fn scaffold_mobile_app(name: &str) {
     let name_snake = name.replace(['-', ' '], "_");
     let name_pascal: String = name
@@ -211,78 +288,10 @@ pub fn scaffold_mobile_app(name: &str) {
     .unwrap_or_else(|e| ui::error(&e.to_string()));
 
     // Step 3: replace generic names with app-specific ones (after codegen).
-    let r_0 = format!("{name_snake}_actions");
-    let r_1 = format!("dev.crepuscularity.{name_snake}");
-    let r_2 = format!("dev.crepuscularity.{name_snake}");
-    let r_3 = format!("dev_crepuscularity_{name_snake}");
-    let r_4 = format!("{name_pascal}App");
+    replace_generic_names(&root, &name_snake, &name_pascal);
 
-    let patterns = &[
-        "crepus_mobile_actions",
-        "dev.crepuscularity.nativeshell",
-        "dev.crepuscularity.mobile",
-        "dev_crepuscularity_nativeshell",
-        "CrepusMobileApp",
-    ];
-    let replace_with = &[
-        r_0.as_str(),
-        r_1.as_str(),
-        r_2.as_str(),
-        r_3.as_str(),
-        r_4.as_str(),
-    ];
-
-    let rewrite_paths: &[&str] = &[
-        "crepus.toml",
-        "rust/Cargo.toml",
-        "rust/src/lib.rs",
-        "ios/crepus.toml",
-        "ios/project.yml",
-        "ios/App/CrepusMobileApp.swift",
-        "android/app/build.gradle.kts",
-        "android/app/src/main/AndroidManifest.xml",
-        "android/app/src/main/java/dev/crepuscularity/nativeshell/MainActivity.kt",
-        "android/app/src/main/java/dev/crepuscularity/nativeshell/CrepusRustActions.kt",
-        "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
-    ];
-
-    for rel in rewrite_paths {
-        let path = root.join(rel);
-        if let Ok(content) = fs::read_to_string(&path) {
-            let mut updated = content.clone();
-            for (from, to) in patterns.iter().zip(replace_with.iter()) {
-                updated = updated.replace(from, to);
-            }
-            if updated != content {
-                let _ = fs::write(&path, updated);
-            }
-        }
-    }
-
-    // Rename iOS app file.
-    let old_swift = root.join("ios/App/CrepusMobileApp.swift");
-    let new_swift = root.join(format!("ios/App/{name_pascal}App.swift"));
-    if old_swift.exists() && old_swift != new_swift {
-        let _ = fs::rename(&old_swift, &new_swift);
-    }
-
-    // Rename Android package directory.
-    let old_pkg = root.join("android/app/src/main/java/dev/crepuscularity/nativeshell");
-    let new_pkg = root.join(format!(
-        "android/app/src/main/java/dev/crepuscularity/{name_snake}"
-    ));
-    if old_pkg.exists() && old_pkg != new_pkg {
-        let _ = fs::rename(&old_pkg, &new_pkg);
-    }
-
-    // Rename Cargo.lock package name if present.
-    let cargo_lock = root.join("rust/Cargo.lock");
-    if let Ok(content) = fs::read_to_string(&cargo_lock) {
-        let updated = content.replace("crepus_mobile_actions", &format!("{name_snake}_actions"));
-        if updated != content {
-            let _ = fs::write(&cargo_lock, updated);
-        }
-    }
+    // Step 4: Rename app files and directories.
+    rename_app_files(&root, &name_snake, &name_pascal);
 
     ui::success(&format!(
         "scaffolded mobile app '{}' at '{name}'",
