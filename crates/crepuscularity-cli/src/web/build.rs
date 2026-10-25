@@ -699,10 +699,7 @@ fn render_seo_head(head: &SiteHead) -> String {
     format_seo_tags(head, &resolved)
 }
 
-fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
-    let seo = &head.seo;
-    let mut lines = Vec::new();
-
+fn format_seo_tags_basic(seo: &crate::crepus_toml::SeoConfig, lines: &mut Vec<String>) {
     if let Some(canonical) = &seo.canonical {
         lines.push(format!(
             r#"  <link rel="canonical" href="{}">"#,
@@ -747,7 +744,13 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             ));
         }
     }
+}
 
+fn format_seo_tags_og(
+    seo: &crate::crepus_toml::SeoConfig,
+    resolved: &ResolvedSeoTags<'_>,
+    lines: &mut Vec<String>,
+) {
     lines.push(format!(
         r#"  <meta property="og:title" content="{}">"#,
         escape_html(resolved.title)
@@ -790,7 +793,13 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(image_alt)
         ));
     }
+}
 
+fn format_seo_tags_twitter(
+    seo: &crate::crepus_toml::SeoConfig,
+    resolved: &ResolvedSeoTags<'_>,
+    lines: &mut Vec<String>,
+) {
     lines.push(format!(
         r#"  <meta name="twitter:card" content="{}">"#,
         escape_html(resolved.twitter_card)
@@ -827,7 +836,9 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(creator)
         ));
     }
+}
 
+fn format_seo_tags_links(seo: &crate::crepus_toml::SeoConfig, lines: &mut Vec<String>) {
     for alt in &seo.alternates {
         let mut attrs = vec![
             r#"rel="alternate""#.to_string(),
@@ -884,6 +895,16 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
             escape_html(touch)
         ));
     }
+}
+
+fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
+    let seo = &head.seo;
+    let mut lines = Vec::new();
+
+    format_seo_tags_basic(seo, &mut lines);
+    format_seo_tags_og(seo, resolved, &mut lines);
+    format_seo_tags_twitter(seo, resolved, &mut lines);
+    format_seo_tags_links(seo, &mut lines);
 
     lines.join("\n")
 }
