@@ -104,7 +104,7 @@ fn attribute_option_tab_and_numeric_values_remain_data() {
     );
     assert_eq!(ir["root"][0]["options"][0]["value"], "chosen");
     assert_eq!(ir["root"][0]["options"][1]["value"], "false");
-    assert_eq!(ir["root"][0]["options"][2]["value"], "fallback");
+    assert_eq!(ir["root"][0]["options"][2]["value"], "Fallback");
     assert_eq!(ir["root"][1]["tabs"][0]["value"], "chosen");
     assert_eq!(ir["root"][1]["tabs"][0]["label"], "Label");
     assert!(ir["root"][1]["tabs"][0].get("icon").is_none());
@@ -164,4 +164,14 @@ fn html_attribute_names_match_without_changing_ordinary_property_case() {
     assert!(ir["root"][0]["style"].get("hidden").is_none());
     assert_eq!(ir["root"][1]["checked"], false);
     assert_eq!(ir["root"][2]["multiple"], false);
+}
+
+#[test]
+fn null_attribute_option_values_use_the_same_text_default_as_absence() {
+    let ir = render(
+        "<select><option [attr.value]=\"null\">  Hello World! </option><option>  Hello World! </option></select>",
+        &TemplateContext::new(),
+    );
+    assert_eq!(ir["root"][0]["options"][0], ir["root"][0]["options"][1]);
+    assert_eq!(ir["root"][0]["options"][0]["value"], "Hello World!");
 }

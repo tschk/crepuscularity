@@ -2,15 +2,23 @@
     private fun photoLibraryValue(method: String): JSONObject {
         if (method != "scan" && method != "getRecentMedia") error("unsupported photoLibrary method: $method")
         val action = "photoLibrary.$method"
-        requestPhotoAccess?.invoke(action) ?: emit(errorJson(action, "photo library unavailable"))
+        val requestAccess = requestPhotoAccess ?: error("photo library unavailable")
+        requestAccess(action)
         return JSONObject().put("opening", true)
     }
 
     private fun scanPhotoLibrary(action: String) {
         Thread {
             runCatching {
-                for (uri in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
-                    scanMediaUri(uri, action)
+                if (action == "photoLibrary.getRecentMedia") {
+                    val type = MediaStore.Files.FileColumns.MEDIA_TYPE
+                    val image = MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE
+                    val video = MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                    scanMediaUri(MediaStore.Files.getContentUri("external"), action, "$type IN ($image,$video)")
+                } else {
+                    for (uri in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
+                        scanMediaUri(uri, action)
+                    }
                 }
             }.onFailure {
                 emit(errorJson(action, "photo library scan failed"))
@@ -18,33 +26,47 @@
         }.start()
     }
 
-    private fun scanMediaUri(uri: Uri, action: String) {
-        val projection = arrayOf(
+    private fun scanMediaUri(uri: Uri, action: String, selection: String? = null) {
+        val recent = action == "photoLibrary.getRecentMedia"
+        val columns = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.DATE_ADDED,
         )
-        appContext.contentResolver.query(uri, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} ASC")?.use { cursor ->
+        val projection = if (recent) columns + MediaStore.Files.FileColumns.MEDIA_TYPE else columns
+        val order = if (recent) {
+            "${MediaStore.MediaColumns.DATE_ADDED} DESC, ${MediaStore.MediaColumns._ID} DESC"
+        } else {
+            "${MediaStore.MediaColumns.DATE_ADDED} ASC"
+        }
+        val collectionKind = if (uri == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "video" else "photo"
+        appContext.contentResolver.query(uri, projection, selection, null, order)?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
             val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
             val createdColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            val typeColumn = if (recent) cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE) else -1
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
                 val itemUri = android.content.ContentUris.withAppendedId(uri, id)
                 val mime = cursor.getString(mimeColumn) ?: "application/octet-stream"
                 val name = cursor.getString(nameColumn) ?: "Media"
                 val file = runCatching { copyToCache(itemUri, name, mime) }.getOrNull() ?: continue
+                val mediaKind = if (recent) {
+                    if (cursor.getInt(typeColumn) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) "video" else "photo"
+                } else {
+                    collectionKind
+                }
                 val item = JSONObject()
                     .put("name", name)
                     .put("mimeType", mime)
                     .put("bytes", cursor.getLong(sizeColumn))
                     .put("filePath", file.absolutePath)
                     .put("importSource", "android-photo-library")
-                    .put("mediaKind", if (mime.startsWith("video/")) "video" else "photo")
+                    .put("mediaKind", mediaKind)
                     .put("createdTime", cursor.getLong(createdColumn).takeIf { it > 0 }?.let { Instant.ofEpochSecond(it).toString() })
                     .put("localIdentifier", id.toString())
                 emit(mediaResultJson(action, listOf(item)))
