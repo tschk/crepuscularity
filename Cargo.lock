@@ -2009,6 +2009,7 @@ name = "crepuscularity-native"
 version = "0.6.5"
 dependencies = [
  "crepuscularity-core",
+ "indexmap",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
@@ -5473,9 +5474,9 @@ checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
 name = "indexmap"
-version = "2.14.0"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
