@@ -323,6 +323,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manifest_parses_valid_toml() {
+        let toml = r#"
+[[targets]]
+type = "lvgl"
+id = "dash"
+        "#;
+        let manifest = Manifest::parse(toml).expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 1);
+        assert_eq!(manifest.targets[0].target_type, "lvgl");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("dash"));
+    }
+
+    #[test]
+    fn manifest_parse_returns_err_on_invalid_toml() {
+        let invalid_toml = r#"
+[[targets]]
+type = "lvgl"
+id = "dash
+        "#;
+        let result = Manifest::parse(invalid_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn manifest_builds_lvgl_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
