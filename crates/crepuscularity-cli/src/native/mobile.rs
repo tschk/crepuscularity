@@ -61,6 +61,72 @@ pub fn mobile_platform(p: crate::cli::MobilePlatformArg) -> MobilePlatform {
     }
 }
 
+
+fn execute_mobile_build(cmd: MobileCommands) -> Result<(), CrepusCliError> {
+    if let MobileCommands::Build {
+        platform,
+        dir,
+        target,
+        configuration,
+        flavor,
+    } = cmd
+    {
+        let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
+        // Auto-codegen before build.
+        run_codegen_full(
+            Some(PathBuf::from("views/main.crepus")),
+            root,
+            match mobile_platform(platform.clone()) {
+                MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
+                MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
+                MobilePlatform::All => None,
+            },
+            None,
+            Some("CrepusGeneratedView".into()),
+            &[],
+        )?;
+        run_mobile_build(mobile_platform(platform), dir, target, configuration, flavor)
+    } else {
+        unreachable!()
+    }
+}
+
+fn execute_mobile_dev(cmd: MobileCommands) -> Result<(), CrepusCliError> {
+    if let MobileCommands::Dev {
+        dir,
+        port,
+        platform,
+        template,
+        ctx,
+        vars,
+    } = cmd
+    {
+        let parsed = MobileDevArgs {
+            dir,
+            port,
+            platform: mobile_platform(platform),
+            template,
+            ctx_file: ctx,
+            vars: vars
+                .iter()
+                .map(|kv| {
+                    kv.split_once('=')
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .unwrap_or_else(|| {
+                            ui::error(&format!("--var expects key=value, got: {kv}"))
+                        })
+                })
+                .collect(),
+        };
+        if let Err(e) = run_dev(parsed) {
+            ui::error(&e.to_string());
+        }
+        Ok(())
+    } else {
+        unreachable!()
+    }
+}
+
 pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
     match cmd {
         MobileCommands::New { name } => {
@@ -92,35 +158,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             view_name,
             vars,
         } => run_codegen_full(template, dir, platform, out, view_name, &vars),
-        MobileCommands::Build {
-            platform,
-            dir,
-            target,
-            configuration,
-            flavor,
-        } => {
-            let root = dir.clone().unwrap_or_else(|| PathBuf::from("."));
-            // Auto-codegen before build.
-            run_codegen_full(
-                Some(PathBuf::from("views/main.crepus")),
-                root,
-                match mobile_platform(platform) {
-                    MobilePlatform::Ios => Some(MobileCodegenPlatformArg::Ios),
-                    MobilePlatform::Android => Some(MobileCodegenPlatformArg::Android),
-                    MobilePlatform::All => None,
-                },
-                None,
-                Some("CrepusGeneratedView".into()),
-                &[],
-            )?;
-            run_mobile_build(
-                mobile_platform(platform),
-                dir,
-                target,
-                configuration,
-                flavor,
-            )
-        }
+        cmd @ MobileCommands::Build { .. } => execute_mobile_build(cmd),
         MobileCommands::Run {
             platform,
             dir,
@@ -130,36 +168,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
             run_doctor(mobile_platform(platform));
             Ok(())
         }
-        MobileCommands::Dev {
-            dir,
-            port,
-            platform,
-            template,
-            ctx,
-            vars,
-        } => {
-            let parsed = MobileDevArgs {
-                dir,
-                port,
-                platform: mobile_platform(platform),
-                template,
-                ctx_file: ctx,
-                vars: vars
-                    .iter()
-                    .map(|kv| {
-                        kv.split_once('=')
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .unwrap_or_else(|| {
-                                ui::error(&format!("--var expects key=value, got: {kv}"))
-                            })
-                    })
-                    .collect(),
-            };
-            if let Err(e) = run_dev(parsed) {
-                ui::error(&e.to_string());
-            }
-            Ok(())
-        }
+        cmd @ MobileCommands::Dev { .. } => execute_mobile_dev(cmd),
     }
 }
 
