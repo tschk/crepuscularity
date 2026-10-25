@@ -236,41 +236,8 @@ pub fn execute_run(opts: RunOptions) {
         no_tui,
     } = opts;
 
-    let cfg_path = resolve_config_path(config_path);
-    let raw = std::fs::read_to_string(&cfg_path).unwrap_or_else(|e| {
-        ui::error(&format!("cannot read {}: {e}", cfg_path.display()));
-    });
-
-    let file: BenchmarkFile = toml::from_str(&raw).unwrap_or_else(|e| {
-        ui::error(&format!("benchmark.toml parse error: {e}"));
-    });
-
-    if file.version != 1 {
-        ui::error(&format!(
-            "unsupported benchmark.toml version {}",
-            file.version
-        ));
-    }
-
-    let repo = repo_override.unwrap_or_else(|| find_repo_root(&cfg_path));
-    let work_base = work_override.unwrap_or_else(|| {
-        let rel = file
-            .settings
-            .work_root
-            .as_deref()
-            .unwrap_or("examples/advanced/benchmarks/.work");
-        resolve_path(&repo, rel)
-    });
-
-    if clean && !dry_run {
-        let _ = std::fs::remove_dir_all(&work_base);
-    }
-
-    if !dry_run {
-        std::fs::create_dir_all(&work_base).unwrap_or_else(|e| {
-            ui::error(&format!("could not create {}: {e}", work_base.display()));
-        });
-    }
+    let (cfg_path, repo, work_base, file) =
+        load_benchmark_config(config_path, repo_override, work_override, clean, dry_run);
 
     let mut by_suite: HashMap<String, Vec<&BenchTarget>> = HashMap::new();
     for t in &file.targets {
@@ -325,112 +292,14 @@ pub fn execute_run(opts: RunOptions) {
         let mut json_targets: Vec<JsonTargetResult> = Vec::new();
 
         for t in targets {
-            let target_dir = work_base.join(&t.suite).join(&t.id);
-            if !dry_run {
-                std::fs::create_dir_all(&target_dir).unwrap_or_else(|e| {
-                    ui::error(&format!("could not create {}: {e}", target_dir.display()));
-                });
-            }
-
-            let step_total = planned_step_count(t);
-
-            let mut vars = HashMap::new();
-            vars.insert("REPO".into(), repo.display().to_string());
-            vars.insert("WORK".into(), target_dir.display().to_string());
-            vars.insert("TARGET".into(), t.id.clone());
-
-            if !check_requires(&t.requires) {
-                let msg = "missing prerequisite command";
-                if t.optional {
-                    if !json_out {
-                        ui::warning(&format!("{} — skipped ({msg})", style(&t.label).yellow()));
-                    }
-                    json_targets.push(json_target_result(
-                        t.id.clone(),
-                        t.label.clone(),
-                        t.optional,
-                        true,
-                        Some(msg.into()),
-                        vec![],
-                        0,
-                    ));
-                    continue;
-                } else {
-                    ui::error(msg);
-                }
-            }
-
-            if !json_out {
-                eprintln!("  {} {}", ui::arrow(), style(&t.label).cyan().bold());
-                if verbose {
-                    eprintln!(
-                        "      {} id={}  work_dir={}",
-                        style("target").dim(),
-                        style(&t.id).dim(),
-                        style(target_dir.display().to_string()).dim()
-                    );
-                }
-            }
-
-            let t0 = Instant::now();
-            let ctx = StepRunCtx {
-                target_dir: &target_dir,
-                vars: &vars,
+            json_targets.push(execute_target(
+                t,
+                &repo,
+                &work_base,
                 dry_run,
                 json_out,
                 verbose,
                 measure_memory,
-                step_total,
-            };
-            let (ok, err, step_results) = if let Some(ref b) = t.builtin {
-                run_builtin(b, t, &repo, &ctx)
-            } else {
-                run_steps(&t.steps, ctx)
-            };
-            let total = t0.elapsed().as_millis();
-
-            if !ok {
-                let msg = err.unwrap_or_else(|| "failed".into());
-                if t.optional {
-                    if !json_out && !dry_run && verbose {
-                        print_target_wall_footer(total, &step_results);
-                    }
-                    if !json_out {
-                        ui::warning(&format!("{} — {msg}", style(&t.label).yellow()));
-                    }
-                    json_targets.push(json_target_result(
-                        t.id.clone(),
-                        t.label.clone(),
-                        t.optional,
-                        true,
-                        Some(msg),
-                        step_results,
-                        total,
-                    ));
-                } else {
-                    if !json_out && !dry_run && verbose {
-                        print_target_wall_footer(total, &step_results);
-                    }
-                    if !json_out {
-                        eprintln!("    {} {}", ui::err(), style(&t.label).red());
-                    }
-                    ui::error(&msg);
-                }
-                continue;
-            }
-
-            if !json_out && !dry_run && verbose {
-                print_target_wall_footer(total, &step_results);
-            }
-
-            json_targets.push(json_target_result(
-                t.id.clone(),
-                t.label.clone(),
-                t.optional,
-                false,
-                None,
-                step_results,
-                total,
             ));
         }
 
@@ -474,6 +343,168 @@ pub fn execute_run(opts: RunOptions) {
         eprintln!();
         ui::success("benchmark finished");
     }
+}
+
+fn load_benchmark_config(
+    config_path: Option<PathBuf>,
+    repo_override: Option<PathBuf>,
+    work_override: Option<PathBuf>,
+    clean: bool,
+    dry_run: bool,
+) -> (PathBuf, PathBuf, PathBuf, BenchmarkFile) {
+    let cfg_path = resolve_config_path(config_path);
+    let raw = std::fs::read_to_string(&cfg_path).unwrap_or_else(|e| {
+        ui::error(&format!("cannot read {}: {e}", cfg_path.display()));
+    });
+
+    let file: BenchmarkFile = toml::from_str(&raw).unwrap_or_else(|e| {
+        ui::error(&format!("benchmark.toml parse error: {e}"));
+    });
+
+    if file.version != 1 {
+        ui::error(&format!(
+            "unsupported benchmark.toml version {}",
+            file.version
+        ));
+    }
+
+    let repo = repo_override.unwrap_or_else(|| find_repo_root(&cfg_path));
+    let work_base = work_override.unwrap_or_else(|| {
+        let rel = file
+            .settings
+            .work_root
+            .as_deref()
+            .unwrap_or("examples/advanced/benchmarks/.work");
+        resolve_path(&repo, rel)
+    });
+
+    if clean && !dry_run {
+        let _ = std::fs::remove_dir_all(&work_base);
+    }
+
+    if !dry_run {
+        std::fs::create_dir_all(&work_base).unwrap_or_else(|e| {
+            ui::error(&format!("could not create {}: {e}", work_base.display()));
+        });
+    }
+
+    (cfg_path, repo, work_base, file)
+}
+
+fn execute_target(
+    t: &BenchTarget,
+    repo: &Path,
+    work_base: &Path,
+    dry_run: bool,
+    json_out: bool,
+    verbose: bool,
+    measure_memory: bool,
+) -> JsonTargetResult {
+    let target_dir = work_base.join(&t.suite).join(&t.id);
+    if !dry_run {
+        std::fs::create_dir_all(&target_dir).unwrap_or_else(|e| {
+            ui::error(&format!("could not create {}: {e}", target_dir.display()));
+        });
+    }
+
+    let step_total = planned_step_count(t);
+
+    let mut vars = HashMap::new();
+    vars.insert("REPO".into(), repo.display().to_string());
+    vars.insert("WORK".into(), target_dir.display().to_string());
+    vars.insert("TARGET".into(), t.id.clone());
+
+    if !check_requires(&t.requires) {
+        let msg = "missing prerequisite command";
+        if t.optional {
+            if !json_out {
+                ui::warning(&format!("{} — skipped ({msg})", style(&t.label).yellow()));
+            }
+            return json_target_result(
+                t.id.clone(),
+                t.label.clone(),
+                t.optional,
+                true,
+                Some(msg.into()),
+                vec![],
+                0,
+            );
+        } else {
+            ui::error(msg);
+        }
+    }
+
+    if !json_out {
+        eprintln!("  {} {}", ui::arrow(), style(&t.label).cyan().bold());
+        if verbose {
+            eprintln!(
+                "      {} id={}  work_dir={}",
+                style("target").dim(),
+                style(&t.id).dim(),
+                style(target_dir.display().to_string()).dim()
+            );
+        }
+    }
+
+    let t0 = Instant::now();
+    let ctx = StepRunCtx {
+        target_dir: &target_dir,
+        vars: &vars,
+        dry_run,
+        json_out,
+        verbose,
+        measure_memory,
+        step_total,
+    };
+    let (ok, err, step_results) = if let Some(ref b) = t.builtin {
+        run_builtin(b, t, repo, &ctx)
+    } else {
+        run_steps(&t.steps, ctx)
+    };
+    let total = t0.elapsed().as_millis();
+
+    if !ok {
+        let msg = err.unwrap_or_else(|| "failed".into());
+        if t.optional {
+            if !json_out && !dry_run && verbose {
+                print_target_wall_footer(total, &step_results);
+            }
+            if !json_out {
+                ui::warning(&format!("{} — {msg}", style(&t.label).yellow()));
+            }
+            return json_target_result(
+                t.id.clone(),
+                t.label.clone(),
+                t.optional,
+                true,
+                Some(msg),
+                step_results,
+                total,
+            );
+        } else {
+            if !json_out && !dry_run && verbose {
+                print_target_wall_footer(total, &step_results);
+            }
+            if !json_out {
+                eprintln!("    {} {}", ui::err(), style(&t.label).red());
+            }
+            ui::error(&msg);
+        }
+    }
+
+    if !json_out && !dry_run && verbose {
+        print_target_wall_footer(total, &step_results);
+    }
+
+    json_target_result(
+        t.id.clone(),
+        t.label.clone(),
+        t.optional,
+        false,
+        None,
+        step_results,
+        total,
+    )
 }
 
 fn benchmark_outcomes_from_suites(
