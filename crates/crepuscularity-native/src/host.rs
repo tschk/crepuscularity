@@ -6,6 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn doctor_command(command: &str, args: &[&str]) -> bool {
+    let allowed = ["cargo", "gradle", "java", "xcodebuild", "xcodegen", "xcrun"];
+    if !allowed.contains(&command) {
+        eprintln!("✗ security error: untrusted command `{command}` rejected");
+        return false;
+    }
+
     let mut cmd = Command::new(command);
     cmd.args(args);
     if command == "gradle" {
