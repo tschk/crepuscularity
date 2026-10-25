@@ -699,6 +699,22 @@ fn render_seo_head(head: &SiteHead) -> String {
     format_seo_tags(head, &resolved)
 }
 
+fn push_meta(lines: &mut Vec<String>, name: &str, content: &str) {
+    lines.push(format!(
+        r#"  <meta name="{}" content="{}">"#,
+        name,
+        escape_html(content)
+    ));
+}
+
+fn push_og(lines: &mut Vec<String>, prop: &str, content: &str) {
+    lines.push(format!(
+        r#"  <meta property="{}" content="{}">"#,
+        prop,
+        escape_html(content)
+    ));
+}
+
 fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
     let seo = &head.seo;
     let mut lines = Vec::new();
@@ -710,122 +726,59 @@ fn format_seo_tags(head: &SiteHead, resolved: &ResolvedSeoTags<'_>) -> String {
         ));
     }
     if !seo.keywords.is_empty() {
-        lines.push(format!(
-            r#"  <meta name="keywords" content="{}">"#,
-            escape_html(&seo.keywords.join(", "))
-        ));
+        push_meta(&mut lines, "keywords", &seo.keywords.join(", "));
     }
     if let Some(author) = &seo.author {
-        lines.push(format!(
-            r#"  <meta name="author" content="{}">"#,
-            escape_html(author)
-        ));
+        push_meta(&mut lines, "author", author);
     }
     if let Some(robots) = &seo.robots {
-        lines.push(format!(
-            r#"  <meta name="robots" content="{}">"#,
-            escape_html(robots)
-        ));
+        push_meta(&mut lines, "robots", robots);
     }
     if let Some(theme_color) = &seo.theme_color {
-        lines.push(format!(
-            r#"  <meta name="theme-color" content="{}">"#,
-            escape_html(theme_color)
-        ));
+        push_meta(&mut lines, "theme-color", theme_color);
     }
     if let Some(application_name) = &seo.application_name {
-        lines.push(format!(
-            r#"  <meta name="application-name" content="{}">"#,
-            escape_html(application_name)
-        ));
+        push_meta(&mut lines, "application-name", application_name);
     }
     if let Some(generator) = &seo.generator {
         if !generator.trim().is_empty() {
-            lines.push(format!(
-                r#"  <meta name="generator" content="{}">"#,
-                escape_html(generator)
-            ));
+            push_meta(&mut lines, "generator", generator);
         }
     }
 
-    lines.push(format!(
-        r#"  <meta property="og:title" content="{}">"#,
-        escape_html(resolved.title)
-    ));
-    lines.push(format!(
-        r#"  <meta property="og:description" content="{}">"#,
-        escape_html(resolved.description)
-    ));
-    lines.push(format!(
-        r#"  <meta property="og:type" content="{}">"#,
-        escape_html(resolved.og_type)
-    ));
+    push_og(&mut lines, "og:title", resolved.title);
+    push_og(&mut lines, "og:description", resolved.description);
+    push_og(&mut lines, "og:type", resolved.og_type);
     if let Some(canonical) = &seo.canonical {
-        lines.push(format!(
-            r#"  <meta property="og:url" content="{}">"#,
-            escape_html(canonical)
-        ));
+        push_og(&mut lines, "og:url", canonical);
     }
     if let Some(site_name) = &seo.site_name {
-        lines.push(format!(
-            r#"  <meta property="og:site_name" content="{}">"#,
-            escape_html(site_name)
-        ));
+        push_og(&mut lines, "og:site_name", site_name);
     }
     if let Some(locale) = &seo.locale {
-        lines.push(format!(
-            r#"  <meta property="og:locale" content="{}">"#,
-            escape_html(locale)
-        ));
+        push_og(&mut lines, "og:locale", locale);
     }
     if let Some(image) = resolved.image {
-        lines.push(format!(
-            r#"  <meta property="og:image" content="{}">"#,
-            escape_html(image)
-        ));
+        push_og(&mut lines, "og:image", image);
     }
     if let Some(image_alt) = &seo.image_alt {
-        lines.push(format!(
-            r#"  <meta property="og:image:alt" content="{}">"#,
-            escape_html(image_alt)
-        ));
+        push_og(&mut lines, "og:image:alt", image_alt);
     }
 
-    lines.push(format!(
-        r#"  <meta name="twitter:card" content="{}">"#,
-        escape_html(resolved.twitter_card)
-    ));
-    lines.push(format!(
-        r#"  <meta name="twitter:title" content="{}">"#,
-        escape_html(resolved.title)
-    ));
-    lines.push(format!(
-        r#"  <meta name="twitter:description" content="{}">"#,
-        escape_html(resolved.description)
-    ));
+    push_meta(&mut lines, "twitter:card", resolved.twitter_card);
+    push_meta(&mut lines, "twitter:title", resolved.title);
+    push_meta(&mut lines, "twitter:description", resolved.description);
     if let Some(image) = resolved.image {
-        lines.push(format!(
-            r#"  <meta name="twitter:image" content="{}">"#,
-            escape_html(image)
-        ));
+        push_meta(&mut lines, "twitter:image", image);
     }
     if let Some(image_alt) = &seo.image_alt {
-        lines.push(format!(
-            r#"  <meta name="twitter:image:alt" content="{}">"#,
-            escape_html(image_alt)
-        ));
+        push_meta(&mut lines, "twitter:image:alt", image_alt);
     }
     if let Some(site) = &seo.twitter_site {
-        lines.push(format!(
-            r#"  <meta name="twitter:site" content="{}">"#,
-            escape_html(site)
-        ));
+        push_meta(&mut lines, "twitter:site", site);
     }
     if let Some(creator) = &seo.twitter_creator {
-        lines.push(format!(
-            r#"  <meta name="twitter:creator" content="{}">"#,
-            escape_html(creator)
-        ));
+        push_meta(&mut lines, "twitter:creator", creator);
     }
 
     for alt in &seo.alternates {
