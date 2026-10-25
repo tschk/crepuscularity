@@ -330,3 +330,47 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use wasm_bindgen_test::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestData {
+        name: String,
+        value: i32,
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_and_from_js() {
+        let original = TestData {
+            name: "test".to_string(),
+            value: 42,
+        };
+
+        // Test to_js
+        let js_value = to_js(&original).expect("Failed to serialize to JsValue");
+        assert!(!js_value.is_undefined());
+        assert!(!js_value.is_null());
+
+        // Test from_js
+        let deserialized: TestData = from_js(js_value).expect("Failed to deserialize from JsValue");
+        assert_eq!(original, deserialized);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_from_js_error() {
+        // Try to deserialize a number into our TestData struct
+        let invalid_js = JsValue::from_f64(42.0);
+        let result: Result<TestData> = from_js(invalid_js);
+        assert!(result.is_err());
+        match result {
+            Err(BrowserError::Serde(_)) => {}
+            _ => panic!("Expected Serde error"),
+        }
+    }
+}
