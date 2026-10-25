@@ -31,4 +31,5 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 ignore = "0.4.33"
 
 [dev-dependencies]
+wasm-bindgen-test = "0.3"
 tempfile = { workspace = true }
