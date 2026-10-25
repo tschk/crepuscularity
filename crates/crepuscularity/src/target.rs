@@ -351,4 +351,59 @@ device = "STM32F411"
         assert!(artifacts[0].contents.contains(r#"<screen name="Dash">"#));
         assert!(artifacts[0].contents.contains("STM32F411"));
     }
+
+    #[test]
+    fn parse_manifest_valid() -> Result<(), String> {
+        let src = r#"
+[[targets]]
+type = "web"
+id = "web-target"
+template = "index.crepus"
+out = "dist/index.html"
+"#;
+        let manifest = Manifest::parse(src)?;
+        assert_eq!(manifest.targets.len(), 1);
+        assert_eq!(manifest.targets[0].target_type, "web");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
+        assert_eq!(
+            manifest.targets[0].template.as_deref(),
+            Some("index.crepus")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_manifest_invalid_toml() {
+        let src = r#"
+[[targets]
+type = "web"
+"#;
+        let res = Manifest::parse(src);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn parse_manifest_missing_type() {
+        let src = r#"
+[[targets]]
+id = "web-target"
+"#;
+        let res = Manifest::parse(src);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn parse_manifest_defaults() -> Result<(), String> {
+        let src = r#"
+[[targets]]
+type = "web"
+"#;
+        let manifest = Manifest::parse(src)?;
+        assert_eq!(manifest.targets.len(), 1);
+        let target = &manifest.targets[0];
+        assert_eq!(target.target_type, "web");
+        assert_eq!(target.id, None);
+        assert_eq!(target.path, None);
+        Ok(())
+    }
 }
