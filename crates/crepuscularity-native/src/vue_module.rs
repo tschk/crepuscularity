@@ -629,15 +629,23 @@ pub fn compile_moonshine_vue_with_resolver(
     for node in &nodes {
         occupied_names.template(node);
     }
-    let fresh = |prefix: &str| {
+    let mut name_buffer = String::new();
+    let mut fresh = |prefix: &str| {
         (0usize..)
-            .map(|i| format!("{prefix}{i}"))
-            .find(|name| {
-                !source.contains(name)
+            .find_map(|i| {
+                name_buffer.clear();
+                use std::fmt::Write;
+                write!(&mut name_buffer, "{prefix}{i}").unwrap();
+                if !source.contains(&name_buffer)
                     && !occupied_names
                         .0
                         .iter()
-                        .any(|occupied| occupied.starts_with(name.as_str()))
+                        .any(|occupied| occupied.starts_with(name_buffer.as_str()))
+                {
+                    Some(name_buffer.clone())
+                } else {
+                    None
+                }
             })
             .expect("finite source cannot occupy every generated identifier")
     };
