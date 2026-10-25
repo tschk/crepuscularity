@@ -2424,7 +2424,7 @@ fn emit(
                 }
             }
             let component = element.tag.chars().next().is_some_and(char::is_uppercase);
-            let mut component_events: Vec<(String, Vec<String>)> = Vec::new();
+            let mut component_events = std::collections::BTreeMap::<String, Vec<String>>::new();
             let mut model_listeners = component_models
                 .into_iter()
                 .map(|(name, read, write, modifiers)| {
@@ -2494,23 +2494,14 @@ fn emit(
                             model_listeners.iter().position(|(key, _)| key == &name)
                         {
                             let (_, listener) = model_listeners.remove(index);
-                            if let Some((_, callbacks)) =
-                                component_events.iter_mut().find(|(key, _)| key == &name)
-                            {
-                                callbacks.push(listener);
-                            } else {
-                                component_events.push((name.clone(), vec![listener]));
-                            }
+                            component_events
+                                .entry(name.clone())
+                                .or_default()
+                                .push(listener);
                         }
                     }
                     let value = event.handler.trim().to_owned();
-                    if let Some((_, callbacks)) =
-                        component_events.iter_mut().find(|(key, _)| key == &name)
-                    {
-                        callbacks.push(value);
-                    } else {
-                        component_events.push((name, vec![value]));
-                    }
+                    component_events.entry(name).or_default().push(value);
                     continue;
                 }
                 if !event.modifiers.is_empty() {
@@ -2531,13 +2522,7 @@ fn emit(
                 ));
             }
             for (name, listener) in model_listeners {
-                if let Some((_, callbacks)) =
-                    component_events.iter_mut().find(|(key, _)| key == &name)
-                {
-                    callbacks.push(listener);
-                } else {
-                    component_events.push((name, vec![listener]));
-                }
+                component_events.entry(name).or_default().push(listener);
             }
             for (key, callbacks) in component_events {
                 let value = if callbacks.len() == 1 {
