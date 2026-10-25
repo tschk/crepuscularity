@@ -456,6 +456,39 @@ fn trusted_event_modifier_is_preserved() {
 }
 
 #[test]
+fn parse_svelte_component_raw_extracts_scripts_and_styles() {
+    let src = r#"<script context="module">
+    export const prerender = true;
+</script>
+
+<script>
+    let x = 1;
+</script>
+
+<div>Hello</div>
+
+<style>
+    div { color: red; }
+</style>
+"#;
+    let comp = parse_svelte_component_raw(src).expect("should parse successfully");
+    assert_eq!(comp.script.as_deref().unwrap().trim(), "let x = 1;");
+    assert_eq!(
+        comp.module_script.as_deref().unwrap().trim(),
+        "export const prerender = true;"
+    );
+    assert_eq!(comp.style.as_deref().unwrap().trim(), "div { color: red; }");
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "div");
+}
+
+#[test]
+fn parse_svelte_component_raw_rejects_trailing_markup() {
+    let err = parse_svelte_component_raw("<div></div></span>").unwrap_err();
+    assert!(err.message.contains("unexpected trailing markup"));
+}
+
+#[test]
 fn svelte_component_raw_extracts_all_blocks_and_catches_trailing_markup() {
     let src = "<script>let x = 1;</script><script context=\"module\">export const y = 2;</script><style>p { color: red; }</style><p>{x}</p>";
     let comp = parse_svelte_component_raw(src).unwrap();
