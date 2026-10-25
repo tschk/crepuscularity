@@ -211,6 +211,25 @@ pub fn scaffold_mobile_app(name: &str) {
     .unwrap_or_else(|e| ui::error(&e.to_string()));
 
     // Step 3: replace generic names with app-specific ones (after codegen).
+    replace_scaffold_names(&root, &name_snake, &name_pascal);
+
+    rename_scaffold_files(&root, &name_snake, &name_pascal);
+
+    ui::success(&format!(
+        "scaffolded mobile app '{}' at '{name}'",
+        name_pascal,
+    ));
+    eprintln!();
+    eprintln!("{}", style("Next steps").dim());
+    eprintln!("  cd {name}");
+    eprintln!("  # Edit your template:");
+    eprintln!("  vim views/main.crepus");
+    eprintln!("  # Regenerate + build:");
+    eprintln!("  crepus mobile build --platform ios");
+    eprintln!("  crepus mobile build --platform android");
+}
+
+fn replace_scaffold_names(root: &Path, name_snake: &str, name_pascal: &str) {
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
     let r_2 = format!("dev.crepuscularity.{name_snake}");
@@ -258,7 +277,9 @@ pub fn scaffold_mobile_app(name: &str) {
             }
         }
     }
+}
 
+fn rename_scaffold_files(root: &Path, name_snake: &str, name_pascal: &str) {
     // Rename iOS app file.
     let old_swift = root.join("ios/App/CrepusMobileApp.swift");
     let new_swift = root.join(format!("ios/App/{name_pascal}App.swift"));
@@ -283,19 +304,6 @@ pub fn scaffold_mobile_app(name: &str) {
             let _ = fs::write(&cargo_lock, updated);
         }
     }
-
-    ui::success(&format!(
-        "scaffolded mobile app '{}' at '{name}'",
-        name_pascal,
-    ));
-    eprintln!();
-    eprintln!("{}", style("Next steps").dim());
-    eprintln!("  cd {name}");
-    eprintln!("  # Edit your template:");
-    eprintln!("  vim views/main.crepus");
-    eprintln!("  # Regenerate + build:");
-    eprintln!("  crepus mobile build --platform ios");
-    eprintln!("  crepus mobile build --platform android");
 }
 
 pub fn run_codegen_full(
