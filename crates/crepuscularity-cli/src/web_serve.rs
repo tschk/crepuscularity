@@ -748,6 +748,10 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
     // Strip query string.
     let path = raw_path.split('?').next().unwrap_or(raw_path);
 
+    route_request(stream, method, path, ctx);
+}
+
+fn route_request(mut stream: TcpStream, method: &str, path: &str, ctx: DevRequestContext) {
     let _span = tracing::info_span!("dev_request", %method, %path).entered();
 
     match (method, path) {
