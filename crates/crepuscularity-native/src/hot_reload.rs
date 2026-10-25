@@ -488,7 +488,7 @@ mod ast_shape_compatible_node_kind_tests {
             else_children: None,
         });
 
-        assert!(!ast_shape_compatible(&[if1.clone()], &[if2]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if2]));
 
         let if3 = Node::If(IfBlock {
             condition: "true".to_string(),
@@ -496,7 +496,7 @@ mod ast_shape_compatible_node_kind_tests {
             else_children: None,
         });
 
-        assert!(!ast_shape_compatible(&[if1.clone()], &[if3]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if3]));
 
         let if4 = Node::If(IfBlock {
             condition: "true".to_string(),
@@ -504,7 +504,7 @@ mod ast_shape_compatible_node_kind_tests {
             else_children: Some(vec![Node::Element(dummy_element("div"))]),
         });
 
-        assert!(!ast_shape_compatible(&[if1.clone()], &[if4]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if4]));
 
         let if5 = Node::If(IfBlock {
             condition: "true".to_string(),
@@ -512,7 +512,7 @@ mod ast_shape_compatible_node_kind_tests {
             else_children: None,
         });
 
-        assert!(ast_shape_compatible(&[if1.clone()], &[if5]));
+        assert!(ast_shape_compatible(std::slice::from_ref(&if1), &[if5]));
     }
 
     #[test]
@@ -527,28 +527,28 @@ mod ast_shape_compatible_node_kind_tests {
             iterator: "other_items".to_string(),
             body: vec![],
         });
-        assert!(!ast_shape_compatible(&[for1.clone()], &[for2]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for2]));
 
         let for3 = Node::For(ForBlock {
             pattern: "other_item".to_string(),
             iterator: "items".to_string(),
             body: vec![],
         });
-        assert!(!ast_shape_compatible(&[for1.clone()], &[for3]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for3]));
 
         let for4 = Node::For(ForBlock {
             pattern: "item".to_string(),
             iterator: "items".to_string(),
             body: vec![Node::Element(dummy_element("div"))],
         });
-        assert!(!ast_shape_compatible(&[for1.clone()], &[for4]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for4]));
 
         let for5 = Node::For(ForBlock {
             pattern: "item".to_string(),
             iterator: "items".to_string(),
             body: vec![],
         });
-        assert!(ast_shape_compatible(&[for1.clone()], &[for5]));
+        assert!(ast_shape_compatible(std::slice::from_ref(&for1), &[for5]));
     }
 
     #[test]
@@ -563,28 +563,28 @@ mod ast_shape_compatible_node_kind_tests {
             expr: "2".to_string(),
             is_default: false,
         });
-        assert!(!ast_shape_compatible(&[let1.clone()], &[let2]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let2]));
 
         let let3 = Node::LetDecl(LetDecl {
             name: "y".to_string(),
             expr: "1".to_string(),
             is_default: false,
         });
-        assert!(!ast_shape_compatible(&[let1.clone()], &[let3]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let3]));
 
         let let4 = Node::LetDecl(LetDecl {
             name: "x".to_string(),
             expr: "1".to_string(),
             is_default: true,
         });
-        assert!(!ast_shape_compatible(&[let1.clone()], &[let4]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let4]));
 
         let let5 = Node::LetDecl(LetDecl {
             name: "x".to_string(),
             expr: "1".to_string(),
             is_default: false,
         });
-        assert!(ast_shape_compatible(&[let1.clone()], &[let5]));
+        assert!(ast_shape_compatible(std::slice::from_ref(&let1), &[let5]));
     }
 
     #[test]
@@ -599,28 +599,28 @@ mod ast_shape_compatible_node_kind_tests {
             props: vec![("label".to_string(), "Click".to_string())],
             slot: vec![],
         });
-        assert!(!ast_shape_compatible(&[inc1.clone()], &[inc2]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc2]));
 
         let inc3 = Node::Include(IncludeNode {
             path: "button.crepus".to_string(),
             props: vec![("label".to_string(), "Other".to_string())],
             slot: vec![],
         });
-        assert!(!ast_shape_compatible(&[inc1.clone()], &[inc3]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc3]));
 
         let inc4 = Node::Include(IncludeNode {
             path: "button.crepus".to_string(),
             props: vec![("label".to_string(), "Click".to_string())],
             slot: vec![Node::Element(dummy_element("div"))],
         });
-        assert!(!ast_shape_compatible(&[inc1.clone()], &[inc4]));
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc4]));
 
         let inc5 = Node::Include(IncludeNode {
             path: "button.crepus".to_string(),
             props: vec![("label".to_string(), "Click".to_string())],
             slot: vec![],
         });
-        assert!(ast_shape_compatible(&[inc1.clone()], &[inc5]));
+        assert!(ast_shape_compatible(std::slice::from_ref(&inc1), &[inc5]));
     }
 
     #[test]
