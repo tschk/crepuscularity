@@ -18,6 +18,10 @@ pub fn run(cli: Cli) -> Result<(), CrepusCliError> {
         print_top_level_help();
         std::process::exit(0);
     };
+    execute_command(command)
+}
+
+fn execute_command(command: Commands) -> Result<(), CrepusCliError> {
     match command {
         Commands::New { name } => {
             crate::new::run(&name);
