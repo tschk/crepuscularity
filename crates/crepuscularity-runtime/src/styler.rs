@@ -532,10 +532,23 @@ fn apply_typography(d: Div, class: &str) -> Result<Div, Div> {
 
 #[allow(clippy::result_large_err)]
 fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
+    apply_border_style(d, class)
+        .or_else(|d| apply_border_width(d, class))
+        .or_else(|d| apply_border_radius(d, class))
+}
+
+#[allow(clippy::result_large_err)]
+fn apply_border_style(d: Div, class: &str) -> Result<Div, Div> {
     Ok(match class {
         // ── Border style ──
         "border-dashed" => d.border_dashed(),
+        _ => return Err(d),
+    })
+}
 
+#[allow(clippy::result_large_err)]
+fn apply_border_width(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Border width ──
         "border" => d.border_1(),
         "border-0" => d.border_0(),
@@ -563,7 +576,13 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "border-r-2" => d.border_r_2(),
         "border-r-4" => d.border_r_4(),
         "border-r-8" => d.border_r_8(),
+        _ => return Err(d),
+    })
+}
 
+#[allow(clippy::result_large_err)]
+fn apply_border_radius(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         // ── Border radius ──
         "rounded-none" => d.rounded_none(),
         "rounded-sm" => d.rounded_sm(),
