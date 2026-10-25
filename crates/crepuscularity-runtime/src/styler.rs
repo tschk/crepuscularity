@@ -825,8 +825,12 @@ fn apply_misc(d: Div, class: &str) -> Result<Div, Div> {
 type LengthPropEntry = (&'static str, fn(Div, Length) -> Div);
 type DefiniteLengthPropEntry = (&'static str, fn(Div, DefiniteLength) -> Div);
 
-fn apply_dynamic(d: Div, class: &str) -> Div {
-    // ── Length properties (support auto) ──
+enum ApplyResult {
+    Applied(Div),
+    NotApplied(Div),
+}
+
+fn apply_dynamic_lengths(d: Div, class: &str) -> ApplyResult {
     const LENGTH_PROPS: &[LengthPropEntry] = &[
         ("w-", |d, v| d.w(v)),
         ("h-", |d, v| d.h(v)),
@@ -858,14 +862,16 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                     "w-" | "h-" | "min-w-" | "min-h-" | "max-w-" | "max-h-" | "size-" | "basis-"
                 ) && matches!(len, Length::Definite(value) if value.to_pixels(px(1.0).into(), px(1.0)) < px(0.0))
                 {
-                    return d;
+                    return ApplyResult::Applied(d);
                 }
-                return apply(d, len);
+                return ApplyResult::Applied(apply(d, len));
             }
         }
     }
+    ApplyResult::NotApplied(d)
+}
 
-    // ── DefiniteLength properties (no auto) ──
+fn apply_dynamic_definite_lengths(d: Div, class: &str) -> ApplyResult {
     const DEFINITE_PROPS: &[DefiniteLengthPropEntry] = &[
         ("p-", |d, v| d.p(v)),
         ("px-", |d, v| d.px(v)),
@@ -883,13 +889,16 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(len) = parse_definite_length(rest) {
                 if len.to_pixels(px(1.0).into(), px(1.0)) < px(0.0) {
-                    return d;
+                    return ApplyResult::Applied(d);
                 }
-                return apply(d, len);
+                return ApplyResult::Applied(apply(d, len));
             }
         }
     }
+    ApplyResult::NotApplied(d)
+}
 
+fn apply_dynamic_borders(d: Div, class: &str) -> ApplyResult {
     // ── Arbitrary border radius: rounded-[Npx], rounded-t-[Npx], etc. ──
     for (prefix, apply_fn) in &[
         (
@@ -929,7 +938,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+                    return ApplyResult::Applied(apply_fn(d, abs));
                 }
             }
         }
@@ -958,75 +967,80 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(rest) = class.strip_prefix(prefix) {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+                    return ApplyResult::Applied(apply_fn(d, abs));
                 }
             }
         }
     }
 
+    ApplyResult::NotApplied(d)
+}
+
+fn apply_dynamic_grid(d: Div, class: &str) -> ApplyResult {
     // ── Grid placement: col-span-N, col-start-N, col-end-N, row-span-N, etc. ──
     if let Some(rest) = class.strip_prefix("col-span-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.col_span(n);
+            return ApplyResult::Applied(d.col_span(n));
         }
     }
     if let Some(rest) = class.strip_prefix("col-start-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_start(n);
+            return ApplyResult::Applied(d.col_start(n));
         }
     }
     if let Some(rest) = class.strip_prefix("col-end-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_end(n);
+            return ApplyResult::Applied(d.col_end(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-span-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.row_span(n);
+            return ApplyResult::Applied(d.row_span(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-start-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_start(n);
+            return ApplyResult::Applied(d.row_start(n));
         }
     }
     if let Some(rest) = class.strip_prefix("row-end-") {
         if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_end(n);
+            return ApplyResult::Applied(d.row_end(n));
         }
     }
     // Dynamic grid-cols-N and grid-rows-N beyond the static 1-12
     if let Some(rest) = class.strip_prefix("grid-cols-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_cols(n);
+            return ApplyResult::Applied(d.grid_cols(n));
         }
     }
     if let Some(rest) = class.strip_prefix("grid-rows-") {
         if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_rows(n);
+            return ApplyResult::Applied(d.grid_rows(n));
         }
     }
+    ApplyResult::NotApplied(d)
+}
 
+fn apply_dynamic_misc(d: Div, class: &str) -> ApplyResult {
     // ── tracking-* (letter-spacing) — gpui-ce provides letter_spacing natively ──
-    {
-        match class {
-            "tracking-tighter" => return d.letter_spacing(px(-2.0)),
-            "tracking-tight" => return d.letter_spacing(px(-1.0)),
-            "tracking-normal" => return d.letter_spacing(px(0.)),
-            "tracking-wide" => return d.letter_spacing(px(1.5)),
-            "tracking-wider" => return d.letter_spacing(px(3.0)),
-            "tracking-widest" => return d.letter_spacing(px(5.0)),
-            _ => {}
-        }
-        if let Some(rest) = class.strip_prefix("tracking-[") {
-            if let Some(inner) = rest.strip_suffix(']') {
-                if let Some(abs) = parse_absolute_length(inner) {
-                    let px_val = abs.to_pixels(px(16.0));
-                    if !f32::from(px_val).is_finite() {
-                        return d;
-                    }
-                    return d.letter_spacing(px_val);
+    match class {
+        "tracking-tighter" => return ApplyResult::Applied(d.letter_spacing(px(-2.0))),
+        "tracking-tight" => return ApplyResult::Applied(d.letter_spacing(px(-1.0))),
+        "tracking-normal" => return ApplyResult::Applied(d.letter_spacing(px(0.))),
+        "tracking-wide" => return ApplyResult::Applied(d.letter_spacing(px(1.5))),
+        "tracking-wider" => return ApplyResult::Applied(d.letter_spacing(px(3.0))),
+        "tracking-widest" => return ApplyResult::Applied(d.letter_spacing(px(5.0))),
+        _ => {}
+    }
+    if let Some(rest) = class.strip_prefix("tracking-[") {
+        if let Some(inner) = rest.strip_suffix(']') {
+            if let Some(abs) = parse_absolute_length(inner) {
+                let px_val = abs.to_pixels(px(16.0));
+                if !f32::from(px_val).is_finite() {
+                    return ApplyResult::Applied(d);
                 }
+                return ApplyResult::Applied(d.letter_spacing(px_val));
             }
         }
     }
@@ -1046,7 +1060,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             if let Some(r) = ratio.filter(|r| r.is_finite() && *r > 0.0) {
                 let mut d = d;
                 d.style().aspect_ratio = Some(r);
-                return d;
+                return ApplyResult::Applied(d);
             }
         }
     }
@@ -1057,9 +1071,9 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             if let Some(abs) = parse_absolute_length(inner) {
                 let spread = abs.to_pixels(px(16.0));
                 if !f32::from(spread).is_finite() {
-                    return d;
+                    return ApplyResult::Applied(d);
                 }
-                return apply_ring(d, spread, false);
+                return ApplyResult::Applied(apply_ring(d, spread, false));
             }
         }
     }
@@ -1067,16 +1081,20 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     // ── line-clamp-N ──
     if let Some(rest) = class.strip_prefix("line-clamp-") {
         if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
-            return d.line_clamp(n);
+            return ApplyResult::Applied(d.line_clamp(n));
         }
     }
 
+    ApplyResult::NotApplied(d)
+}
+
+fn apply_dynamic_typography(d: Div, class: &str) -> ApplyResult {
     // ── font-['Family'] or font-[Family] ──
     if let Some(rest) = class.strip_prefix("font-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
             if !family.trim().is_empty() {
-                return d.font_family(family);
+                return ApplyResult::Applied(d.font_family(family));
             }
         }
     }
@@ -1086,7 +1104,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(inner) = rest.strip_suffix(']') {
             // Color values fall through to the shared color-family handling.
             if let Some(len) = parse_nonnegative_absolute_length(inner) {
-                return d.text_size(len);
+                return ApplyResult::Applied(d.text_size(len));
             }
         }
     }
@@ -1095,7 +1113,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     if let Some(rest) = class.strip_prefix("leading-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                return d.line_height(abs);
+                return ApplyResult::Applied(d.line_height(abs));
             }
         }
     }
@@ -1103,16 +1121,20 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
     // ── opacity-N ──
     if let Some(rest) = class.strip_prefix("opacity-") {
         if let Some(opacity) = parse_opacity_percentage(rest) {
-            return d.opacity(opacity);
+            return ApplyResult::Applied(d.opacity(opacity));
         }
     }
 
+    ApplyResult::NotApplied(d)
+}
+
+fn apply_dynamic_colors(d: Div, class: &str) -> ApplyResult {
     // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
     if let Some(rest) = class.strip_prefix("decoration-[") {
         if let Some(inner) = rest.strip_suffix(']') {
             if inner.starts_with('#') {
                 if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_decoration_color(color);
+                    return ApplyResult::Applied(d.text_decoration_color(color));
                 }
             }
         }
@@ -1123,7 +1145,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             let family = &rest[..dash_pos];
             let shade = &rest[dash_pos + 1..];
             if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_decoration_color(rgb(hex));
+                return ApplyResult::Applied(d.text_decoration_color(rgb(hex)));
             }
         }
     }
@@ -1133,7 +1155,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
         if let Some(inner) = rest.strip_suffix(']') {
             if inner.starts_with('#') {
                 if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_bg(color);
+                    return ApplyResult::Applied(d.text_bg(color));
                 }
             }
         }
@@ -1143,7 +1165,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
             let family = &rest[..dash_pos];
             let shade = &rest[dash_pos + 1..];
             if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_bg(rgb(hex));
+                return ApplyResult::Applied(d.text_bg(rgb(hex)));
             }
         }
     }
@@ -1160,8 +1182,8 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                 let inner = &rest[1..rest.len() - 1];
                 if inner.starts_with('#') {
                     return match parse_runtime_hex_color(inner) {
-                        Some(color) => apply_color(d, prefix, color),
-                        None => d,
+                        Some(color) => ApplyResult::Applied(apply_color(d, prefix, color)),
+                        None => ApplyResult::Applied(d),
                     };
                 }
                 // hsla: bg-[hsla(h,s,l,a)]
@@ -1182,7 +1204,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                                 parts[3].parse::<f32>(),
                             ) {
                                 if ![h, s, l, a].iter().all(|value| value.is_finite()) {
-                                    return d;
+                                    return ApplyResult::Applied(d);
                                 }
                                 let color = hsla(
                                     h.rem_euclid(360.0) / 360.0,
@@ -1191,13 +1213,13 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                                     a.clamp(0.0, 1.0),
                                 );
                                 if *prefix == "bg-" {
-                                    return d.bg(color);
+                                    return ApplyResult::Applied(d.bg(color));
                                 }
                                 if *prefix == "text-" {
-                                    return d.text_color(color);
+                                    return ApplyResult::Applied(d.text_color(color));
                                 }
                                 if *prefix == "border-" {
-                                    return d.border_color(color);
+                                    return ApplyResult::Applied(d.border_color(color));
                                 }
                             }
                         }
@@ -1220,7 +1242,7 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                         {
                             color.alpha = (opacity * 255.0).floor() / 255.0;
                         }
-                        return apply_color(d, prefix, color);
+                        return ApplyResult::Applied(apply_color(d, prefix, color));
                     }
                 }
             }
@@ -1229,13 +1251,44 @@ fn apply_dynamic(d: Div, class: &str) -> Div {
                 let family = &rest[..dash_pos];
                 let shade = &rest[dash_pos + 1..];
                 if let Some(hex) = tailwind_color(family, shade) {
-                    return apply_fn(d, hex);
+                    return ApplyResult::Applied(apply_fn(d, hex));
                 }
             }
         }
     }
 
-    d
+    ApplyResult::NotApplied(d)
+}
+
+fn apply_dynamic(d: Div, class: &str) -> Div {
+    let d = match apply_dynamic_lengths(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    let d = match apply_dynamic_definite_lengths(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    let d = match apply_dynamic_borders(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    let d = match apply_dynamic_grid(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    let d = match apply_dynamic_misc(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    let d = match apply_dynamic_typography(d, class) {
+        ApplyResult::Applied(d) => return d,
+        ApplyResult::NotApplied(d) => d,
+    };
+    match apply_dynamic_colors(d, class) {
+        ApplyResult::Applied(d) => d,
+        ApplyResult::NotApplied(d) => d,
+    }
 }
 
 fn parse_runtime_hex_color(value: &str) -> Option<gpui::Rgba> {
