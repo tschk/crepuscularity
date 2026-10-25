@@ -489,6 +489,21 @@ fn parse_svelte_component_raw_rejects_trailing_markup() {
 }
 
 #[test]
+fn svelte_component_raw_extracts_all_blocks_and_catches_trailing_markup() {
+    let src = "<script>let x = 1;</script><script context=\"module\">export const y = 2;</script><style>p { color: red; }</style><p>{x}</p>";
+    let comp = parse_svelte_component_raw(src).unwrap();
+    assert!(comp.script.unwrap().contains("let x = 1;"));
+    assert!(comp.module_script.unwrap().contains("export const y = 2;"));
+    assert!(comp.style.unwrap().contains("color: red;"));
+    assert_eq!(comp.nodes.len(), 1);
+    assert_eq!(el(&comp.nodes[0]).tag, "p");
+
+    let err = parse_svelte_component_raw("<p>ok</p></unmatched>").unwrap_err();
+    assert_eq!(err.message, "unexpected trailing markup in Svelte template");
+    assert_eq!(err.byte_offset, Some(9));
+}
+
+#[test]
 fn parse_svelte_component_raw_extracts_all_parts() {
     let src = "<script context=\"module\">module</script><script>script</script><style>style</style><p>html</p>";
     let result = parse_svelte_component_raw(src).unwrap();
