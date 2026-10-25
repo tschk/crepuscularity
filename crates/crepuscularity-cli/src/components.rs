@@ -182,6 +182,93 @@ fn path_for_target(comp: &CatalogComponent, t: ComponentTarget) -> Option<String
     Some(format!("{PKG_ROOT}/packages/{key}"))
 }
 
+fn resolve_targets(
+    wanted: Vec<ComponentTarget>,
+    disk_comp: Option<&CatalogComponent>,
+    crate_meta: Option<&crepuscularity_components::ComponentMeta>,
+) -> Vec<(ComponentTarget, String)> {
+    if let Some(comp) = disk_comp {
+        wanted
+            .into_iter()
+            .filter_map(|t| path_for_target(comp, t).map(|p| (t, p)))
+            .collect()
+    } else if let Some(meta) = crate_meta {
+        wanted
+            .into_iter()
+            .filter_map(|t| {
+                let key = target_key(t);
+                let supported =
+                    meta.platforms.is_empty() || meta.platforms.iter().any(|p| p == key);
+                if !supported {
+                    return None;
+                }
+                if matches!(t, ComponentTarget::Moonshine) {
+                    return Some((t, "@tschk/moonshine-components".to_string()));
+                }
+                Some((t, format!("{PKG_ROOT}/packages/{key}")))
+            })
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
+fn print_component_info(
+    id: &str,
+    display: &str,
+    disk_comp: Option<&CatalogComponent>,
+    root: &Path,
+) {
+    println!("component: {id}");
+    println!("name:      {display}");
+    if let Some(comp) = disk_comp {
+        if let Some(desc) = &comp.description {
+            println!("about:     {desc}");
+        }
+        if let Some(spec) = &comp.spec {
+            let spec_path = format!("{PKG_ROOT}/{spec}");
+            let abs = root.join(&spec_path);
+            let status = if abs.is_file() { "ok" } else { "missing" };
+            println!("spec:      {spec_path}  [{status}]");
+        }
+    }
+    println!();
+}
+
+fn print_path_hints(selected: &[(ComponentTarget, String)], root: &Path) {
+    println!("Install / copy path hints:");
+    for (t, path) in selected {
+        if matches!(t, ComponentTarget::Moonshine) {
+            println!(
+                "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
+                target_key(*t),
+                path
+            );
+            continue;
+        }
+        let abs = root.join(path);
+        let status = if abs.exists() { "ok" } else { "missing" };
+        println!("  {:<10} {}  [{status}]", target_key(*t), path);
+    }
+    println!();
+}
+
+fn print_guidance() {
+    println!("Guidance:");
+    println!(
+        "  • Copy or symlink the target package into your app, or depend on it once published."
+    );
+    println!(
+        "  • Spec JSON under plugins/crepuscularity-components/specs/ is the source of truth."
+    );
+    println!(
+        "  • Moonshine/React: install `@tschk/moonshine-components` from tschk/moonshine (`components/`), not plugins/crepuscularity-components."
+    );
+    println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
+    println!("  • GPUI: include the gpui package module from your desktop crate.");
+    println!("  • See `crepus moonshine dep` for @tschk package snippets.");
+}
+
 fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> {
     let root = repo_root();
 
@@ -224,30 +311,7 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         ],
     };
 
-    let selected: Vec<(ComponentTarget, String)> = if let Some(comp) = disk_comp {
-        wanted
-            .into_iter()
-            .filter_map(|t| path_for_target(comp, t).map(|p| (t, p)))
-            .collect()
-    } else if let Some(meta) = &crate_meta {
-        wanted
-            .into_iter()
-            .filter_map(|t| {
-                let key = target_key(t);
-                let supported =
-                    meta.platforms.is_empty() || meta.platforms.iter().any(|p| p == key);
-                if !supported {
-                    return None;
-                }
-                if matches!(t, ComponentTarget::Moonshine) {
-                    return Some((t, "@tschk/moonshine-components".to_string()));
-                }
-                Some((t, format!("{PKG_ROOT}/packages/{key}")))
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+    let selected = resolve_targets(wanted, disk_comp, crate_meta.as_ref());
 
     if selected.is_empty() {
         return Err(CrepusCliError::context(format!(
@@ -256,48 +320,9 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         )));
     }
 
-    println!("component: {id}");
-    println!("name:      {display}");
-    if let Some(comp) = disk_comp {
-        if let Some(desc) = &comp.description {
-            println!("about:     {desc}");
-        }
-        if let Some(spec) = &comp.spec {
-            let spec_path = format!("{PKG_ROOT}/{spec}");
-            let abs = root.join(&spec_path);
-            let status = if abs.is_file() { "ok" } else { "missing" };
-            println!("spec:      {spec_path}  [{status}]");
-        }
-    }
-    println!();
-    println!("Install / copy path hints:");
-    for (t, path) in &selected {
-        if matches!(t, ComponentTarget::Moonshine) {
-            println!(
-                "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
-                target_key(*t),
-                path
-            );
-            continue;
-        }
-        let abs = root.join(path);
-        let status = if abs.exists() { "ok" } else { "missing" };
-        println!("  {:<10} {}  [{status}]", target_key(*t), path);
-    }
-    println!();
-    println!("Guidance:");
-    println!(
-        "  • Copy or symlink the target package into your app, or depend on it once published."
-    );
-    println!(
-        "  • Spec JSON under plugins/crepuscularity-components/specs/ is the source of truth."
-    );
-    println!(
-        "  • Moonshine/React: install `@tschk/moonshine-components` from tschk/moonshine (`components/`), not plugins/crepuscularity-components."
-    );
-    println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
-    println!("  • GPUI: include the gpui package module from your desktop crate.");
-    println!("  • See `crepus moonshine dep` for @tschk package snippets.");
+    print_component_info(id, display, disk_comp, &root);
+    print_path_hints(&selected, &root);
+    print_guidance();
     Ok(())
 }
 
