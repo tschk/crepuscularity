@@ -800,17 +800,25 @@ fn sync_download_row(
         }
     }
 
-    if let (Some(existing_label), Some(incoming_label)) = (
-        existing_row.query_selector("span")?,
-        incoming_row.query_selector("span")?,
-    ) {
-        existing_label.set_inner_html(&incoming_label.inner_html());
+    let existing_children = existing_row.children();
+    let incoming_children = incoming_row.children();
+
+    if existing_children.length() == 0 || incoming_children.length() == 0 {
+        return Ok(());
     }
 
-    let (Some(existing_value), Some(incoming_value)) = (
-        existing_row.query_selector("b")?,
-        incoming_row.query_selector("b")?,
-    ) else {
+    let Some(existing_label) = existing_children.item(0) else {
+        return Ok(());
+    };
+    let Some(incoming_label) = incoming_children.item(0) else {
+        return Ok(());
+    };
+    existing_label.set_inner_html(&incoming_label.inner_html());
+
+    let Some(existing_value) = existing_children.item(1) else {
+        return Ok(());
+    };
+    let Some(incoming_value) = incoming_children.item(1) else {
         return Ok(());
     };
     let Some(default_value) = incoming_value.get_attribute("data-downloads-default") else {
