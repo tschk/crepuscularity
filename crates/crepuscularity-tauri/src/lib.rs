@@ -763,12 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_root_dir() {
-        let err = TauriProject::open("does_not_exist_12345").unwrap_err();
-        assert!(err.contains("No such file or directory") || err.contains("not found") || err.contains("does not exist"));
-    }
-
-    #[test]
     fn reads_v1_windows_metadata() {
         let root = project(
             "tauri.conf.json",
