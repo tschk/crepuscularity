@@ -230,81 +230,18 @@ fn validate_templates(site_dir: &Path) {
 pub fn run(opts: ServeOptions) {
     let site_dir = std::fs::canonicalize(&opts.site_dir).unwrap_or_else(|_| opts.site_dir.clone());
 
-    // Validate all templates at startup.
-    let validate_start = Instant::now();
-    eprintln!("\n  {} validating templates…", console::style("→").dim());
-    validate_templates(&site_dir);
-    let validate_elapsed = validate_start.elapsed();
-    eprintln!(
-        "  {} templates validated in {:.2}s",
-        console::style("✓").green(),
-        validate_elapsed.as_secs_f64()
-    );
-
-    let wasm_start = Instant::now();
-    eprintln!(
-        "  {} compiling dev WASM → {}",
-        console::style("→").dim(),
-        console::style(format!("{}/", crate::web::WEB_DEV_ARTIFACT_DIR)).cyan()
-    );
-    if let Err(e) = ensure_web_dev_artifacts(&site_dir) {
-        eprintln!("  {} {}", console::style("✗").red().bold(), e);
-        std::process::exit(1);
-    }
-    let wasm_elapsed = wasm_start.elapsed();
-    eprintln!(
-        "  {} UnoCSS, app.js, and pkg/ ready in {:.2}s",
-        console::style("✓").green(),
-        wasm_elapsed.as_secs_f64()
-    );
+    validate_templates_timed(&site_dir);
+    compile_dev_wasm(&site_dir);
 
     let dev_root = site_dir.join(crate::web::WEB_DEV_ARTIFACT_DIR);
+    setup_docs(&opts, &site_dir, &dev_root);
 
-    let head = load_site_head(&site_dir);
-    if let Some(docs) = opts.meta.as_ref().and_then(|meta| meta.docs.as_ref()) {
-        let docs_theme = DocsHookTheme {
-            accent: head.theme.accent.clone(),
-            accent_soft: head.theme.accent_soft.clone(),
-            surface: head.theme.surface.clone(),
-            text: head.theme.text.clone(),
-            muted: head.theme.muted.clone(),
-            border: head.theme.border.clone(),
-        };
-        let docs_src = docs_src_path(&site_dir, docs);
-        let docs_out = dev_root.join("docs");
-        match run_docs_hook(&site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
-            Ok(()) => eprintln!(
-                "  {} docs → {} (serve at /docs/)",
-                console::style("✓").green(),
-                docs_out.display()
-            ),
-            Err(e) => eprintln!(
-                "  {} could not mirror docs: {}",
-                console::style("⚠").yellow(),
-                e
-            ),
-        }
-        start_docs_markdown_watcher(
-            site_dir.clone(),
-            docs.clone(),
-            docs_src,
-            docs_out,
-            docs_theme.clone(),
-            head.page_title.clone(),
-        );
-    }
-
-    // Build initial virtual file map.
     let vfm: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
     load_all_crepus(&site_dir, &vfm);
 
-    // Generation counter — bumped on every hot reload.
     let generation: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-
-    // Last SSE message — updated by the watcher, read by SSE long-poll handlers.
     let last_sse_msg: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
 
-    // Spawn watcher + debounce.
     start_watcher(
         site_dir.clone(),
         Arc::clone(&vfm),
@@ -312,7 +249,6 @@ pub fn run(opts: ServeOptions) {
         Arc::clone(&last_sse_msg),
     );
 
-    // Bind TCP listener.
     let addr = format!("127.0.0.1:{}", opts.port);
     let listener = TcpListener::bind(&addr).unwrap_or_else(|e| {
         eprintln!("crepus web dev: cannot bind {addr}: {e}");
@@ -349,6 +285,73 @@ pub fn run(opts: ServeOptions) {
                 eprintln!("crepus web dev: accept error: {e}");
             }
         }
+    }
+}
+
+fn validate_templates_timed(site_dir: &Path) {
+    let validate_start = Instant::now();
+    eprintln!("\n  {} validating templates…", console::style("→").dim());
+    validate_templates(site_dir);
+    let validate_elapsed = validate_start.elapsed();
+    eprintln!(
+        "  {} templates validated in {:.2}s",
+        console::style("✓").green(),
+        validate_elapsed.as_secs_f64()
+    );
+}
+
+fn compile_dev_wasm(site_dir: &Path) {
+    let wasm_start = Instant::now();
+    eprintln!(
+        "  {} compiling dev WASM → {}",
+        console::style("→").dim(),
+        console::style(format!("{}/", crate::web::WEB_DEV_ARTIFACT_DIR)).cyan()
+    );
+    if let Err(e) = ensure_web_dev_artifacts(site_dir) {
+        eprintln!("  {} {}", console::style("✗").red().bold(), e);
+        std::process::exit(1);
+    }
+    let wasm_elapsed = wasm_start.elapsed();
+    eprintln!(
+        "  {} UnoCSS, app.js, and pkg/ ready in {:.2}s",
+        console::style("✓").green(),
+        wasm_elapsed.as_secs_f64()
+    );
+}
+
+fn setup_docs(opts: &ServeOptions, site_dir: &Path, dev_root: &Path) {
+    let head = load_site_head(site_dir);
+    if let Some(docs) = opts.meta.as_ref().and_then(|meta| meta.docs.as_ref()) {
+        let docs_theme = DocsHookTheme {
+            accent: head.theme.accent.clone(),
+            accent_soft: head.theme.accent_soft.clone(),
+            surface: head.theme.surface.clone(),
+            text: head.theme.text.clone(),
+            muted: head.theme.muted.clone(),
+            border: head.theme.border.clone(),
+        };
+        let docs_src = docs_src_path(site_dir, docs);
+        let docs_out = dev_root.join("docs");
+        match run_docs_hook(site_dir, &docs_out, docs, &head.page_title, &docs_theme) {
+            Ok(()) => eprintln!(
+                "  {} docs → {} (serve at /docs/)",
+                console::style("✓").green(),
+                docs_out.display()
+            ),
+            Err(e) => eprintln!(
+                "  {} could not mirror docs: {}",
+                console::style("⚠").yellow(),
+                e
+            ),
+        }
+        start_docs_markdown_watcher(
+            site_dir.to_path_buf(),
+            docs.clone(),
+            docs_src,
+            docs_out,
+            docs_theme,
+            head.page_title.clone(),
+        );
     }
 }
 
