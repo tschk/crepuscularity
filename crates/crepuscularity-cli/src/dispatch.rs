@@ -19,45 +19,30 @@ pub fn run(cli: Cli) -> Result<(), CrepusCliError> {
         std::process::exit(0);
     };
     match command {
-        Commands::New { name } => {
-            crate::new::run(&name);
-            Ok(())
-        }
-        Commands::Init { kind, name } => {
-            run_init(&kind, &name);
-            Ok(())
-        }
+        Commands::New { name } => crate::new::run(&name),
+        Commands::Init { kind, name } => run_init(&kind, &name),
         #[cfg(feature = "desktop")]
         Commands::Dev {
             target,
             bin,
             emit_events,
             build,
-        } => {
-            run_dev(target, bin, emit_events, build);
-            Ok(())
-        }
+        } => run_dev(target, bin, emit_events, build),
         Commands::Build {
             build,
             target_id,
             manifest,
             all,
             selector,
-        } => run_top_level_build(build, target_id, manifest, all, selector),
+        } => run_top_level_build(build, target_id, manifest, all, selector)?,
         #[cfg(feature = "desktop")]
-        Commands::Preview { file } => {
-            crate::preview::run_preview(file);
-            Ok(())
-        }
+        Commands::Preview { file } => crate::preview::run_preview(file),
         Commands::Render {
             file,
             ctx,
             vars,
             component,
-        } => {
-            crate::render::execute(file, ctx, vars, component);
-            Ok(())
-        }
+        } => crate::render::execute(file, ctx, vars, component),
         Commands::Inspect {
             file,
             mode,
@@ -66,57 +51,26 @@ pub fn run(cli: Cli) -> Result<(), CrepusCliError> {
             ints,
             width,
             height,
-        } => {
-            crate::inspect::execute(file, mode, vars, bools, ints, width, height);
-            Ok(())
-        }
-        Commands::Web { command } => {
-            crate::web::execute(command);
-            Ok(())
-        }
-        Commands::Webext { command } => {
-            crate::webext::execute(command);
-            Ok(())
-        }
-        Commands::Ios { command } => {
-            crate::ios::execute(command);
-            Ok(())
-        }
-        Commands::Apple { command } => {
-            crate::apple_project::execute(command);
-            Ok(())
-        }
-        Commands::Tui { command } => {
-            crate::tui::execute(command);
-            Ok(())
-        }
-        Commands::Native { command } => crate::native::execute(command),
-        Commands::Mobile { command } => crate::native::execute_mobile(command),
-        Commands::Tauri { command } => {
-            crate::tauri::execute(command);
-            Ok(())
-        }
-        Commands::Aurora { aurorality_args } => {
-            crate::aurora::run_forwarded(&aurorality_args);
-            Ok(())
-        }
-        Commands::Embedded { command } => {
-            crate::embedded::execute(command);
-            Ok(())
-        }
+        } => crate::inspect::execute(file, mode, vars, bools, ints, width, height),
+        Commands::Web { command } => crate::web::execute(command),
+        Commands::Webext { command } => crate::webext::execute(command),
+        Commands::Ios { command } => crate::ios::execute(command),
+        Commands::Apple { command } => crate::apple_project::execute(command),
+        Commands::Tui { command } => crate::tui::execute(command),
+        Commands::Native { command } => crate::native::execute(command)?,
+        Commands::Mobile { command } => crate::native::execute_mobile(command)?,
+        Commands::Tauri { command } => crate::tauri::execute(command),
+        Commands::Aurora { aurorality_args } => crate::aurora::run_forwarded(&aurorality_args),
+        Commands::Embedded { command } => crate::embedded::execute(command),
         #[cfg(feature = "benchmark")]
-        Commands::Benchmark { command, flat } => {
-            run_benchmark(command, flat);
-            Ok(())
-        }
-        Commands::Plugins { command } => {
-            crate::plugins::execute(command);
-            Ok(())
-        }
-        Commands::Flutter { command } => crate::flutter::execute(command),
-        Commands::Components { command } => crate::components::execute(command),
-        Commands::Moonshine { command } => crate::moonshine::execute(command),
+        Commands::Benchmark { command, flat } => run_benchmark(command, flat),
+        Commands::Plugins { command } => crate::plugins::execute(command),
+        Commands::Flutter { command } => crate::flutter::execute(command)?,
+        Commands::Components { command } => crate::components::execute(command)?,
+        Commands::Moonshine { command } => crate::moonshine::execute(command)?,
     }
+
+    Ok(())
 }
 
 #[cfg(feature = "desktop")]
