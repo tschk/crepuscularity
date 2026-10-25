@@ -177,6 +177,41 @@ fn raw_html_sanitization_ssr() {
 }
 
 #[test]
+fn render_template_to_html_with_ssr_basic() {
+    let ctx = TemplateContext::new();
+    let res = render_template_to_html_with_ssr("div\n  \"hello\"", &ctx, true).unwrap();
+    assert!(res.contains("<div>hello</div>"));
+    assert!(res.contains("__crepus_hydration__"));
+}
+
+#[test]
+fn render_template_to_html_with_ssr_no_markers() {
+    let ctx = TemplateContext::new();
+    let res = render_template_to_html_with_ssr("div\n  \"hello\"", &ctx, false).unwrap();
+    assert_eq!(res, "<div>hello</div>");
+}
+
+#[test]
+fn render_template_to_html_with_ssr_with_context() {
+    let mut ctx = TemplateContext::new();
+    ctx.set("name", "World");
+    let res = render_template_to_html_with_ssr("div\n  \"hello {name}\"", &ctx, true).unwrap();
+    assert!(res.contains("hello "));
+    assert!(res.contains("World"));
+    assert!(res.contains("__crepus_hydration__"));
+
+    let v = decode_hydration(&res);
+    assert_eq!(v["ctx"]["name"], "World");
+}
+
+#[test]
+fn render_template_to_html_with_ssr_error() {
+    let ctx = TemplateContext::new();
+    let res = render_template_to_html_with_ssr("{{#invalid}}", &ctx, true);
+    assert!(res.is_err());
+}
+
+#[test]
 fn head_extra_strips_malicious_script() {
     let ctx = TemplateContext::new();
     let doc = SsrDocument {
