@@ -163,7 +163,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
     }
 }
 
-pub fn scaffold_mobile_app(name: &str) {
+fn get_app_names(name: &str) -> (String, String) {
     let name_snake = name.replace(['-', ' '], "_");
     let name_pascal: String = name
         .split(['-', '_', ' '])
@@ -175,23 +175,27 @@ pub fn scaffold_mobile_app(name: &str) {
             }
         })
         .collect();
+    (name_snake, name_pascal)
+}
 
-    // Step 1: scaffold with generic names.
+fn scaffold_generic_app(name: &str) -> Option<PathBuf> {
     let _ = execute(NativeCommands::New {
         name: name.to_string(),
     });
 
     let root = PathBuf::from(name);
     if !root.exists() {
-        return;
+        return None;
     }
+    Some(root)
+}
 
-    // Step 2: regenerate fixture + codegen (before rename, uses nativeshell paths).
+fn generate_initial_code(root: &Path) {
     let template = PathBuf::from("views/main.crepus");
     let _ = execute(NativeCommands::Sync {
         args: SyncArgs {
             template: template.clone(),
-            dir: root.clone(),
+            dir: root.to_path_buf(),
             out: Vec::new(),
             no_defaults: false,
             component: None,
@@ -202,15 +206,16 @@ pub fn scaffold_mobile_app(name: &str) {
     });
     run_codegen_full(
         Some(template),
-        root.clone(),
+        root.to_path_buf(),
         None,
         None,
         Some("CrepusGeneratedView".into()),
         &[],
     )
     .unwrap_or_else(|e| ui::error(&e.to_string()));
+}
 
-    // Step 3: replace generic names with app-specific ones (after codegen).
+fn rewrite_template_files(root: &Path, name_snake: &str, name_pascal: &str) {
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
     let r_2 = format!("dev.crepuscularity.{name_snake}");
@@ -258,15 +263,15 @@ pub fn scaffold_mobile_app(name: &str) {
             }
         }
     }
+}
 
-    // Rename iOS app file.
+fn rename_app_directories(root: &Path, name_snake: &str, name_pascal: &str) {
     let old_swift = root.join("ios/App/CrepusMobileApp.swift");
     let new_swift = root.join(format!("ios/App/{name_pascal}App.swift"));
     if old_swift.exists() && old_swift != new_swift {
         let _ = fs::rename(&old_swift, &new_swift);
     }
 
-    // Rename Android package directory.
     let old_pkg = root.join("android/app/src/main/java/dev/crepuscularity/nativeshell");
     let new_pkg = root.join(format!(
         "android/app/src/main/java/dev/crepuscularity/{name_snake}"
@@ -275,7 +280,6 @@ pub fn scaffold_mobile_app(name: &str) {
         let _ = fs::rename(&old_pkg, &new_pkg);
     }
 
-    // Rename Cargo.lock package name if present.
     let cargo_lock = root.join("rust/Cargo.lock");
     if let Ok(content) = fs::read_to_string(&cargo_lock) {
         let updated = content.replace("crepus_mobile_actions", &format!("{name_snake}_actions"));
@@ -283,7 +287,9 @@ pub fn scaffold_mobile_app(name: &str) {
             let _ = fs::write(&cargo_lock, updated);
         }
     }
+}
 
+fn print_scaffold_success(name: &str, name_pascal: &str) {
     ui::success(&format!(
         "scaffolded mobile app '{}' at '{name}'",
         name_pascal,
@@ -296,6 +302,19 @@ pub fn scaffold_mobile_app(name: &str) {
     eprintln!("  # Regenerate + build:");
     eprintln!("  crepus mobile build --platform ios");
     eprintln!("  crepus mobile build --platform android");
+}
+
+pub fn scaffold_mobile_app(name: &str) {
+    let (name_snake, name_pascal) = get_app_names(name);
+
+    let Some(root) = scaffold_generic_app(name) else {
+        return;
+    };
+
+    generate_initial_code(&root);
+    rewrite_template_files(&root, &name_snake, &name_pascal);
+    rename_app_directories(&root, &name_snake, &name_pascal);
+    print_scaffold_success(name, &name_pascal);
 }
 
 pub fn run_codegen_full(
