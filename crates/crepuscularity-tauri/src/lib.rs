@@ -814,6 +814,82 @@ mod tests {
     }
 
     #[test]
+    fn rejects_nonexistent_project_root() {
+        let err = TauriProject::open("does_not_exist_ever").unwrap_err();
+        assert!(
+            err.contains("No such file or directory")
+                || err.contains("cannot find the file")
+                || err.contains("The system cannot find the file specified")
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_toml_config() {
+        let root = project("Tauri.toml", "malformed toml [ = = = ", "dist");
+        assert!(TauriProject::open(root.path()).is_err());
+    }
+
+    #[test]
+    fn config_resolution_precedence() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("src-tauri")).unwrap();
+
+        fs::write(
+            root.path().join("Tauri.toml"),
+            "[build]\ndistDir = '../dist-root-toml'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("tauri.conf.json"),
+            r#"{"build":{"distDir":"../dist-root-json"}}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            root.path().join("src-tauri").join("Tauri.toml"),
+            "[build]\ndistDir = '../dist-src-toml'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("src-tauri").join("tauri.conf.json5"),
+            "{ build: { distDir: '../dist-src-json5' } }",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("src-tauri").join("tauri.conf.json"),
+            r#"{"build":{"distDir":"../dist-src-json"}}"#,
+        )
+        .unwrap();
+
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-json"));
+
+        fs::remove_file(root.path().join("src-tauri").join("tauri.conf.json")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-json5"));
+
+        fs::remove_file(root.path().join("src-tauri").join("tauri.conf.json5")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-toml"));
+
+        fs::remove_dir_all(root.path().join("src-tauri")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-root-json"));
+    }
+
+    #[test]
     fn rejects_missing_build_object() {
         let root = project("tauri.conf.json", "{}", "dist");
         let err = TauriProject::open(root.path()).unwrap_err();
