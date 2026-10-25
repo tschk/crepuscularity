@@ -164,17 +164,7 @@ pub fn execute_mobile(cmd: MobileCommands) -> Result<(), CrepusCliError> {
 }
 
 pub fn scaffold_mobile_app(name: &str) {
-    let name_snake = name.replace(['-', ' '], "_");
-    let name_pascal: String = name
-        .split(['-', '_', ' '])
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
-                None => String::new(),
-            }
-        })
-        .collect();
+    let (name_snake, name_pascal) = get_app_names(name);
 
     // Step 1: scaffold with generic names.
     let _ = execute(NativeCommands::New {
@@ -209,7 +199,29 @@ pub fn scaffold_mobile_app(name: &str) {
         &[],
     )
     .unwrap_or_else(|e| ui::error(&e.to_string()));
+    replace_generic_names_in_files(&root, &name_snake, &name_pascal);
 
+    rename_app_specific_files(&root, &name_snake, &name_pascal);
+
+    print_scaffold_success(name, &name_pascal);
+}
+
+fn get_app_names(name: &str) -> (String, String) {
+    let name_snake = name.replace(['-', ' '], "_");
+    let name_pascal: String = name
+        .split(['-', '_', ' '])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    (name_snake, name_pascal)
+}
+
+fn replace_generic_names_in_files(root: &Path, name_snake: &str, name_pascal: &str) {
     // Step 3: replace generic names with app-specific ones (after codegen).
     let r_0 = format!("{name_snake}_actions");
     let r_1 = format!("dev.crepuscularity.{name_snake}");
@@ -258,7 +270,9 @@ pub fn scaffold_mobile_app(name: &str) {
             }
         }
     }
+}
 
+fn rename_app_specific_files(root: &Path, name_snake: &str, name_pascal: &str) {
     // Rename iOS app file.
     let old_swift = root.join("ios/App/CrepusMobileApp.swift");
     let new_swift = root.join(format!("ios/App/{name_pascal}App.swift"));
@@ -283,7 +297,9 @@ pub fn scaffold_mobile_app(name: &str) {
             let _ = fs::write(&cargo_lock, updated);
         }
     }
+}
 
+fn print_scaffold_success(name: &str, name_pascal: &str) {
     ui::success(&format!(
         "scaffolded mobile app '{}' at '{name}'",
         name_pascal,
