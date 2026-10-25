@@ -330,3 +330,66 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestData {
+        name: String,
+        value: i32,
+        is_active: bool,
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_js_and_from_js() {
+        let data = TestData {
+            name: "test".to_string(),
+            value: 42,
+            is_active: true,
+        };
+
+        // Test serialization to JsValue
+        let js_val: JsValue = to_js(&data).unwrap();
+        assert!(!js_val.is_undefined());
+        assert!(!js_val.is_null());
+
+        // Test deserialization from JsValue back to TestData
+        let deserialized: TestData = from_js(js_val).unwrap();
+        assert_eq!(data, deserialized);
+    }
+
+    #[wasm_bindgen_test]
+    fn test_from_js_invalid_type() {
+        // Try to deserialize a number into our struct, should fail
+        let js_num = JsValue::from_f64(42.0);
+        let result: Result<TestData> = from_js(js_num);
+        assert!(result.is_err());
+
+        if let Err(BrowserError::Serde(msg)) = result {
+            // Error message should exist but format depends on serde-wasm-bindgen
+            assert!(!msg.is_empty());
+        } else {
+            panic!("Expected BrowserError::Serde, got {:?}", result);
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn test_to_js_primitives() {
+        let int_val: i32 = -42;
+        let js_int = to_js(&int_val).unwrap();
+        assert_eq!(js_int.as_f64().unwrap(), -42.0);
+
+        let string_val = "hello world".to_string();
+        let js_string = to_js(&string_val).unwrap();
+        assert_eq!(js_string.as_string().unwrap(), "hello world");
+
+        let bool_val = true;
+        let js_bool = to_js(&bool_val).unwrap();
+        assert_eq!(js_bool.as_bool().unwrap(), true);
+    }
+}
