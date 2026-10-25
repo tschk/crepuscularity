@@ -76,3 +76,70 @@ pub fn flatten_tree(nodes: &[BookmarkTreeNode]) -> Vec<BookmarkTreeNode> {
     }
     flat
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_node(
+        id: &str,
+        url: Option<&str>,
+        children: Option<Vec<BookmarkTreeNode>>,
+    ) -> BookmarkTreeNode {
+        BookmarkTreeNode {
+            id: id.to_string(),
+            url: url.map(|s| s.to_string()),
+            children,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_flatten_empty_tree() {
+        let nodes = vec![];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_only_folders() {
+        let nodes = vec![create_node(
+            "1",
+            None,
+            Some(vec![
+                create_node("2", None, None),
+                create_node("3", None, Some(vec![create_node("4", None, None)])),
+            ]),
+        )];
+        let flat = flatten_tree(&nodes);
+        assert!(flat.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_tree_with_bookmarks() {
+        let nodes = vec![
+            create_node(
+                "1",
+                None,
+                Some(vec![
+                    create_node("2", Some("http://example.com"), None),
+                    create_node(
+                        "3",
+                        None,
+                        Some(vec![
+                            create_node("4", Some("http://example.org"), None),
+                            create_node("5", Some("http://example.net"), None),
+                        ]),
+                    ),
+                ]),
+            ),
+            create_node("6", Some("http://example.edu"), None),
+        ];
+        let flat = flatten_tree(&nodes);
+        assert_eq!(flat.len(), 4);
+        assert_eq!(flat[0].id, "2");
+        assert_eq!(flat[1].id, "4");
+        assert_eq!(flat[2].id, "5");
+        assert_eq!(flat[3].id, "6");
+    }
+}
