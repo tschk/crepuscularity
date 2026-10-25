@@ -272,24 +272,7 @@ pub fn execute_run(opts: RunOptions) {
         });
     }
 
-    let mut by_suite: HashMap<String, Vec<&BenchTarget>> = HashMap::new();
-    for t in &file.targets {
-        if let Some(ref f) = suite_filter {
-            if f != "all" && t.suite != *f {
-                continue;
-            }
-        }
-        if let Some(ref ids) = only {
-            if !ids.contains(&t.id) {
-                continue;
-            }
-        }
-        if let Some(vec) = by_suite.get_mut(&t.suite) {
-            vec.push(t);
-        } else {
-            by_suite.insert(t.suite.clone(), vec![t]);
-        }
-    }
+    let mut by_suite = group_targets_by_suite(&file.targets, &suite_filter, &only);
 
     let mut json_suites: Vec<JsonSuite> = Vec::new();
     let mut suite_keys: Vec<String> = by_suite.keys().cloned().collect();
@@ -309,135 +292,20 @@ pub fn execute_run(opts: RunOptions) {
         );
     }
 
+    let run_ctx = RunContext {
+        repo: &repo,
+        work_base: &work_base,
+        dry_run,
+        json_out,
+        verbose,
+        measure_memory,
+    };
+
     for suite_id in suite_keys {
         let Some(targets) = by_suite.get(&suite_id) else {
             continue;
         };
-        if !json_out {
-            eprintln!();
-            eprintln!(
-                "{} {}",
-                style("suite").cyan().bold(),
-                style(&suite_id).white().bold()
-            );
-        }
-
-        let mut json_targets: Vec<JsonTargetResult> = Vec::new();
-
-        for t in targets {
-            let target_dir = work_base.join(&t.suite).join(&t.id);
-            if !dry_run {
-                std::fs::create_dir_all(&target_dir).unwrap_or_else(|e| {
-                    ui::error(&format!("could not create {}: {e}", target_dir.display()));
-                });
-            }
-
-            let step_total = planned_step_count(t);
-
-            let mut vars = HashMap::new();
-            vars.insert("REPO".into(), repo.display().to_string());
-            vars.insert("WORK".into(), target_dir.display().to_string());
-            vars.insert("TARGET".into(), t.id.clone());
-
-            if !check_requires(&t.requires) {
-                let msg = "missing prerequisite command";
-                if t.optional {
-                    if !json_out {
-                        ui::warning(&format!("{} — skipped ({msg})", style(&t.label).yellow()));
-                    }
-                    json_targets.push(json_target_result(
-                        t.id.clone(),
-                        t.label.clone(),
-                        t.optional,
-                        true,
-                        Some(msg.into()),
-                        vec![],
-                        0,
-                    ));
-                    continue;
-                } else {
-                    ui::error(msg);
-                }
-            }
-
-            if !json_out {
-                eprintln!("  {} {}", ui::arrow(), style(&t.label).cyan().bold());
-                if verbose {
-                    eprintln!(
-                        "      {} id={}  work_dir={}",
-                        style("target").dim(),
-                        style(&t.id).dim(),
-                        style(target_dir.display().to_string()).dim()
-                    );
-                }
-            }
-
-            let t0 = Instant::now();
-            let ctx = StepRunCtx {
-                target_dir: &target_dir,
-                vars: &vars,
-                dry_run,
-                json_out,
-                verbose,
-                measure_memory,
-                step_total,
-            };
-            let (ok, err, step_results) = if let Some(ref b) = t.builtin {
-                run_builtin(b, t, &repo, &ctx)
-            } else {
-                run_steps(&t.steps, ctx)
-            };
-            let total = t0.elapsed().as_millis();
-
-            if !ok {
-                let msg = err.unwrap_or_else(|| "failed".into());
-                if t.optional {
-                    if !json_out && !dry_run && verbose {
-                        print_target_wall_footer(total, &step_results);
-                    }
-                    if !json_out {
-                        ui::warning(&format!("{} — {msg}", style(&t.label).yellow()));
-                    }
-                    json_targets.push(json_target_result(
-                        t.id.clone(),
-                        t.label.clone(),
-                        t.optional,
-                        true,
-                        Some(msg),
-                        step_results,
-                        total,
-                    ));
-                } else {
-                    if !json_out && !dry_run && verbose {
-                        print_target_wall_footer(total, &step_results);
-                    }
-                    if !json_out {
-                        eprintln!("    {} {}", ui::err(), style(&t.label).red());
-                    }
-                    ui::error(&msg);
-                }
-                continue;
-            }
-
-            if !json_out && !dry_run && verbose {
-                print_target_wall_footer(total, &step_results);
-            }
-
-            json_targets.push(json_target_result(
-                t.id.clone(),
-                t.label.clone(),
-                t.optional,
-                false,
-                None,
-                step_results,
-                total,
-            ));
-        }
-
-        json_suites.push(JsonSuite {
-            id: suite_id,
-            targets: json_targets,
-        });
+        json_suites.push(execute_suite_targets(suite_id, targets, &run_ctx));
     }
 
     let summary = compute_run_summary(&json_suites);
@@ -1864,6 +1732,173 @@ fn print_bench_stack_notes(selected: &[&BenchTarget], json_out: bool) {
             style("note: Tauri needs Rust + Bun/OS prerequisites — see https://tauri.app/start/prerequisites/")
                 .dim()
         );
+    }
+}
+
+fn group_targets_by_suite<'a>(
+    targets: &'a [BenchTarget],
+    suite_filter: &Option<String>,
+    only: &Option<Vec<String>>,
+) -> HashMap<String, Vec<&'a BenchTarget>> {
+    let mut by_suite: HashMap<String, Vec<&BenchTarget>> = HashMap::new();
+    for t in targets {
+        if let Some(ref f) = suite_filter {
+            if f != "all" && t.suite != *f {
+                continue;
+            }
+        }
+        if let Some(ref ids) = only {
+            if !ids.contains(&t.id) {
+                continue;
+            }
+        }
+        if let Some(vec) = by_suite.get_mut(&t.suite) {
+            vec.push(t);
+        } else {
+            by_suite.insert(t.suite.clone(), vec![t]);
+        }
+    }
+    by_suite
+}
+
+struct RunContext<'a> {
+    repo: &'a Path,
+    work_base: &'a Path,
+    dry_run: bool,
+    json_out: bool,
+    verbose: bool,
+    measure_memory: bool,
+}
+
+fn execute_suite_targets(
+    suite_id: String,
+    targets: &[&BenchTarget],
+    ctx: &RunContext,
+) -> JsonSuite {
+    if !ctx.json_out {
+        eprintln!();
+        eprintln!(
+            "{} {}",
+            style("suite").cyan().bold(),
+            style(&suite_id).white().bold()
+        );
+    }
+
+    let mut json_targets: Vec<JsonTargetResult> = Vec::new();
+
+    for t in targets {
+        let target_dir = ctx.work_base.join(&t.suite).join(&t.id);
+        if !ctx.dry_run {
+            std::fs::create_dir_all(&target_dir).unwrap_or_else(|e| {
+                ui::error(&format!("could not create {}: {e}", target_dir.display()));
+            });
+        }
+
+        let step_total = planned_step_count(t);
+
+        let mut vars = HashMap::new();
+        vars.insert("REPO".into(), ctx.repo.display().to_string());
+        vars.insert("WORK".into(), target_dir.display().to_string());
+        vars.insert("TARGET".into(), t.id.clone());
+
+        if !check_requires(&t.requires) {
+            let msg = "missing prerequisite command";
+            if t.optional {
+                if !ctx.json_out {
+                    ui::warning(&format!("{} — skipped ({msg})", style(&t.label).yellow()));
+                }
+                json_targets.push(json_target_result(
+                    t.id.clone(),
+                    t.label.clone(),
+                    t.optional,
+                    true,
+                    Some(msg.into()),
+                    vec![],
+                    0,
+                ));
+                continue;
+            } else {
+                ui::error(msg);
+            }
+        }
+
+        if !ctx.json_out {
+            eprintln!("  {} {}", ui::arrow(), style(&t.label).cyan().bold());
+            if ctx.verbose {
+                eprintln!(
+                    "      {} id={}  work_dir={}",
+                    style("target").dim(),
+                    style(&t.id).dim(),
+                    style(target_dir.display().to_string()).dim()
+                );
+            }
+        }
+
+        let t0 = Instant::now();
+        let step_ctx = StepRunCtx {
+            target_dir: &target_dir,
+            vars: &vars,
+            dry_run: ctx.dry_run,
+            json_out: ctx.json_out,
+            verbose: ctx.verbose,
+            measure_memory: ctx.measure_memory,
+            step_total,
+        };
+        let (ok, err, step_results) = if let Some(ref b) = t.builtin {
+            run_builtin(b, t, ctx.repo, &step_ctx)
+        } else {
+            run_steps(&t.steps, step_ctx)
+        };
+        let total = t0.elapsed().as_millis();
+
+        if !ok {
+            let msg = err.unwrap_or_else(|| "failed".into());
+            if t.optional {
+                if !ctx.json_out && !ctx.dry_run && ctx.verbose {
+                    print_target_wall_footer(total, &step_results);
+                }
+                if !ctx.json_out {
+                    ui::warning(&format!("{} — {msg}", style(&t.label).yellow()));
+                }
+                json_targets.push(json_target_result(
+                    t.id.clone(),
+                    t.label.clone(),
+                    t.optional,
+                    true,
+                    Some(msg),
+                    step_results,
+                    total,
+                ));
+            } else {
+                if !ctx.json_out && !ctx.dry_run && ctx.verbose {
+                    print_target_wall_footer(total, &step_results);
+                }
+                if !ctx.json_out {
+                    eprintln!("    {} {}", ui::err(), style(&t.label).red());
+                }
+                ui::error(&msg);
+            }
+            continue;
+        }
+
+        if !ctx.json_out && !ctx.dry_run && ctx.verbose {
+            print_target_wall_footer(total, &step_results);
+        }
+
+        json_targets.push(json_target_result(
+            t.id.clone(),
+            t.label.clone(),
+            t.optional,
+            false,
+            None,
+            step_results,
+            total,
+        ));
+    }
+
+    JsonSuite {
+        id: suite_id,
+        targets: json_targets,
     }
 }
 
