@@ -351,4 +351,42 @@ device = "STM32F411"
         assert!(artifacts[0].contents.contains(r#"<screen name="Dash">"#));
         assert!(artifacts[0].contents.contains("STM32F411"));
     }
+
+    #[test]
+    fn parse_manifest_valid_toml() {
+        let toml_str = r#"
+[[targets]]
+type = "lvgl"
+id = "dash"
+template = "ui.crepus"
+out = "dist/dash.xml"
+name = "Dash"
+root = "screen"
+
+[targets.vars]
+device = "STM32F411"
+"#;
+        let manifest = Manifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.targets.len(), 1);
+        assert_eq!(manifest.targets[0].target_type, "lvgl");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("dash"));
+    }
+
+    #[test]
+    fn parse_manifest_invalid_toml() {
+        let toml_str = r#"
+[[targets]]
+type = "lvgl"
+invalid_syntax
+"#;
+        let manifest = Manifest::parse(toml_str);
+        assert!(manifest.is_err());
+    }
+
+    #[test]
+    fn parse_manifest_empty() {
+        let toml_str = "";
+        let manifest = Manifest::parse(toml_str).unwrap();
+        assert_eq!(manifest.targets.len(), 0);
+    }
 }
