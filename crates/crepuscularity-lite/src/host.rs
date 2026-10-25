@@ -533,7 +533,7 @@ mod tests {
                 "text": "Hello"
             }]
         }))
-        .unwrap();
+        .expect("failed to parse HostNode from json");
 
         let host = HostState::default();
         let snap = host.render_tree(tree);
