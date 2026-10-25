@@ -636,7 +636,12 @@ mod tests {
     }
     #[test]
     fn nested_renders_are_disjoint_and_runtime_alias_hygienic() {
-        let out=lower("const __crepusSvelteSnippetRuntime=0;function row(value){return <p>{value}</p>}return <Render call={()=> (row(<Render call={()=> (row(1))}/>))}/>",MoonshineModuleTarget::Dom).unwrap();
+        let source = concat!(
+            "const __crepusSvelteSnippetRuntime=0;",
+            "function row(value){return <p>{value}</p>}",
+            "return <Render call={()=> (row(<Render call={()=> (row(1))}/>))}/>"
+        );
+        let out = lower(source, MoonshineModuleTarget::Dom).unwrap();
         assert!(out.contains("mapArray as __crepusSvelteSnippetRuntime_"));
         assert_eq!(out.matches("get={()=> (row)}").count(), 2);
         assert!(!out.contains("call={()=>"));
