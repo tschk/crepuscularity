@@ -532,17 +532,25 @@ fn apply_typography(d: Div, class: &str) -> Result<Div, Div> {
 
 #[allow(clippy::result_large_err)]
 fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
-    Ok(match class {
-        // ── Border style ──
-        "border-dashed" => d.border_dashed(),
+    apply_border_width(d, class)
+        .or_else(|d| apply_border_radius(d, class))
+        .or_else(|d| {
+            if class == "border-dashed" {
+                Ok(d.border_dashed())
+            } else {
+                Err(d)
+            }
+        })
+}
 
-        // ── Border width ──
+#[allow(clippy::result_large_err)]
+fn apply_border_width(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         "border" => d.border_1(),
         "border-0" => d.border_0(),
         "border-2" => d.border_2(),
         "border-4" => d.border_4(),
         "border-8" => d.border_8(),
-        // Per-side border width
         "border-t" => d.border_t_1(),
         "border-t-0" => d.border_t_0(),
         "border-t-2" => d.border_t_2(),
@@ -563,8 +571,13 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "border-r-2" => d.border_r_2(),
         "border-r-4" => d.border_r_4(),
         "border-r-8" => d.border_r_8(),
+        _ => return Err(d),
+    })
+}
 
-        // ── Border radius ──
+#[allow(clippy::result_large_err)]
+fn apply_border_radius(d: Div, class: &str) -> Result<Div, Div> {
+    Ok(match class {
         "rounded-none" => d.rounded_none(),
         "rounded-sm" => d.rounded_sm(),
         "rounded" | "rounded-md" => d.rounded_md(),
@@ -573,7 +586,6 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "rounded-2xl" => d.rounded_2xl(),
         "rounded-3xl" => d.rounded_3xl(),
         "rounded-full" => d.rounded_full(),
-        // Per-side radius
         "rounded-t-none" => d.rounded_t_none(),
         "rounded-t-sm" => d.rounded_t_sm(),
         "rounded-t" | "rounded-t-md" => d.rounded_t_md(),
@@ -606,7 +618,6 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "rounded-r-2xl" => d.rounded_r_2xl(),
         "rounded-r-3xl" => d.rounded_r_3xl(),
         "rounded-r-full" => d.rounded_r_full(),
-        // Per-corner radius
         "rounded-tl-none" => d.rounded_tl_none(),
         "rounded-tl-sm" => d.rounded_tl_sm(),
         "rounded-tl" | "rounded-tl-md" => d.rounded_tl_md(),
@@ -639,7 +650,6 @@ fn apply_borders(d: Div, class: &str) -> Result<Div, Div> {
         "rounded-br-2xl" => d.rounded_br_2xl(),
         "rounded-br-3xl" => d.rounded_br_3xl(),
         "rounded-br-full" => d.rounded_br_full(),
-
         _ => return Err(d),
     })
 }
