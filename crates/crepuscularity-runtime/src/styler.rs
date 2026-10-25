@@ -825,419 +825,451 @@ fn apply_misc(d: Div, class: &str) -> Result<Div, Div> {
 type LengthPropEntry = (&'static str, fn(Div, Length) -> Div);
 type DefiniteLengthPropEntry = (&'static str, fn(Div, DefiniteLength) -> Div);
 
-fn apply_dynamic(d: Div, class: &str) -> Div {
-    // ── Length properties (support auto) ──
-    const LENGTH_PROPS: &[LengthPropEntry] = &[
-        ("w-", |d, v| d.w(v)),
-        ("h-", |d, v| d.h(v)),
-        ("min-w-", |d, v| d.min_w(v)),
-        ("min-h-", |d, v| d.min_h(v)),
-        ("max-w-", |d, v| d.max_w(v)),
-        ("max-h-", |d, v| d.max_h(v)),
-        ("m-", |d, v| d.m(v)),
-        ("mx-", |d, v| d.mx(v)),
-        ("my-", |d, v| d.my(v)),
-        ("mt-", |d, v| d.mt(v)),
-        ("mb-", |d, v| d.mb(v)),
-        ("ml-", |d, v| d.ml(v)),
-        ("mr-", |d, v| d.mr(v)),
-        ("top-", |d, v| d.top(v)),
-        ("bottom-", |d, v| d.bottom(v)),
-        ("left-", |d, v| d.left(v)),
-        ("right-", |d, v| d.right(v)),
-        ("inset-", |d, v| d.inset(v)),
-        ("size-", |d, v| d.size(v)),
-        ("basis-", |d, v| d.flex_basis(v)),
-    ];
+macro_rules! apply_length_properties {
+    ($d:ident, $class:ident) => {
+        // ── Length properties (support auto) ──
+        const LENGTH_PROPS: &[LengthPropEntry] = &[
+            ("w-", |d, v| d.w(v)),
+            ("h-", |d, v| d.h(v)),
+            ("min-w-", |d, v| d.min_w(v)),
+            ("min-h-", |d, v| d.min_h(v)),
+            ("max-w-", |d, v| d.max_w(v)),
+            ("max-h-", |d, v| d.max_h(v)),
+            ("m-", |d, v| d.m(v)),
+            ("mx-", |d, v| d.mx(v)),
+            ("my-", |d, v| d.my(v)),
+            ("mt-", |d, v| d.mt(v)),
+            ("mb-", |d, v| d.mb(v)),
+            ("ml-", |d, v| d.ml(v)),
+            ("mr-", |d, v| d.mr(v)),
+            ("top-", |d, v| d.top(v)),
+            ("bottom-", |d, v| d.bottom(v)),
+            ("left-", |d, v| d.left(v)),
+            ("right-", |d, v| d.right(v)),
+            ("inset-", |d, v| d.inset(v)),
+            ("size-", |d, v| d.size(v)),
+            ("basis-", |d, v| d.flex_basis(v)),
+        ];
 
-    for (prefix, apply) in LENGTH_PROPS {
-        if let Some(rest) = class.strip_prefix(prefix) {
-            if let Some(len) = parse_length(rest) {
-                if matches!(
-                    *prefix,
-                    "w-" | "h-" | "min-w-" | "min-h-" | "max-w-" | "max-h-" | "size-" | "basis-"
-                ) && matches!(len, Length::Definite(value) if value.to_pixels(px(1.0).into(), px(1.0)) < px(0.0))
-                {
-                    return d;
-                }
-                return apply(d, len);
-            }
-        }
-    }
-
-    // ── DefiniteLength properties (no auto) ──
-    const DEFINITE_PROPS: &[DefiniteLengthPropEntry] = &[
-        ("p-", |d, v| d.p(v)),
-        ("px-", |d, v| d.px(v)),
-        ("py-", |d, v| d.py(v)),
-        ("pt-", |d, v| d.pt(v)),
-        ("pb-", |d, v| d.pb(v)),
-        ("pl-", |d, v| d.pl(v)),
-        ("pr-", |d, v| d.pr(v)),
-        ("gap-", |d, v| d.gap(v)),
-        ("gap-x-", |d, v| d.gap_x(v)),
-        ("gap-y-", |d, v| d.gap_y(v)),
-    ];
-
-    for (prefix, apply) in DEFINITE_PROPS {
-        if let Some(rest) = class.strip_prefix(prefix) {
-            if let Some(len) = parse_definite_length(rest) {
-                if len.to_pixels(px(1.0).into(), px(1.0)) < px(0.0) {
-                    return d;
-                }
-                return apply(d, len);
-            }
-        }
-    }
-
-    // ── Arbitrary border radius: rounded-[Npx], rounded-t-[Npx], etc. ──
-    for (prefix, apply_fn) in &[
-        (
-            "rounded-tl-[",
-            Div::rounded_tl as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-tr-[",
-            Div::rounded_tr as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-bl-[",
-            Div::rounded_bl as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-br-[",
-            Div::rounded_br as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-t-[",
-            Div::rounded_t as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-b-[",
-            Div::rounded_b as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-l-[",
-            Div::rounded_l as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "rounded-r-[",
-            Div::rounded_r as fn(Div, AbsoluteLength) -> Div,
-        ),
-        ("rounded-[", Div::rounded as fn(Div, AbsoluteLength) -> Div),
-    ] {
-        if let Some(rest) = class.strip_prefix(prefix) {
-            if let Some(inner) = rest.strip_suffix(']') {
-                if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+        for (prefix, apply) in LENGTH_PROPS {
+            if let Some(rest) = $class.strip_prefix(prefix) {
+                if let Some(len) = parse_length(rest) {
+                    if matches!(
+                        *prefix,
+                        "w-" | "h-" | "min-w-" | "min-h-" | "max-w-" | "max-h-" | "size-" | "basis-"
+                    ) && matches!(len, Length::Definite(value) if value.to_pixels(px(1.0).into(), px(1.0)) < px(0.0))
+                    {
+                        return $d;
+                    }
+                    return apply($d, len);
                 }
             }
         }
-    }
+    };
+}
 
-    // ── Arbitrary border widths: border-t-[Npx], border-[Npx] etc. ──
-    for (prefix, apply_fn) in &[
-        (
-            "border-t-[",
-            Div::border_t as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "border-b-[",
-            Div::border_b as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "border-l-[",
-            Div::border_l as fn(Div, AbsoluteLength) -> Div,
-        ),
-        (
-            "border-r-[",
-            Div::border_r as fn(Div, AbsoluteLength) -> Div,
-        ),
-        ("border-[", Div::border as fn(Div, AbsoluteLength) -> Div),
-    ] {
-        if let Some(rest) = class.strip_prefix(prefix) {
-            if let Some(inner) = rest.strip_suffix(']') {
-                if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                    return apply_fn(d, abs);
+macro_rules! apply_definite_length_properties {
+    ($d:ident, $class:ident) => {
+        // ── DefiniteLength properties (no auto) ──
+        const DEFINITE_PROPS: &[DefiniteLengthPropEntry] = &[
+            ("p-", |d, v| d.p(v)),
+            ("px-", |d, v| d.px(v)),
+            ("py-", |d, v| d.py(v)),
+            ("pt-", |d, v| d.pt(v)),
+            ("pb-", |d, v| d.pb(v)),
+            ("pl-", |d, v| d.pl(v)),
+            ("pr-", |d, v| d.pr(v)),
+            ("gap-", |d, v| d.gap(v)),
+            ("gap-x-", |d, v| d.gap_x(v)),
+            ("gap-y-", |d, v| d.gap_y(v)),
+        ];
+
+        for (prefix, apply) in DEFINITE_PROPS {
+            if let Some(rest) = $class.strip_prefix(prefix) {
+                if let Some(len) = parse_definite_length(rest) {
+                    if len.to_pixels(px(1.0).into(), px(1.0)) < px(0.0) {
+                        return $d;
+                    }
+                    return apply($d, len);
                 }
             }
         }
-    }
+    };
+}
 
-    // ── Grid placement: col-span-N, col-start-N, col-end-N, row-span-N, etc. ──
-    if let Some(rest) = class.strip_prefix("col-span-") {
-        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.col_span(n);
+macro_rules! apply_border_radius_properties {
+    ($d:ident, $class:ident) => {
+        // ── Arbitrary border radius: rounded-[Npx], rounded-t-[Npx], etc. ──
+        for (prefix, apply_fn) in &[
+            (
+                "rounded-tl-[",
+                Div::rounded_tl as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-tr-[",
+                Div::rounded_tr as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-bl-[",
+                Div::rounded_bl as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-br-[",
+                Div::rounded_br as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-t-[",
+                Div::rounded_t as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-b-[",
+                Div::rounded_b as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-l-[",
+                Div::rounded_l as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "rounded-r-[",
+                Div::rounded_r as fn(Div, AbsoluteLength) -> Div,
+            ),
+            ("rounded-[", Div::rounded as fn(Div, AbsoluteLength) -> Div),
+        ] {
+            if let Some(rest) = $class.strip_prefix(prefix) {
+                if let Some(inner) = rest.strip_suffix(']') {
+                    if let Some(abs) = parse_nonnegative_absolute_length(inner) {
+                        return apply_fn($d, abs);
+                    }
+                }
+            }
         }
-    }
-    if let Some(rest) = class.strip_prefix("col-start-") {
-        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_start(n);
-        }
-    }
-    if let Some(rest) = class.strip_prefix("col-end-") {
-        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.col_end(n);
-        }
-    }
-    if let Some(rest) = class.strip_prefix("row-span-") {
-        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.row_span(n);
-        }
-    }
-    if let Some(rest) = class.strip_prefix("row-start-") {
-        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_start(n);
-        }
-    }
-    if let Some(rest) = class.strip_prefix("row-end-") {
-        if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
-            return d.row_end(n);
-        }
-    }
-    // Dynamic grid-cols-N and grid-rows-N beyond the static 1-12
-    if let Some(rest) = class.strip_prefix("grid-cols-") {
-        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_cols(n);
-        }
-    }
-    if let Some(rest) = class.strip_prefix("grid-rows-") {
-        if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
-            return d.grid_rows(n);
-        }
-    }
+    };
+}
 
-    // ── tracking-* (letter-spacing) — gpui-ce provides letter_spacing natively ──
-    {
-        match class {
-            "tracking-tighter" => return d.letter_spacing(px(-2.0)),
-            "tracking-tight" => return d.letter_spacing(px(-1.0)),
-            "tracking-normal" => return d.letter_spacing(px(0.)),
-            "tracking-wide" => return d.letter_spacing(px(1.5)),
-            "tracking-wider" => return d.letter_spacing(px(3.0)),
-            "tracking-widest" => return d.letter_spacing(px(5.0)),
+macro_rules! apply_border_width_properties {
+    ($d:ident, $class:ident) => {
+        // ── Arbitrary border widths: border-t-[Npx], border-[Npx] etc. ──
+        for (prefix, apply_fn) in &[
+            (
+                "border-t-[",
+                Div::border_t as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "border-b-[",
+                Div::border_b as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "border-l-[",
+                Div::border_l as fn(Div, AbsoluteLength) -> Div,
+            ),
+            (
+                "border-r-[",
+                Div::border_r as fn(Div, AbsoluteLength) -> Div,
+            ),
+            ("border-[", Div::border as fn(Div, AbsoluteLength) -> Div),
+        ] {
+            if let Some(rest) = $class.strip_prefix(prefix) {
+                if let Some(inner) = rest.strip_suffix(']') {
+                    if let Some(abs) = parse_nonnegative_absolute_length(inner) {
+                        return apply_fn($d, abs);
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! apply_grid_properties {
+    ($d:ident, $class:ident) => {
+        // ── Grid placement: col-span-N, col-start-N, col-end-N, row-span-N, etc. ──
+        if let Some(rest) = $class.strip_prefix("col-span-") {
+            if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
+                return $d.col_span(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("col-start-") {
+            if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
+                return $d.col_start(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("col-end-") {
+            if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
+                return $d.col_end(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("row-span-") {
+            if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
+                return $d.row_span(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("row-start-") {
+            if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
+                return $d.row_start(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("row-end-") {
+            if let Some(n) = rest.parse::<i16>().ok().filter(|n| *n != 0) {
+                return $d.row_end(n);
+            }
+        }
+        // Dynamic grid-cols-N and grid-rows-N beyond the static 1-12
+        if let Some(rest) = $class.strip_prefix("grid-cols-") {
+            if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
+                return $d.grid_cols(n);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("grid-rows-") {
+            if let Some(n) = rest.parse::<u16>().ok().filter(|n| *n > 0) {
+                return $d.grid_rows(n);
+            }
+        }
+    };
+}
+
+macro_rules! apply_typography_and_general_properties {
+    ($d:ident, $class:ident) => {
+        // ── tracking-* (letter-spacing) — gpui-ce provides letter_spacing natively ──
+        match $class {
+            "tracking-tighter" => return $d.letter_spacing(px(-2.0)),
+            "tracking-tight" => return $d.letter_spacing(px(-1.0)),
+            "tracking-normal" => return $d.letter_spacing(px(0.)),
+            "tracking-wide" => return $d.letter_spacing(px(1.5)),
+            "tracking-wider" => return $d.letter_spacing(px(3.0)),
+            "tracking-widest" => return $d.letter_spacing(px(5.0)),
             _ => {}
         }
-        if let Some(rest) = class.strip_prefix("tracking-[") {
+        if let Some(rest) = $class.strip_prefix("tracking-[") {
             if let Some(inner) = rest.strip_suffix(']') {
                 if let Some(abs) = parse_absolute_length(inner) {
                     let px_val = abs.to_pixels(px(16.0));
                     if !f32::from(px_val).is_finite() {
-                        return d;
+                        return $d;
                     }
-                    return d.letter_spacing(px_val);
+                    return $d.letter_spacing(px_val);
                 }
             }
         }
-    }
 
-    // ── aspect-[N/M] or aspect-[N] — arbitrary aspect ratio ──
-    if let Some(rest) = class.strip_prefix("aspect-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            let ratio = if let Some((num, den)) = inner.split_once('/') {
-                let w = num.parse::<f32>().ok();
-                let h = den.parse::<f32>().ok();
-                w.zip(h)
-                    .filter(|(w, h)| w.is_finite() && *w > 0.0 && h.is_finite() && *h > 0.0)
-                    .map(|(w, h)| w / h)
-            } else {
-                inner.parse::<f32>().ok()
-            };
-            if let Some(r) = ratio.filter(|r| r.is_finite() && *r > 0.0) {
-                let mut d = d;
-                d.style().aspect_ratio = Some(r);
-                return d;
-            }
-        }
-    }
-
-    // ── ring-[Npx] — arbitrary ring width ──
-    if let Some(rest) = class.strip_prefix("ring-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(abs) = parse_absolute_length(inner) {
-                let spread = abs.to_pixels(px(16.0));
-                if !f32::from(spread).is_finite() {
-                    return d;
-                }
-                return apply_ring(d, spread, false);
-            }
-        }
-    }
-
-    // ── line-clamp-N ──
-    if let Some(rest) = class.strip_prefix("line-clamp-") {
-        if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
-            return d.line_clamp(n);
-        }
-    }
-
-    // ── font-['Family'] or font-[Family] ──
-    if let Some(rest) = class.strip_prefix("font-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
-            if !family.trim().is_empty() {
-                return d.font_family(family);
-            }
-        }
-    }
-
-    // ── text-[size] — arbitrary text size ──
-    if let Some(rest) = class.strip_prefix("text-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            // Color values fall through to the shared color-family handling.
-            if let Some(len) = parse_nonnegative_absolute_length(inner) {
-                return d.text_size(len);
-            }
-        }
-    }
-
-    // ── leading-[value] — arbitrary line height ──
-    if let Some(rest) = class.strip_prefix("leading-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if let Some(abs) = parse_nonnegative_absolute_length(inner) {
-                return d.line_height(abs);
-            }
-        }
-    }
-
-    // ── opacity-N ──
-    if let Some(rest) = class.strip_prefix("opacity-") {
-        if let Some(opacity) = parse_opacity_percentage(rest) {
-            return d.opacity(opacity);
-        }
-    }
-
-    // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
-    if let Some(rest) = class.strip_prefix("decoration-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if inner.starts_with('#') {
-                if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_decoration_color(color);
+        // ── aspect-[N/M] or aspect-[N] — arbitrary aspect ratio ──
+        if let Some(rest) = $class.strip_prefix("aspect-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                let ratio = if let Some((num, den)) = inner.split_once('/') {
+                    let w = num.parse::<f32>().ok();
+                    let h = den.parse::<f32>().ok();
+                    w.zip(h)
+                        .filter(|(w, h)| w.is_finite() && *w > 0.0 && h.is_finite() && *h > 0.0)
+                        .map(|(w, h)| w / h)
+                } else {
+                    inner.parse::<f32>().ok()
+                };
+                if let Some(r) = ratio.filter(|r| r.is_finite() && *r > 0.0) {
+                    let mut d2 = $d;
+                    d2.style().aspect_ratio = Some(r);
+                    return d2;
                 }
             }
         }
-    }
-    if let Some(rest) = class.strip_prefix("decoration-") {
-        // decoration-family-shade
-        if let Some(dash_pos) = rest.rfind('-') {
-            let family = &rest[..dash_pos];
-            let shade = &rest[dash_pos + 1..];
-            if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_decoration_color(rgb(hex));
-            }
-        }
-    }
 
-    // ── text-bg: text-bg-[#hex] or text-bg-family-shade ──
-    if let Some(rest) = class.strip_prefix("text-bg-[") {
-        if let Some(inner) = rest.strip_suffix(']') {
-            if inner.starts_with('#') {
-                if let Some(color) = parse_runtime_hex_color(inner) {
-                    return d.text_bg(color);
+        // ── ring-[Npx] — arbitrary ring width ──
+        if let Some(rest) = $class.strip_prefix("ring-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                if let Some(abs) = parse_absolute_length(inner) {
+                    let spread = abs.to_pixels(px(16.0));
+                    if !f32::from(spread).is_finite() {
+                        return $d;
+                    }
+                    return apply_ring($d, spread, false);
                 }
             }
         }
-    }
-    if let Some(rest) = class.strip_prefix("text-bg-") {
-        if let Some(dash_pos) = rest.rfind('-') {
-            let family = &rest[..dash_pos];
-            let shade = &rest[dash_pos + 1..];
-            if let Some(hex) = tailwind_color(family, shade) {
-                return d.text_bg(rgb(hex));
+
+        // ── line-clamp-N ──
+        if let Some(rest) = $class.strip_prefix("line-clamp-") {
+            if let Some(n) = rest.parse::<usize>().ok().filter(|n| *n > 0) {
+                return $d.line_clamp(n);
             }
         }
-    }
 
-    // ── Color families: bg-{family}-{shade}, text-{family}-{shade}, border-{family}-{shade} ──
-    for (prefix, apply_fn) in &[
-        ("bg-", apply_bg as fn(Div, u32) -> Div),
-        ("text-", apply_text_color as fn(Div, u32) -> Div),
-        ("border-", apply_border_color as fn(Div, u32) -> Div),
-    ] {
-        if let Some(rest) = class.strip_prefix(prefix) {
-            // Arbitrary hex: bg-[#rrggbb] or bg-[#rrggbbaa]
-            if rest.starts_with('[') && rest.ends_with(']') {
-                let inner = &rest[1..rest.len() - 1];
+        // ── font-['Family'] or font-[Family] ──
+        if let Some(rest) = $class.strip_prefix("font-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                let family = inner.trim_matches('\'').trim_matches('"').replace('_', " ");
+                if !family.trim().is_empty() {
+                    return $d.font_family(family);
+                }
+            }
+        }
+
+        // ── text-[size] — arbitrary text size ──
+        if let Some(rest) = $class.strip_prefix("text-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                // Color values fall through to the shared color-family handling.
+                if let Some(len) = parse_nonnegative_absolute_length(inner) {
+                    return $d.text_size(len);
+                }
+            }
+        }
+
+        // ── leading-[value] — arbitrary line height ──
+        if let Some(rest) = $class.strip_prefix("leading-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                if let Some(abs) = parse_nonnegative_absolute_length(inner) {
+                    return $d.line_height(abs);
+                }
+            }
+        }
+
+        // ── opacity-N ──
+        if let Some(rest) = $class.strip_prefix("opacity-") {
+            if let Some(opacity) = parse_opacity_percentage(rest) {
+                return $d.opacity(opacity);
+            }
+        }
+    };
+}
+
+macro_rules! apply_color_properties {
+    ($d:ident, $class:ident) => {
+        // ── Decoration color: decoration-[#hex] or decoration-family-shade ──
+        if let Some(rest) = $class.strip_prefix("decoration-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
                 if inner.starts_with('#') {
-                    return match parse_runtime_hex_color(inner) {
-                        Some(color) => apply_color(d, prefix, color),
-                        None => d,
-                    };
+                    if let Some(color) = parse_runtime_hex_color(inner) {
+                        return $d.text_decoration_color(color);
+                    }
                 }
-                // hsla: bg-[hsla(h,s,l,a)]
-                if let Some(hsla_str) = inner.strip_prefix("hsla(") {
-                    if let Some(vals) = hsla_str.strip_suffix(')') {
-                        let parts: Vec<&str> = vals.split(',').map(|s| s.trim()).collect();
-                        if parts.len() == 4 {
-                            if let (Ok(h), Ok(s), Ok(l), Ok(a)) = (
-                                parts[0].parse::<f32>(),
-                                parts[1]
-                                    .strip_suffix('%')
-                                    .unwrap_or(parts[1])
-                                    .parse::<f32>(),
-                                parts[2]
-                                    .strip_suffix('%')
-                                    .unwrap_or(parts[2])
-                                    .parse::<f32>(),
-                                parts[3].parse::<f32>(),
-                            ) {
-                                if ![h, s, l, a].iter().all(|value| value.is_finite()) {
-                                    return d;
-                                }
-                                let color = hsla(
-                                    h.rem_euclid(360.0) / 360.0,
-                                    s.clamp(0.0, 100.0) / 100.0,
-                                    l.clamp(0.0, 100.0) / 100.0,
-                                    a.clamp(0.0, 1.0),
-                                );
-                                if *prefix == "bg-" {
-                                    return d.bg(color);
-                                }
-                                if *prefix == "text-" {
-                                    return d.text_color(color);
-                                }
-                                if *prefix == "border-" {
-                                    return d.border_color(color);
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("decoration-") {
+            // decoration-family-shade
+            if let Some(dash_pos) = rest.rfind('-') {
+                let family = &rest[..dash_pos];
+                let shade = &rest[dash_pos + 1..];
+                if let Some(hex) = tailwind_color(family, shade) {
+                    return $d.text_decoration_color(rgb(hex));
+                }
+            }
+        }
+
+        // ── text-bg: text-bg-[#hex] or text-bg-family-shade ──
+        if let Some(rest) = $class.strip_prefix("text-bg-[") {
+            if let Some(inner) = rest.strip_suffix(']') {
+                if inner.starts_with('#') {
+                    if let Some(color) = parse_runtime_hex_color(inner) {
+                        return $d.text_bg(color);
+                    }
+                }
+            }
+        }
+        if let Some(rest) = $class.strip_prefix("text-bg-") {
+            if let Some(dash_pos) = rest.rfind('-') {
+                let family = &rest[..dash_pos];
+                let shade = &rest[dash_pos + 1..];
+                if let Some(hex) = tailwind_color(family, shade) {
+                    return $d.text_bg(rgb(hex));
+                }
+            }
+        }
+
+        // ── Color families: bg-{family}-{shade}, text-{family}-{shade}, border-{family}-{shade} ──
+        for (prefix, apply_fn) in &[
+            ("bg-", apply_bg as fn(Div, u32) -> Div),
+            ("text-", apply_text_color as fn(Div, u32) -> Div),
+            ("border-", apply_border_color as fn(Div, u32) -> Div),
+        ] {
+            if let Some(rest) = $class.strip_prefix(prefix) {
+                // Arbitrary hex: bg-[#rrggbb] or bg-[#rrggbbaa]
+                if rest.starts_with('[') && rest.ends_with(']') {
+                    let inner = &rest[1..rest.len() - 1];
+                    if inner.starts_with('#') {
+                        return match parse_runtime_hex_color(inner) {
+                            Some(color) => apply_color($d, prefix, color),
+                            None => $d,
+                        };
+                    }
+                    // hsla: bg-[hsla(h,s,l,a)]
+                    if let Some(hsla_str) = inner.strip_prefix("hsla(") {
+                        if let Some(vals) = hsla_str.strip_suffix(')') {
+                            let parts: Vec<&str> = vals.split(',').map(|s| s.trim()).collect();
+                            if parts.len() == 4 {
+                                if let (Ok(h), Ok(s), Ok(l), Ok(a)) = (
+                                    parts[0].parse::<f32>(),
+                                    parts[1]
+                                        .strip_suffix('%')
+                                        .unwrap_or(parts[1])
+                                        .parse::<f32>(),
+                                    parts[2]
+                                        .strip_suffix('%')
+                                        .unwrap_or(parts[2])
+                                        .parse::<f32>(),
+                                    parts[3].parse::<f32>(),
+                                ) {
+                                    if ![h, s, l, a].iter().all(|value| value.is_finite()) {
+                                        return $d;
+                                    }
+                                    let color = hsla(
+                                        h.rem_euclid(360.0) / 360.0,
+                                        s.clamp(0.0, 100.0) / 100.0,
+                                        l.clamp(0.0, 100.0) / 100.0,
+                                        a.clamp(0.0, 1.0),
+                                    );
+                                    if *prefix == "bg-" {
+                                        return $d.bg(color);
+                                    }
+                                    if *prefix == "text-" {
+                                        return $d.text_color(color);
+                                    }
+                                    if *prefix == "border-" {
+                                        return $d.border_color(color);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            // A suffix overrides the color alpha, including bracketed CSS hex colors.
-            if let Some((color_part, opacity_part)) = rest.rsplit_once('/') {
-                let color_part = color_part
-                    .strip_prefix('[')
-                    .and_then(|part| part.strip_suffix(']'))
-                    .unwrap_or(color_part);
-                if let (Some(normalized), Some(opacity)) = (
-                    resolve_css_color(color_part),
-                    parse_opacity_percentage(opacity_part),
-                ) {
-                    if let Some(mut color) = parse_runtime_hex_color(&normalized) {
-                        if !color_part.trim().eq_ignore_ascii_case("transparent")
-                            && !color_part.trim().eq_ignore_ascii_case("clear")
-                        {
-                            color.alpha = (opacity * 255.0).floor() / 255.0;
+                // A suffix overrides the color alpha, including bracketed CSS hex colors.
+                if let Some((color_part, opacity_part)) = rest.rsplit_once('/') {
+                    let color_part = color_part
+                        .strip_prefix('[')
+                        .and_then(|part| part.strip_suffix(']'))
+                        .unwrap_or(color_part);
+                    if let (Some(normalized), Some(opacity)) = (
+                        resolve_css_color(color_part),
+                        parse_opacity_percentage(opacity_part),
+                    ) {
+                        if let Some(mut color) = parse_runtime_hex_color(&normalized) {
+                            if !color_part.trim().eq_ignore_ascii_case("transparent")
+                                && !color_part.trim().eq_ignore_ascii_case("clear")
+                            {
+                                color.alpha = (opacity * 255.0).floor() / 255.0;
+                            }
+                            return apply_color($d, prefix, color);
                         }
-                        return apply_color(d, prefix, color);
+                    }
+                }
+                // Named: family-shade
+                if let Some(dash_pos) = rest.rfind('-') {
+                    let family = &rest[..dash_pos];
+                    let shade = &rest[dash_pos + 1..];
+                    if let Some(hex) = tailwind_color(family, shade) {
+                        return apply_fn($d, hex);
                     }
                 }
             }
-            // Named: family-shade
-            if let Some(dash_pos) = rest.rfind('-') {
-                let family = &rest[..dash_pos];
-                let shade = &rest[dash_pos + 1..];
-                if let Some(hex) = tailwind_color(family, shade) {
-                    return apply_fn(d, hex);
-                }
-            }
         }
-    }
-
-    d
+    };
 }
 
+fn apply_dynamic(d: Div, class: &str) -> Div {
+    apply_length_properties!(d, class);
+    apply_definite_length_properties!(d, class);
+    apply_border_radius_properties!(d, class);
+    apply_border_width_properties!(d, class);
+    apply_grid_properties!(d, class);
+    apply_typography_and_general_properties!(d, class);
+    apply_color_properties!(d, class);
+    d
+}
 fn parse_runtime_hex_color(value: &str) -> Option<gpui::Rgba> {
     let normalized = parse_css_hex_color(value)?;
     let hex = u32::from_str_radix(&normalized[1..], 16).ok()?;
