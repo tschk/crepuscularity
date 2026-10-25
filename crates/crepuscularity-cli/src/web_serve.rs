@@ -729,30 +729,10 @@ fn serve_docs_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
 
 // ── HTTP connection handler ──────────────────────────────────────────────────
 
-fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-
-    // Read the request line (first line only).
-    let mut buf = [0u8; 4096];
-    let n = match stream.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-    let request = std::str::from_utf8(&buf[..n]).unwrap_or("");
-    let first_line = request.lines().next().unwrap_or("");
-
-    // Parse method + path.
-    let mut parts = first_line.splitn(3, ' ');
-    let method = parts.next().unwrap_or("GET");
-    let raw_path = parts.next().unwrap_or("/");
-    // Strip query string.
-    let path = raw_path.split('?').next().unwrap_or(raw_path);
-
-    let _span = tracing::info_span!("dev_request", %method, %path).entered();
-
+fn route_request(mut stream: TcpStream, method: &str, path: &str, ctx: &DevRequestContext) {
     match (method, path) {
         ("GET", "/dev-reload") => {
-            long_poll_sse(stream, ctx.generation, ctx.last_sse_msg);
+            long_poll_sse(stream, ctx.generation.clone(), ctx.last_sse_msg.clone());
         }
 
         ("GET", "/crepus-bundle.json") => {
@@ -833,6 +813,30 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
             let _ = stream.write_all(resp.as_bytes());
         }
     }
+}
+
+fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+
+    // Read the request line (first line only).
+    let mut buf = [0u8; 4096];
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    let request = std::str::from_utf8(&buf[..n]).unwrap_or("");
+    let first_line = request.lines().next().unwrap_or("");
+
+    // Parse method + path.
+    let mut parts = first_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("GET");
+    let raw_path = parts.next().unwrap_or("/");
+    // Strip query string.
+    let path = raw_path.split('?').next().unwrap_or(raw_path);
+
+    let _span = tracing::info_span!("dev_request", %method, %path).entered();
+
+    route_request(stream, method, path, &ctx);
 }
 
 /// Full document with SSR: pre-renders entry template server-side so content is visible
