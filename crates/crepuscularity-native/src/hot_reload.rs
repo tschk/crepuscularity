@@ -308,8 +308,92 @@ mod model_order_tests {
         assert!(!ast_shape_compatible(&old, &new));
     }
 }
+
 #[cfg(test)]
 mod ast_shape_compatible_tests {
+    use super::*;
+    use crepuscularity_core::ast::*;
+
+    fn dummy_element(tag: &str) -> Node {
+        Node::Element(Element {
+            tag: tag.to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })
+    }
+
+    #[test]
+    fn different_lengths_are_incompatible() {
+        let old = vec![dummy_element("div"), dummy_element("span")];
+        let new = vec![dummy_element("div")];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn same_elements_are_compatible() {
+        let old = vec![dummy_element("div"), dummy_element("span")];
+        let new = vec![dummy_element("div"), dummy_element("span")];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn different_tags_are_incompatible() {
+        let old = vec![dummy_element("div")];
+        let new = vec![dummy_element("span")];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_different_kinds_are_incompatible() {
+        let old = vec![Node::Text(vec![TextPart::Literal("text".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_same_exprs_are_compatible() {
+        let old = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_different_exprs_are_incompatible() {
+        let old = vec![Node::Text(vec![TextPart::Expr("var1".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var2".to_string())])];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn if_blocks_with_different_conditions_are_incompatible() {
+        let old = vec![Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        let new = vec![Node::If(IfBlock {
+            condition: "false".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn compatible_different_node_types_are_incompatible() {
+        let old = vec![dummy_element("div")];
+        let new = vec![Node::RawText("div".to_string())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+}
+
+#[cfg(test)]
+mod ast_shape_compatible_node_kind_tests {
     use super::*;
     use crepuscularity_core::ast::{
         Element, ForBlock, IfBlock, IncludeNode, LetDecl, Node, TextPart,

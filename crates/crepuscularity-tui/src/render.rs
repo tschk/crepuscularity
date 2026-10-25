@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
-use crepuscularity_core::eval::eval_expr;
-use crepuscularity_core::include_paths::resolve_include_path;
+use crepuscularity_core::eval::{eval_expr, eval_literal};
+use crepuscularity_core::include_paths::{include_frontend_path, resolve_include_path};
 use crepuscularity_core::parser::{parse_component_file, parse_template, ComponentDef};
 use crepuscularity_core::preprocess::slot_rotate_child_phrases;
 use crepuscularity_core::virtual_files::lookup_virtual_file;
@@ -40,10 +40,6 @@ fn eval_value(expr: &str, ctx: &TemplateContext) -> TemplateValue {
 
 fn eval_condition(ctx: &TemplateContext, expr: &str) -> bool {
     ctx.eval_condition(expr).unwrap_or(false)
-}
-
-fn interpolate_str(ctx: &TemplateContext, s: &str) -> String {
-    ctx.interpolate(s).unwrap_or_else(|_| s.to_string())
 }
 
 fn read_file(ctx: &TemplateContext, path: &std::path::Path) -> Result<String, CrepusError> {
@@ -95,7 +91,7 @@ pub struct WidgetChild {
 }
 
 /// Parameters needed to build a `Block` widget (borders + optional title + padding).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BlockSpec {
     borders: Borders,
     border_type: BorderType,
@@ -103,9 +99,39 @@ pub struct BlockSpec {
     title: Option<String>,
     title_alignment: Alignment,
     padding: Padding,
+    // An empty block retains bare-text sizing provenance without changing public tree constructors.
+    auto_height: bool,
+    // Visibility metadata does not change the block's layout overhead.
+    invisible: bool,
 }
 
 impl BlockSpec {
+    fn overhead(&self, axis: Direction) -> u16 {
+        let inner = self.to_block().inner(Rect::new(0, 0, u16::MAX, u16::MAX));
+        u16::MAX
+            - match axis {
+                Direction::Horizontal => inner.width,
+                Direction::Vertical => inner.height,
+            }
+    }
+
+    fn render_clipped(&self, style: Style, buf: &mut Buffer, area: Rect) {
+        let visible = area.intersection(buf.area);
+        if visible.is_empty() {
+            return;
+        }
+        // Block clips its geometry before drawing, so hide edges outside the original window.
+        let mut spec = self.clone();
+        if visible.y > area.y {
+            spec.borders.remove(Borders::TOP);
+            spec.title = None;
+        }
+        if visible.bottom() < area.bottom() {
+            spec.borders.remove(Borders::BOTTOM);
+        }
+        spec.to_block().style(style).render(visible, buf);
+    }
+
     fn to_block(&self) -> Block<'static> {
         let mut b = Block::default()
             .borders(self.borders)
@@ -145,126 +171,223 @@ pub fn collect_focusable_ids(template: &str) -> Result<Vec<String>, CrepusError>
     Ok(collect_focusable_ids_from_nodes(&nodes))
 }
 
+fn element_id(el: &Element, ctx: &TemplateContext) -> Result<Option<String>, CrepusError> {
+    if let Some(id) = &el.id {
+        return Ok(Some(id.clone()));
+    }
+    el.bindings
+        .iter()
+        .find(|binding| binding.matches_prop("id"))
+        .map(|binding| crepuscularity_core::eval::eval_binding(binding, ctx))
+        .transpose()
+        .map(Option::flatten)
+        .map(|value| {
+            value
+                .map(|value| value_to_str(&value))
+                .filter(|id| !id.is_empty())
+        })
+}
+
 /// Walk pre-parsed `nodes` and collect focusable element IDs in document order.
+///
+/// Static class tokens honor TUI and current-platform prefixes. Branches remain
+/// syntactic: conditions, iterators, class interpolation and conditional classes
+/// are not evaluated.
 pub fn collect_focusable_ids_from_nodes(nodes: &[Node]) -> Vec<String> {
     let mut ids = Vec::new();
-    collect_focusable_ids_recursive(nodes, &mut ids);
+    collect_focusable_ids_recursive(nodes, &mut ids, &TemplateContext::new(), false, 0, None);
     ids
 }
 
-/// Collect focusable IDs from the currently rendered branches and loop items.
 pub(crate) fn collect_focusable_ids_with_context(
-    template: &str,
+    nodes: &[Node],
     ctx: &TemplateContext,
-) -> Result<Vec<String>, CrepusError> {
-    let nodes = parse_template(template)?;
+) -> Vec<String> {
     let mut ids = Vec::new();
-    collect_focusable_ids_in_context(&nodes, ctx, &mut ids);
-    let mut seen = std::collections::HashSet::new();
-    ids.retain(|id| seen.insert(id.clone()));
-    Ok(ids)
+    collect_focusable_ids_recursive(nodes, &mut ids, &with_tui_target(ctx), true, 0, None);
+    ids
 }
 
-fn collect_focusable_ids_in_context(nodes: &[Node], ctx: &TemplateContext, out: &mut Vec<String>) {
-    let mut ctx = ctx.clone();
+// Includes and slots are consumed synchronously; caller scopes need not be cloned.
+struct SlotFrame<'a> {
+    nodes: &'a [Node],
+    context: &'a TemplateContext,
+    caller_slot: Option<&'a SlotFrame<'a>>,
+}
+
+fn collect_focusable_ids_recursive(
+    nodes: &[Node],
+    out: &mut Vec<String>,
+    ctx: &TemplateContext,
+    evaluate_branches: bool,
+    include_depth: usize,
+    slot: Option<&SlotFrame<'_>>,
+) {
+    let mut ctx = std::borrow::Cow::Borrowed(ctx);
     for node in nodes {
         match node {
-            Node::LetDecl(decl) => {
-                if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
-                    let value = eval_expr(&decl.expr, &ctx).unwrap_or(TemplateValue::Null);
-                    ctx.vars.insert(decl.name.clone(), value);
-                }
+            Node::Element(el)
+                if if evaluate_branches {
+                    let classes = active_classes(el, &ctx).unwrap_or_default();
+                    element_is_hidden(el, &ctx, &classes).unwrap_or(false)
+                        || classes.iter().any(|class| class == "invisible")
+                } else {
+                    element_is_statically_unfocusable(el)
+                } => {}
+            Node::Element(el) if evaluate_branches && el.tag == "slot" => {
+                let (nodes, slot_ctx, caller_slot) = if let Some(frame) = slot {
+                    (frame.nodes, frame.context, frame.caller_slot)
+                } else if let Some((nodes, slot_ctx)) = &ctx.slot {
+                    (nodes.as_slice(), slot_ctx.as_ref(), None)
+                } else {
+                    (el.children.as_slice(), ctx.as_ref(), slot)
+                };
+                collect_focusable_ids_recursive(
+                    nodes,
+                    out,
+                    slot_ctx,
+                    true,
+                    include_depth,
+                    caller_slot,
+                );
             }
+            Node::Element(el) if evaluate_branches && el.tag == "slot-rotate" => {}
             Node::Element(el) => {
-                let static_focusable = el
-                    .classes
-                    .iter()
-                    .any(|class| class == "focusable" || class.contains("focusable"));
-                let dynamic_focusable = el.conditional_classes.iter().any(|class| {
-                    class.class == "focusable" && eval_condition(&ctx, &class.condition)
-                });
-                if static_focusable || dynamic_focusable {
-                    if let Some(id) = &el.id {
-                        out.push(id.clone());
+                let focusable = if evaluate_branches {
+                    active_classes(el, &ctx)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|class| class == "focusable")
+                } else {
+                    let target_ctx = with_tui_target(&ctx);
+                    el.classes
+                        .iter()
+                        .flat_map(|class| class.split_whitespace())
+                        .filter_map(|token| active_class(&target_ctx, token))
+                        .any(|class| class == "focusable")
+                };
+                if focusable {
+                    if let Ok(Some(id)) = element_id(el, &ctx) {
+                        out.push(id);
                     }
                 }
-                collect_focusable_ids_in_context(&el.children, &ctx, out);
+                collect_focusable_ids_recursive(
+                    &el.children,
+                    out,
+                    &ctx,
+                    evaluate_branches,
+                    include_depth,
+                    slot,
+                );
             }
             Node::If(block) => {
-                let branch = if eval_condition(&ctx, &block.condition) {
-                    Some(&block.then_children)
-                } else {
-                    block.else_children.as_ref()
-                };
-                if let Some(branch) = branch {
-                    collect_focusable_ids_in_context(branch, &ctx, out);
+                let condition = !evaluate_branches || eval_condition(&ctx, &block.condition);
+                if condition {
+                    collect_focusable_ids_recursive(
+                        &block.then_children,
+                        out,
+                        &ctx,
+                        evaluate_branches,
+                        include_depth,
+                        slot,
+                    );
+                }
+                if !evaluate_branches || !condition {
+                    if let Some(ref else_children) = block.else_children {
+                        collect_focusable_ids_recursive(
+                            else_children,
+                            out,
+                            &ctx,
+                            evaluate_branches,
+                            include_depth,
+                            slot,
+                        );
+                    }
                 }
             }
             Node::For(block) => {
-                for item_ctx in ctx.get_list_ref(&block.iterator) {
-                    let mut child_ctx = ctx.clone();
-                    child_ctx.vars.extend(item_ctx.vars.clone());
-                    if !block.pattern.trim().is_empty() {
-                        let item_str = item_ctx.get_str("value");
-                        if !item_str.is_empty() {
-                            child_ctx.vars.insert(
-                                block.pattern.trim().to_string(),
-                                TemplateValue::Str(item_str),
+                if evaluate_branches {
+                    let _ = for_each_loop_context(block, &ctx, |child_ctx| {
+                        collect_focusable_ids_recursive(
+                            &block.body,
+                            out,
+                            child_ctx,
+                            true,
+                            include_depth,
+                            slot,
+                        );
+                        true
+                    });
+                } else {
+                    collect_focusable_ids_recursive(
+                        &block.body,
+                        out,
+                        &ctx,
+                        false,
+                        include_depth,
+                        slot,
+                    );
+                }
+            }
+            Node::Match(block) => {
+                let value = value_to_str(&eval_value(&block.expr, &ctx));
+                for arm in &block.arms {
+                    if !evaluate_branches || matches_pattern(&arm.pattern, &value) {
+                        collect_focusable_ids_recursive(
+                            &arm.body,
+                            out,
+                            &ctx,
+                            evaluate_branches,
+                            include_depth,
+                            slot,
+                        );
+                        if evaluate_branches {
+                            break;
+                        }
+                    }
+                }
+            }
+            Node::Include(inc) if evaluate_branches && include_depth < 64 => {
+                let (file_path, component_name) = inc
+                    .path
+                    .split_once('#')
+                    .map_or((inc.path.as_str(), None), |(file, name)| (file, Some(name)));
+                if let Ok(full_path) = resolve_include_path(ctx.base_dir.as_deref(), file_path) {
+                    if let Ok(content) = read_file(&ctx, &full_path) {
+                        if let Ok(nodes) = parse_included_source(
+                            component_name,
+                            &content,
+                            &if component_name.is_some() {
+                                full_path.clone()
+                            } else {
+                                include_frontend_path(&full_path, file_path)
+                            }
+                            .to_string_lossy(),
+                        ) {
+                            let Ok(child_ctx) = prepare_include_context(inc, &ctx, &full_path)
+                            else {
+                                continue;
+                            };
+                            let frame = SlotFrame {
+                                nodes: &inc.slot,
+                                context: &ctx,
+                                caller_slot: slot,
+                            };
+                            let child_slot = (!inc.slot.is_empty()).then_some(&frame);
+                            collect_focusable_ids_recursive(
+                                &nodes,
+                                out,
+                                &child_ctx,
+                                true,
+                                include_depth + 1,
+                                child_slot,
                             );
                         }
                     }
-                    collect_focusable_ids_in_context(&block.body, &child_ctx, out);
                 }
             }
-            Node::Match(block) => {
-                let value =
-                    value_to_str(&eval_expr(&block.expr, &ctx).unwrap_or(TemplateValue::Null));
-                let arm = block.arms.iter().find(|arm| {
-                    let pattern = arm.pattern.trim();
-                    let quoted = pattern
-                        .strip_prefix('"')
-                        .and_then(|value| value.strip_suffix('"'))
-                        == Some(value.as_str());
-                    pattern == "_" || quoted || pattern == value
-                });
-                if let Some(arm) = arm {
-                    collect_focusable_ids_in_context(&arm.body, &ctx, out);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn collect_focusable_ids_recursive(nodes: &[Node], out: &mut Vec<String>) {
-    for node in nodes {
-        match node {
-            Node::Element(el) => {
-                if el.id.is_some()
-                    && el
-                        .classes
-                        .iter()
-                        .any(|c| c == "focusable" || c.contains("focusable"))
-                {
-                    if let Some(ref id) = el.id {
-                        out.push(id.clone());
-                    }
-                }
-                collect_focusable_ids_recursive(&el.children, out);
-            }
-            Node::If(block) => {
-                collect_focusable_ids_recursive(&block.then_children, out);
-                if let Some(ref else_children) = block.else_children {
-                    collect_focusable_ids_recursive(else_children, out);
-                }
-            }
-            Node::For(block) => {
-                collect_focusable_ids_recursive(&block.body, out);
-            }
-            Node::Match(block) => {
-                for arm in &block.arms {
-                    collect_focusable_ids_recursive(&arm.body, out);
-                }
+            Node::LetDecl(decl) if evaluate_branches => {
+                let _ = apply_declaration(decl, &mut ctx);
             }
             _ => {}
         }
@@ -375,6 +498,7 @@ pub struct RenderCacheStats {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct IncludeKey {
     path: PathBuf,
+    frontend: Option<PathBuf>,
     component: Option<String>,
 }
 
@@ -394,6 +518,10 @@ struct CachedInclude {
 pub struct BufferRenderer {
     include_cache: HashMap<IncludeKey, CachedInclude>,
     stats: RenderCacheStats,
+    include_depth: usize,
+    now_ms: u64,
+    next_redraw_ms: Option<u64>,
+    build_error: Option<CrepusError>,
 }
 
 impl BufferRenderer {
@@ -410,6 +538,24 @@ impl BufferRenderer {
         buf: &mut Buffer,
         area: Rect,
     ) -> Result<(), CrepusError> {
+        self.render_nodes_at(nodes, ctx, buf, area, current_unix_ms())
+    }
+
+    pub(crate) fn next_redraw_ms(&self) -> Option<u64> {
+        self.next_redraw_ms
+    }
+
+    pub(crate) fn render_nodes_at(
+        &mut self,
+        nodes: &[Node],
+        ctx: &TemplateContext,
+        buf: &mut Buffer,
+        area: Rect,
+        now_ms: u64,
+    ) -> Result<(), CrepusError> {
+        self.now_ms = now_ms;
+        self.next_redraw_ms = None;
+        self.build_error = None;
         let render_ctx = with_tui_target(ctx);
         let children = build_children(
             nodes,
@@ -417,8 +563,12 @@ impl BufferRenderer {
             Direction::Vertical,
             Style::default(),
             self,
+            None,
         );
-        paint_children_buf(&children, buf, area, Direction::Vertical, 0);
+        if let Some(error) = self.build_error.take() {
+            return Err(error);
+        }
+        paint_children_buf(&children, buf, area, Direction::Vertical, 0, false, false);
         Ok(())
     }
 
@@ -434,10 +584,10 @@ impl BufferRenderer {
     ) -> Result<(), CrepusError> {
         let mut child_ctx = with_tui_target(ctx);
         for (key, expr) in &component.meta.defaults {
-            child_ctx
-                .vars
-                .entry(key.clone())
-                .or_insert_with(|| eval_value(expr, &TemplateContext::default()));
+            if !child_ctx.vars.contains_key(key) {
+                let value = eval_expr(expr, &TemplateContext::default())?;
+                child_ctx.vars.insert(key.clone(), value);
+            }
         }
         self.render_nodes(&component.nodes, &child_ctx, buf, area)
     }
@@ -460,11 +610,15 @@ impl BufferRenderer {
     fn load_include(
         &mut self,
         full_path: &Path,
+        frontend_path: &Path,
         component_name: Option<&str>,
         content: &str,
     ) -> Result<Arc<[Node]>, Vec<WidgetChild>> {
         let key = IncludeKey {
             path: full_path.to_path_buf(),
+            frontend: component_name
+                .is_none()
+                .then(|| frontend_path.to_path_buf()),
             component: component_name.map(str::to_owned),
         };
         if let Some(entry) = self.include_cache.get(&key) {
@@ -475,7 +629,7 @@ impl BufferRenderer {
             }
             // Source changed: re-parse and bump `invalidations`. We deliberately
             // do NOT count this as a miss — the include was already cached.
-            match parse_included_source(component_name, content, &full_path.to_string_lossy()) {
+            match parse_included_source(component_name, content, &frontend_path.to_string_lossy()) {
                 Ok(nodes) => {
                     self.stats.invalidations += 1;
                     let arc_nodes: Arc<[Node]> = Arc::from(nodes.into_boxed_slice());
@@ -495,7 +649,7 @@ impl BufferRenderer {
             }
         } else {
             // First successful parse: cache miss. Failures are NOT cached.
-            match parse_included_source(component_name, content, &full_path.to_string_lossy()) {
+            match parse_included_source(component_name, content, &frontend_path.to_string_lossy()) {
                 Ok(nodes) => {
                     self.stats.misses += 1;
                     let arc_nodes: Arc<[Node]> = Arc::from(nodes.into_boxed_slice());
@@ -562,13 +716,16 @@ fn parse_included_source(
                 ))),
             }
         }
-        None => match parse_template(content) {
-            Ok(n) => Ok(n),
-            Err(e) => Err(error_children(&format!(
-                "parse error in '{file_path}': {}",
-                e
-            ))),
-        },
+        None => {
+            match crepuscularity_core::parse_template_with_path(content, Some(Path::new(file_path)))
+            {
+                Ok(n) => Ok(n),
+                Err(e) => Err(error_children(&format!(
+                    "parse error in '{file_path}': {}",
+                    e
+                ))),
+            }
+        }
     }
 }
 
@@ -606,6 +763,17 @@ pub fn render_component_to_buffer(
 }
 // ─── Phase 1: Build ───────────────────────────────────────────────────────────
 
+fn apply_declaration(
+    decl: &LetDecl,
+    ctx: &mut std::borrow::Cow<'_, TemplateContext>,
+) -> Result<(), CrepusError> {
+    if !decl.is_default || !ctx.vars.contains_key(&decl.name) {
+        let value = eval_expr(&decl.expr, ctx)?;
+        ctx.to_mut().vars.insert(decl.name.clone(), value);
+    }
+    Ok(())
+}
+
 /// Convert a slice of nodes into a list of `WidgetChild`s.
 ///
 /// `parent_dir` controls which `SizeHint` dimension (width vs. height) is used
@@ -616,6 +784,7 @@ fn build_children(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
     // Borrowed until a `let` declaration actually mutates the scope: cloning a
     // context whose vars hold the loop's item list is O(list length), so an
@@ -626,55 +795,88 @@ fn build_children(
     let mut text_buf: Vec<Line<'static>> = Vec::new();
 
     for node in nodes {
+        if renderer.build_error.is_some() {
+            break;
+        }
         match node {
             // Variable declarations mutate context for subsequent siblings.
             Node::LetDecl(decl) => {
-                let val = eval_value(&decl.expr, &ctx);
-                if decl.is_default {
-                    if !ctx.vars.contains_key(&decl.name) {
-                        ctx.to_mut().vars.insert(decl.name.clone(), val);
-                    }
-                } else {
-                    let ctx = ctx.to_mut();
-                    if let Some(v) = ctx.vars.get_mut(&decl.name) {
-                        *v = val;
-                    } else {
-                        ctx.vars.insert(decl.name.clone(), val);
-                    }
+                if let Err(error) = apply_declaration(decl, &mut ctx) {
+                    renderer.build_error.get_or_insert(error);
                 }
             }
-            Node::Text(parts) => {
-                text_buf.push(build_line(parts, &ctx));
-            }
-            Node::RawText(expr) => {
-                text_buf.push(Line::raw(value_to_str(&eval_value(expr, &ctx))));
-            }
-            Node::RawHtml(expr) => {
-                text_buf.push(Line::raw(value_to_str(&eval_value(expr, &ctx))));
-            }
+            Node::Text(parts) => match build_lines(parts, &ctx) {
+                Ok(lines) => text_buf.extend(lines),
+                Err(error) => {
+                    renderer.build_error.get_or_insert(error);
+                }
+            },
+            Node::RawText(expr) | Node::RawHtml(expr) => match eval_expr(expr, &ctx) {
+                Ok(value) => text_buf.extend(Text::raw(value_to_str(&value)).lines),
+                Err(error) => {
+                    renderer.build_error.get_or_insert(error);
+                }
+            },
             // Structural nodes: flush buffered text first, then emit.
             Node::Element(el) => {
+                let classes = match active_classes(el, &ctx) {
+                    Ok(classes) => classes,
+                    Err(error) => {
+                        renderer.build_error.get_or_insert(error);
+                        break;
+                    }
+                };
+                match element_is_hidden(el, &ctx, &classes) {
+                    // Omit the entire subtree before layout so hidden children add no gap.
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => {
+                        renderer.build_error.get_or_insert(error);
+                        break;
+                    }
+                }
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.push(build_element(el, &ctx, parent_dir, inherited, renderer));
+                let invisible = classes.iter().any(|class| class == "invisible");
+                let mut child =
+                    build_element(el, &ctx, parent_dir, inherited, renderer, classes, slot);
+                if invisible {
+                    match &mut child.node {
+                        WidgetNode::Content { block, .. } | WidgetNode::Container { block, .. } => {
+                            block.get_or_insert_with(BlockSpec::default).invisible = true;
+                        }
+                        WidgetNode::Empty => {}
+                    }
+                }
+                out.push(child);
             }
             Node::If(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_if(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_if(block, &ctx, parent_dir, inherited, renderer, slot));
             }
             Node::For(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_for(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_for(
+                    block, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
             Node::Match(block) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_match(block, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_match(
+                    block, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
             Node::Include(inc) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
-                out.extend(build_include(inc, &ctx, parent_dir, inherited, renderer));
+                out.extend(build_include(
+                    inc, &ctx, parent_dir, inherited, renderer, slot,
+                ));
             }
-            Node::Embed(_) => {
+            Node::Embed(embed) => {
                 flush_text(&mut text_buf, &mut out, parent_dir, inherited);
+                out.extend(error_children(&format!(
+                    "embed '{}' is not supported by the TUI target; guard with is_web",
+                    embed.src
+                )));
             }
         }
     }
@@ -694,7 +896,7 @@ fn flush_text(
         return;
     }
     let lines = std::mem::take(buf);
-    let height = lines.len() as u16;
+    let height = lines.len().min(u16::MAX as usize) as u16;
     let constraint = match parent_dir {
         // In a vertical stack, text takes exactly as many rows as it has lines.
         Direction::Vertical => Constraint::Length(height),
@@ -705,7 +907,10 @@ fn flush_text(
         node: WidgetNode::Content {
             lines,
             style: inherited,
-            block: None,
+            block: Some(BlockSpec {
+                auto_height: true,
+                ..BlockSpec::default()
+            }),
             alignment: Alignment::Left,
         },
         constraint,
@@ -718,16 +923,19 @@ fn build_element(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    mut classes: Vec<String>,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
     // ── Special pseudo-elements ───────────────────────────────────────────────
     match el.tag.as_str() {
-        "slot" => return build_slot(el, ctx, parent_dir, inherited, renderer),
-        "slot-rotate" => return build_slot_rotate(el, ctx, parent_dir, inherited),
+        "slot" => return build_slot(el, ctx, parent_dir, inherited, renderer, slot),
+        "slot-rotate" => {
+            return build_slot_rotate(el, ctx, parent_dir, inherited, renderer, &classes)
+        }
         _ => {}
     }
 
-    // ── Evaluate conditional classes ──────────────────────────────────────────
-    let mut classes = active_classes(el, ctx);
+    // Classes were resolved once by build_children before hidden suppression.
     if el.tag == "button"
         && !classes.iter().any(|class| {
             matches!(
@@ -740,9 +948,16 @@ fn build_element(
     }
     let mut hints = parse_classes(&classes);
 
-    if let Some(ref el_id) = el.id {
-        hints.id = Some(el_id.clone());
-    }
+    hints.id = match element_id(el, ctx) {
+        Ok(id) => id,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
 
     let focused_id = ctx.get_str("focused_id");
     if !focused_id.is_empty()
@@ -755,39 +970,51 @@ fn build_element(
         }
     }
 
-    // Allow a `title={expr}` binding to set the block title.
-    if let Some(title_val) = el
-        .bindings
-        .iter()
-        .find(|b| b.matches_prop("title"))
-        .and_then(|binding| {
-            // Keep the TUI builder's existing error-to-null policy. Attribute null omits the title.
-            crepuscularity_core::eval::eval_binding(binding, ctx)
-                .unwrap_or_else(|_| {
-                    (binding.origin != BindingOrigin::Attribute).then_some(TemplateValue::Null)
-                })
-                .map(|value| value_to_str(&value))
-        })
-    {
-        hints.title = Some(title_val);
-    }
+    let is_text_only = text_only(&el.children);
+    let properties = (|| -> Result<ScrollConfig, CrepusError> {
+        if let Some(binding) = el
+            .bindings
+            .iter()
+            .find(|binding| binding.matches_prop("title"))
+        {
+            hints.title = crepuscularity_core::eval::eval_binding(binding, ctx)?
+                .map(|value| value_to_str(&value));
+        }
+        // Empty boxes and horizontal pure text never consumed scroll bindings.
+        // Resolve an applicable configuration once, before any child declarations.
+        if !el.children.is_empty() && (!is_text_only || hints.direction == Direction::Vertical) {
+            scroll_config(el, ctx, &classes)
+        } else {
+            Ok(ScrollConfig::default())
+        }
+    })();
+    let scroll_cfg = match properties {
+        Ok(config) => config,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
 
     let constraint = adjusted_constraint(&hints, parent_dir);
     let style = inherited.patch(hints.to_style());
 
     // ── Detect pure-text vs. mixed/structural children ────────────────────────
-    let is_pure_text = !el.children.is_empty()
-        && el.children.iter().all(|n| {
-            matches!(
-                n,
-                Node::Text(_) | Node::RawText(_) | Node::RawHtml(_) | Node::LetDecl(_)
-            )
-        });
-
-    if is_pure_text {
-        build_content_element(el, &hints, ctx, constraint, style)
+    if is_text_only && (hints.direction != Direction::Vertical || !scroll_cfg.scrollable) {
+        build_content_element(el, &hints, ctx, parent_dir, constraint, style).unwrap_or_else(
+            |error| {
+                renderer.build_error.get_or_insert(error);
+                WidgetChild {
+                    node: WidgetNode::Empty,
+                    constraint: Constraint::Length(0),
+                }
+            },
+        )
     } else if el.children.is_empty() {
-        build_empty_box(&hints, constraint, style)
+        build_empty_box(&hints, parent_dir, constraint, style)
     } else {
         build_container_element(
             el,
@@ -799,9 +1026,21 @@ fn build_element(
                 style,
                 classes: &classes,
             },
+            scroll_cfg,
             renderer,
+            slot,
         )
     }
+}
+
+fn text_only(nodes: &[Node]) -> bool {
+    !nodes.is_empty()
+        && nodes.iter().all(|node| {
+            matches!(
+                node,
+                Node::Text(_) | Node::RawText(_) | Node::RawHtml(_) | Node::LetDecl(_)
+            )
+        })
 }
 
 fn adjusted_constraint(hints: &StyleHints, parent_dir: Direction) -> Constraint {
@@ -831,47 +1070,38 @@ fn build_content_element(
     el: &Element,
     hints: &StyleHints,
     ctx: &TemplateContext,
+    parent_dir: Direction,
     constraint: Constraint,
     style: Style,
-) -> WidgetChild {
+) -> Result<WidgetChild, CrepusError> {
     let mut child_ctx: std::borrow::Cow<'_, TemplateContext> = std::borrow::Cow::Borrowed(ctx);
-
-    let lines: Vec<Line<'static>> = el
-        .children
-        .iter()
-        .filter_map(|child| match child {
-            Node::Text(parts) => Some(build_line(parts, &child_ctx)),
-            Node::RawText(expr) => Some(Line::raw(value_to_str(&eval_value(expr, &child_ctx)))),
-            Node::LetDecl(decl) => {
-                let val = eval_value(&decl.expr, &child_ctx);
-                if decl.is_default {
-                    if !child_ctx.vars.contains_key(&decl.name) {
-                        child_ctx.to_mut().vars.insert(decl.name.clone(), val);
-                    }
-                } else {
-                    let child_ctx = child_ctx.to_mut();
-                    if let Some(v) = child_ctx.vars.get_mut(&decl.name) {
-                        *v = val;
-                    } else {
-                        child_ctx.vars.insert(decl.name.clone(), val);
-                    }
-                }
-                None
+    let mut lines = Vec::new();
+    for child in &el.children {
+        match child {
+            Node::Text(parts) => lines.extend(build_lines(parts, &child_ctx)?),
+            Node::RawText(expr) | Node::RawHtml(expr) => {
+                lines.extend(Text::raw(value_to_str(&eval_expr(expr, &child_ctx)?)).lines);
             }
-            _ => None,
-        })
-        .collect();
+            Node::LetDecl(decl) => apply_declaration(decl, &mut child_ctx)?,
+            _ => {}
+        }
+    }
 
-    // Resolve w-fit for text elements: width = longest line length.
-    let constraint = if matches!(hints.width, SizeHint::Fit) {
-        let max_width = lines.iter().map(|l| l.width() as u16).max().unwrap_or(0);
-        let overhead = border_padding_overhead(hints, Direction::Horizontal);
-        Constraint::Length(max_width.saturating_add(overhead))
+    let fit_size = match parent_dir {
+        Direction::Horizontal if matches!(hints.width, SizeHint::Fit) => {
+            Some(lines.iter().map(Line::width).max().unwrap_or(0))
+        }
+        Direction::Vertical if matches!(hints.height, SizeHint::Fit) => Some(lines.len()),
+        _ => None,
+    };
+    let constraint = if let Some(size) = fit_size {
+        let content = size.min(u16::MAX as usize) as u16;
+        Constraint::Length(content.saturating_add(border_padding_overhead(hints, parent_dir)))
     } else {
         constraint
     };
 
-    WidgetChild {
+    Ok(WidgetChild {
         node: WidgetNode::Content {
             lines,
             style,
@@ -879,11 +1109,24 @@ fn build_content_element(
             alignment: hints.alignment,
         },
         constraint,
-    }
+    })
 }
 
 /// Element with no children (spacer, background panel, etc.).
-fn build_empty_box(hints: &StyleHints, constraint: Constraint, style: Style) -> WidgetChild {
+fn build_empty_box(
+    hints: &StyleHints,
+    parent_dir: Direction,
+    constraint: Constraint,
+    style: Style,
+) -> WidgetChild {
+    let constraint = resolve_fit_constraint(
+        constraint,
+        &mut [],
+        hints.direction,
+        hints.gap,
+        hints,
+        parent_dir,
+    );
     WidgetChild {
         node: WidgetNode::Container {
             direction: hints.direction,
@@ -906,22 +1149,36 @@ pub struct ContainerProps<'a> {
 }
 
 /// Element with structural children → split its area for each child.
+#[allow(clippy::too_many_arguments)]
 fn build_container_element(
     el: &Element,
     hints: &StyleHints,
     ctx: &TemplateContext,
-    _parent_dir: Direction,
+    parent_dir: Direction,
     props: ContainerProps<'_>,
+    scroll_cfg: ScrollConfig,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
     let child_dir = hints.direction;
-    let children = build_children(&el.children, ctx, child_dir, props.style, renderer);
-    let scroll_cfg = scroll_config(el, ctx, props.classes);
-
+    let mut children = build_children(&el.children, ctx, child_dir, props.style, renderer, slot);
+    if text_only(&el.children) {
+        for child in &mut children {
+            if let WidgetNode::Content { alignment, .. } = &mut child.node {
+                *alignment = hints.alignment;
+            }
+        }
+    }
     // Resolve Fit constraints: measure the natural content size and
     // convert to a Fixed constraint so the element doesn't fill.
-    let constraint =
-        resolve_fit_constraint(props.constraint, &children, child_dir, hints.gap, hints);
+    let constraint = resolve_fit_constraint(
+        props.constraint,
+        &mut children,
+        child_dir,
+        hints.gap,
+        hints,
+        parent_dir,
+    );
 
     WidgetChild {
         node: WidgetNode::Container {
@@ -938,123 +1195,92 @@ fn build_container_element(
     }
 }
 
-/// When a container has a `Fit` size hint (via `h-fit`/`w-fit`), measure the
-/// natural content height/width from the built children and return a `Length`
-/// constraint so the element takes exactly its content size.
+/// Resolve fit only along the axis allocated by the parent.
 fn resolve_fit_constraint(
     constraint: Constraint,
-    children: &[WidgetChild],
+    children: &mut [WidgetChild],
     child_dir: Direction,
     gap: u16,
     hints: &StyleHints,
+    parent_dir: Direction,
 ) -> Constraint {
-    // Determine which axis needs fitting and compute content size for it.
-    // h-fit → measure height; w-fit → measure width.
-    let fit_height = matches!(hints.height, SizeHint::Fit);
-    let fit_width = matches!(hints.width, SizeHint::Fit);
-
-    if !fit_height && !fit_width {
+    let fits = match parent_dir {
+        Direction::Horizontal => matches!(hints.width, SizeHint::Fit),
+        Direction::Vertical => matches!(hints.height, SizeHint::Fit),
+    };
+    if !fits {
         return constraint;
     }
-
-    let n = children.len();
-    if n == 0 {
-        return Constraint::Length(0);
+    if child_dir == parent_dir {
+        for child in children.iter_mut() {
+            if !matches!(
+                child.constraint,
+                Constraint::Length(_) | Constraint::Min(_) | Constraint::Max(_)
+            ) {
+                child.constraint =
+                    Constraint::Length(intrinsic_extent(&child.node, parent_dir).max(1));
+            }
+        }
     }
+    let content = children_extent(children, child_dir, parent_dir, gap);
+    Constraint::Length(content.saturating_add(border_padding_overhead(hints, parent_dir)))
+}
 
-    let total_gap = gap * (n as u16).saturating_sub(1);
-
-    // Content size along the container's main axis (child_dir).
-    let main_size: u16 = match child_dir {
-        Direction::Vertical => {
-            let sum: u16 = children
-                .iter()
-                .map(|c| constraint_min_height(&c.constraint))
-                .sum();
-            sum + total_gap
-        }
-        Direction::Horizontal => {
-            let sum: u16 = children
-                .iter()
-                .map(|c| constraint_min_width(&c.constraint))
-                .sum();
-            sum + total_gap
-        }
-    };
-
-    // Content size along the cross axis (perpendicular to child_dir).
-    let cross_size: u16 = match child_dir {
-        Direction::Vertical => children
-            .iter()
-            .map(|c| constraint_min_width(&c.constraint))
-            .max()
-            .unwrap_or(0),
-        Direction::Horizontal => children
-            .iter()
-            .map(|c| constraint_min_height(&c.constraint))
-            .max()
-            .unwrap_or(0),
-    };
-
-    // Pick the right size based on which axis has Fit.
-    let (content_size, overhead_axis) = if fit_height {
-        // Height fit: if container is flex-col, main axis = height;
-        // if flex-row, cross axis = height.
-        let size = match child_dir {
-            Direction::Vertical => main_size,
-            Direction::Horizontal => cross_size,
-        };
-        (size, Direction::Vertical)
+fn children_extent(
+    children: &[WidgetChild],
+    direction: Direction,
+    axis: Direction,
+    gap: u16,
+) -> u16 {
+    let sizes = children
+        .iter()
+        .map(|child| child_extent(child, direction, axis));
+    if axis == direction {
+        let gaps = children.len().saturating_sub(1).min(u16::MAX as usize) as u16;
+        sizes
+            .fold(0u16, u16::saturating_add)
+            .saturating_add(gap.saturating_mul(gaps))
     } else {
-        // Width fit: if container is flex-row, main axis = width;
-        // if flex-col, cross axis = width.
-        let size = match child_dir {
-            Direction::Horizontal => main_size,
-            Direction::Vertical => cross_size,
-        };
-        (size, Direction::Horizontal)
+        sizes.max().unwrap_or(0)
+    }
+}
+
+fn child_extent(child: &WidgetChild, direction: Direction, axis: Direction) -> u16 {
+    if axis == direction {
+        match child.constraint {
+            Constraint::Length(n) | Constraint::Min(n) | Constraint::Max(n) => n,
+            _ => intrinsic_extent(&child.node, axis).max(1),
+        }
+    } else {
+        intrinsic_extent(&child.node, axis)
+    }
+}
+
+fn intrinsic_extent(node: &WidgetNode, axis: Direction) -> u16 {
+    let (content, block) = match node {
+        WidgetNode::Content { lines, block, .. } => {
+            // Fit sizing counts logical rows independently of the viewport width.
+            let extent = match axis {
+                Direction::Vertical => lines.len(),
+                Direction::Horizontal => lines.iter().map(Line::width).max().unwrap_or(0),
+            };
+            (extent.min(u16::MAX as usize) as u16, block)
+        }
+        WidgetNode::Container {
+            children,
+            direction,
+            gap,
+            block,
+            ..
+        } => (children_extent(children, *direction, axis, *gap), block),
+        WidgetNode::Empty => return 0,
     };
-
-    let overhead = border_padding_overhead(hints, overhead_axis);
-    Constraint::Length(content_size.saturating_add(overhead))
+    content.saturating_add(block.as_ref().map_or(0, |spec| spec.overhead(axis)))
 }
 
-/// Estimate the minimum height a constraint needs.
-fn constraint_min_height(c: &Constraint) -> u16 {
-    match c {
-        Constraint::Length(n) | Constraint::Min(n) => *n,
-        Constraint::Fill(_) => 1,
-        Constraint::Percentage(_) => 1,
-        Constraint::Max(n) => *n,
-        _ => 1,
-    }
-}
-
-/// Estimate the minimum width a constraint needs.
-fn constraint_min_width(c: &Constraint) -> u16 {
-    match c {
-        Constraint::Length(n) | Constraint::Min(n) => *n,
-        Constraint::Fill(_) => 1,
-        Constraint::Percentage(_) => 1,
-        Constraint::Max(n) => *n,
-        _ => 1,
-    }
-}
-
-/// Border + padding cells consumed along the main axis.
+/// Border, title, and padding cells consumed along the requested axis.
 fn border_padding_overhead(hints: &StyleHints, dir: Direction) -> u16 {
-    match dir {
-        Direction::Vertical => {
-            let b = u16::from(hints.borders.intersects(Borders::TOP))
-                + u16::from(hints.borders.intersects(Borders::BOTTOM));
-            b + hints.padding.top + hints.padding.bottom
-        }
-        Direction::Horizontal => {
-            let b = u16::from(hints.borders.intersects(Borders::LEFT))
-                + u16::from(hints.borders.intersects(Borders::RIGHT));
-            b + hints.padding.left + hints.padding.right
-        }
-    }
+    hints_to_block(hints).map_or(0, |block| block.overhead(dir))
 }
 
 /// `<slot>` — renders the caller's slot children (or the element's own children
@@ -1065,13 +1291,23 @@ fn build_slot(
     _parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> WidgetChild {
-    let (nodes, slot_ctx) = if let Some((slot_nodes, slot_ctx_box)) = &ctx.slot {
-        (slot_nodes.as_slice(), slot_ctx_box.as_ref())
+    let (nodes, slot_ctx, caller_slot) = if let Some(frame) = slot {
+        (frame.nodes, frame.context, frame.caller_slot)
+    } else if let Some((slot_nodes, slot_ctx_box)) = &ctx.slot {
+        (slot_nodes.as_slice(), slot_ctx_box.as_ref(), None)
     } else {
-        (el.children.as_slice(), ctx)
+        (el.children.as_slice(), ctx, slot)
     };
-    let children = build_children(nodes, slot_ctx, Direction::Vertical, inherited, renderer);
+    let children = build_children(
+        nodes,
+        slot_ctx,
+        Direction::Vertical,
+        inherited,
+        renderer,
+        caller_slot,
+    );
     WidgetChild {
         node: WidgetNode::Container {
             direction: Direction::Vertical,
@@ -1099,13 +1335,35 @@ fn build_slot_rotate(
     ctx: &TemplateContext,
     parent_dir: Direction,
     inherited: Style,
+    renderer: &mut BufferRenderer,
+    classes: &[String],
 ) -> WidgetChild {
-    let phrases = slot_rotate_child_phrases(&el.children).unwrap_or_default();
-    let interval_ms = slot_rotate_interval_ms(el, ctx);
-    let line = current_slot_rotate_line(&phrases, interval_ms, current_unix_ms());
+    let phrases = match slot_rotate_child_phrases(&el.children) {
+        Ok(phrases) => phrases,
+        Err(message) => {
+            renderer
+                .build_error
+                .get_or_insert_with(|| CrepusError::render(message));
+            return WidgetChild {
+                node: WidgetNode::Empty,
+                constraint: Constraint::Length(0),
+            };
+        }
+    };
+    let interval_ms = slot_rotate_interval_ms(el, ctx).max(1);
+    let line = current_slot_rotate_line(&phrases, interval_ms, renderer.now_ms);
+    if phrases.len() > 1 {
+        let next = renderer
+            .now_ms
+            .saturating_add(interval_ms - renderer.now_ms % interval_ms);
+        renderer.next_redraw_ms = Some(
+            renderer
+                .next_redraw_ms
+                .map_or(next, |previous| previous.min(next)),
+        );
+    }
 
-    let classes = active_classes(el, ctx);
-    let hints = parse_classes(&classes);
+    let hints = parse_classes(classes);
     let constraint = hints.constraint_for(parent_dir);
     let style = inherited.patch(hints.to_style());
 
@@ -1144,11 +1402,11 @@ fn current_slot_rotate_line(phrases: &[String], interval_ms: u64, now_ms: u64) -
         return Line::raw("");
     }
     let interval = interval_ms.max(1);
-    let idx = ((now_ms / interval) as usize) % phrases.len();
+    let idx = ((now_ms / interval) % phrases.len() as u64) as usize;
     Line::raw(phrases[idx].clone())
 }
 
-fn current_unix_ms() -> u64 {
+pub(crate) fn current_unix_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1162,15 +1420,23 @@ fn build_if(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let body = if eval_condition(ctx, &block.condition) {
+    let condition = match ctx.eval_condition(&block.condition) {
+        Ok(condition) => condition,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
+    let body = if condition {
         &block.then_children
     } else if let Some(ref else_children) = block.else_children {
         else_children
     } else {
         return vec![];
     };
-    build_children(body, ctx, parent_dir, inherited, renderer)
+    build_children(body, ctx, parent_dir, inherited, renderer, slot)
 }
 
 fn build_for(
@@ -1179,54 +1445,70 @@ fn build_for(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let items = ctx.get_list_ref(&block.iterator);
     let mut out = Vec::new();
+    let result = for_each_loop_context(block, ctx, |child_ctx| {
+        out.extend(build_children(
+            &block.body,
+            child_ctx,
+            parent_dir,
+            inherited,
+            renderer,
+            slot,
+        ));
+        renderer.build_error.is_none()
+    });
+    if let Err(error) = result {
+        renderer.build_error.get_or_insert(error);
+    }
+    out
+}
+
+fn for_each_loop_context(
+    block: &ForBlock,
+    ctx: &TemplateContext,
+    mut visit: impl FnMut(&TemplateContext) -> bool,
+) -> Result<(), CrepusError> {
+    let TemplateValue::List(items) = eval_expr(&block.iterator, ctx)? else {
+        return Ok(());
+    };
     let mut child_ctx = ctx.clone();
     let pattern = block.pattern.trim();
     let has_pattern = !pattern.is_empty();
-    // Keys written by the previous iteration, so the scope can be restored in
-    // time proportional to the item instead of re-cloning the whole context
-    // (which holds the item list itself) on every pass.
-    let mut written: Vec<String> = Vec::new();
+    let mut overwritten = Vec::new();
     for item_ctx in items {
-        let item_str = if has_pattern {
-            item_ctx.get_str("value")
-        } else {
-            String::new()
-        };
-        // Restore child_ctx
-        for key in written.drain(..) {
-            match ctx.vars.get(&key) {
-                Some(v) => {
-                    child_ctx.vars.insert(key, v.clone());
+        // Merge all fields from the item context into the child context.
+        for (k, v) in &item_ctx.vars {
+            overwritten.push((k.clone(), child_ctx.vars.insert(k.clone(), v.clone())));
+        }
+        if has_pattern {
+            let value = item_ctx
+                .get("value")
+                .cloned()
+                .unwrap_or_else(|| TemplateValue::Scope(item_ctx.clone()));
+            overwritten.push((
+                pattern.to_string(),
+                child_ctx.vars.insert(pattern.to_string(), value),
+            ));
+        }
+        let keep_going = visit(&child_ctx);
+        // Move parent values back; reverse also restores duplicate field/alias writes.
+        for (key, value) in overwritten.drain(..).rev() {
+            match value {
+                Some(value) => {
+                    child_ctx.vars.insert(key, value);
                 }
                 None => {
                     child_ctx.vars.remove(&key);
                 }
             }
         }
-        // Merge all fields from the item context into the child context.
-        for (k, v) in &item_ctx.vars {
-            child_ctx.vars.insert(k.clone(), v.clone());
-            written.push(k.clone());
+        if !keep_going {
+            break;
         }
-        // Bind the loop pattern variable to the item's "value" field if present.
-        if has_pattern && !item_str.is_empty() {
-            child_ctx
-                .vars
-                .insert(pattern.to_string(), TemplateValue::Str(item_str));
-            written.push(pattern.to_string());
-        }
-        out.extend(build_children(
-            &block.body,
-            &child_ctx,
-            parent_dir,
-            inherited,
-            renderer,
-        ));
     }
-    out
+    Ok(())
 }
 
 fn build_match(
@@ -1235,39 +1517,60 @@ fn build_match(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
-    let val = value_to_str(&eval_value(&block.expr, ctx));
+    let val = match eval_expr(&block.expr, ctx) {
+        Ok(value) => value_to_str(&value),
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
     for arm in &block.arms {
-        let pattern = arm.pattern.trim();
-        let matched = if pattern == "_" {
-            true
-        } else if pattern.starts_with('"') && pattern.ends_with('"') {
-            pattern[1..pattern.len() - 1] == *val
-        } else {
-            pattern == val
-        };
-        if matched {
-            return build_children(&arm.body, ctx, parent_dir, inherited, renderer);
+        if matches_pattern(&arm.pattern, &val) {
+            return build_children(&arm.body, ctx, parent_dir, inherited, renderer, slot);
         }
     }
     vec![]
+}
+
+fn matches_pattern(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern == "_" {
+        true
+    } else if let Some(literal) = pattern.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        crepuscularity_core::parser::unescape_crepus_text_literal(literal) == value
+    } else {
+        pattern == value
+    }
 }
 
 fn prepare_include_context(
     inc: &IncludeNode,
     ctx: &TemplateContext,
     full_path: &std::path::Path,
-) -> TemplateContext {
+) -> Result<TemplateContext, CrepusError> {
     let mut child_ctx = TemplateContext::new();
     child_ctx.base_dir = full_path.parent().map(|p| p.to_path_buf());
     child_ctx.virtual_files = ctx.virtual_files.clone();
+    for key in [
+        "crepus_target",
+        "is_tui",
+        "is_gui",
+        "is_web",
+        "crepus_platform",
+        "is_macos",
+        "is_windows",
+        "is_linux",
+    ] {
+        if let Some(value) = ctx.get(key) {
+            child_ctx.vars.insert(key.into(), value.clone());
+        }
+    }
     for (key, expr) in &inc.props {
-        child_ctx.vars.insert(key.clone(), eval_value(expr, ctx));
+        child_ctx.vars.insert(key.clone(), eval_expr(expr, ctx)?);
     }
-    if !inc.slot.is_empty() {
-        child_ctx.slot = Some((inc.slot.clone(), Arc::new(ctx.clone())));
-    }
-    child_ctx
+    Ok(child_ctx)
 }
 
 fn build_include(
@@ -1276,7 +1579,11 @@ fn build_include(
     parent_dir: Direction,
     inherited: Style,
     renderer: &mut BufferRenderer,
+    slot: Option<&SlotFrame<'_>>,
 ) -> Vec<WidgetChild> {
+    if renderer.include_depth >= 64 {
+        return error_children("include nesting limit exceeded (64)");
+    }
     // Split `path#ComponentName` if present.
     let (file_path, component_name) = if let Some((f, c)) = inc.path.split_once('#') {
         (f, Some(c))
@@ -1294,26 +1601,89 @@ fn build_include(
         Ok(c) => c,
         Err(e) => return error_children(&e.to_string()),
     };
-    let child_ctx = prepare_include_context(inc, ctx, &full_path);
+    let child_ctx = match prepare_include_context(inc, ctx, &full_path) {
+        Ok(child_ctx) => child_ctx,
+        Err(error) => {
+            renderer.build_error.get_or_insert(error);
+            return vec![];
+        }
+    };
 
     // Pull the cached parsed nodes (or parse + cache on miss / re-parse on
     // invalidation). Missing or invalid includes retain the existing inline
     // warning-node behaviour and MUST NOT be cached.
-    let cached_nodes = match renderer.load_include(&full_path, component_name, &content) {
+    let cached_nodes = match renderer.load_include(
+        &full_path,
+        &if component_name.is_some() {
+            full_path.clone()
+        } else {
+            include_frontend_path(&full_path, file_path)
+        },
+        component_name,
+        &content,
+    ) {
         Ok(nodes) => nodes,
         Err(error_nodes) => return error_nodes,
     };
-    build_children(&cached_nodes, &child_ctx, parent_dir, inherited, renderer)
+    let frame = SlotFrame {
+        nodes: &inc.slot,
+        context: ctx,
+        caller_slot: slot,
+    };
+    let child_slot = (!inc.slot.is_empty()).then_some(&frame);
+    renderer.include_depth += 1;
+    let children = build_children(
+        &cached_nodes,
+        &child_ctx,
+        parent_dir,
+        inherited,
+        renderer,
+        child_slot,
+    );
+    renderer.include_depth -= 1;
+    children
 }
 
 // ─── Phase 2: Paint ───────────────────────────────────────────────────────────
 
 /// Recursively render a `WidgetNode` tree into `frame` at `area`.
 pub fn paint_node(node: &WidgetNode, frame: &mut Frame, area: Rect) {
-    paint_node_buf(node, frame.buffer_mut(), area);
+    paint_node_buf(node, frame.buffer_mut(), area, false, false);
 }
 
-fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
+fn paint_node_buf(
+    node: &WidgetNode,
+    buf: &mut Buffer,
+    area: Rect,
+    natural_height: bool,
+    wrap_text: bool,
+) {
+    if matches!(node,
+        WidgetNode::Content { block: Some(spec), .. }
+            | WidgetNode::Container { block: Some(spec), .. } if spec.invisible
+    ) {
+        return;
+    }
+    let visible = area.intersection(buf.area);
+    if visible.is_empty() {
+        return;
+    }
+    if visible.width != area.width {
+        // Preserve logical wrapping, alignment and borders before cropping horizontally.
+        let mut scratch = Buffer::empty(Rect::new(area.x, visible.y, area.width, visible.height));
+        for y in visible.y..visible.bottom() {
+            for x in visible.x..visible.right() {
+                scratch[(x, y)] = buf[(x, y)].clone();
+            }
+        }
+        paint_node_buf(node, &mut scratch, area, natural_height, wrap_text);
+        for y in visible.y..visible.bottom() {
+            for x in visible.x..visible.right() {
+                buf[(x, y)] = std::mem::take(&mut scratch[(x, y)]);
+            }
+        }
+        return;
+    }
     match node {
         WidgetNode::Container {
             direction,
@@ -1327,9 +1697,8 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
         } => {
             // Fill background / draw border, then recurse into the inner area.
             let inner = if let Some(spec) = block {
-                let b = spec.to_block().style(*style);
-                let inner = b.inner(area);
-                b.render(area, buf);
+                let inner = spec.to_block().inner(area);
+                spec.render_clipped(*style, buf, area);
                 inner
             } else if *style != Style::default() {
                 // Background colour only — no border.
@@ -1348,9 +1717,17 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
                     *scroll_bottom,
                     inner,
                 )
-                .paint(buf);
+                .paint(buf, natural_height);
             } else {
-                paint_children_buf(children, buf, inner, *direction, *gap);
+                paint_children_buf(
+                    children,
+                    buf,
+                    inner,
+                    *direction,
+                    *gap,
+                    natural_height,
+                    wrap_text,
+                );
             }
         }
 
@@ -1360,16 +1737,23 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
             block,
             alignment,
         } => {
-            let text = Text::from(lines.clone());
-            let para = Paragraph::new(text)
+            let inner = if let Some(spec) = block {
+                let inner = spec.to_block().inner(area);
+                spec.render_clipped(*style, buf, area);
+                inner
+            } else {
+                area
+            };
+            let visible = inner.intersection(buf.area);
+            if visible.is_empty() {
+                return;
+            }
+            Paragraph::new(Text::from(lines.clone()))
                 .style(*style)
                 .alignment(*alignment)
-                .wrap(Wrap { trim: false });
-            if let Some(spec) = block {
-                para.block(spec.to_block()).render(area, buf);
-            } else {
-                para.render(area, buf);
-            }
+                .wrap(Wrap { trim: false })
+                .scroll((visible.y - inner.y, 0))
+                .render(visible, buf);
         }
 
         WidgetNode::Empty => {}
@@ -1381,12 +1765,14 @@ fn paint_node_buf(node: &WidgetNode, buf: &mut Buffer, area: Rect) {
 fn constraint_preferred(c: &Constraint, total: u16) -> u16 {
     match c {
         Constraint::Length(v) | Constraint::Min(v) | Constraint::Max(v) => *v,
-        Constraint::Percentage(p) => (u32::from(total) * u32::from(*p) / 100) as u16,
+        Constraint::Percentage(p) => {
+            (u32::from(total) * u32::from(*p) / 100).min(u32::from(u16::MAX)) as u16
+        }
         Constraint::Ratio(a, b) => {
             if *b == 0 {
                 0
             } else {
-                (u64::from(total) * u64::from(*a) / u64::from(*b)) as u16
+                (u64::from(total) * u64::from(*a) / u64::from(*b)).min(u64::from(u16::MAX)) as u16
             }
         }
         Constraint::Fill(_) => 0,
@@ -1422,6 +1808,16 @@ fn constraint_floor(c: &Constraint) -> u16 {
 /// `Flex::Legacy`), then proportional shrinking from the end when the children
 /// overflow.
 fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap: u16) -> Vec<Rect> {
+    split_area_with_minima(constraints, area, direction, gap, &[])
+}
+
+fn split_area_with_minima(
+    constraints: &[Constraint],
+    area: Rect,
+    direction: Direction,
+    gap: u16,
+    minima: &[u16],
+) -> Vec<Rect> {
     let n = constraints.len();
     if n == 0 {
         return Vec::new();
@@ -1430,19 +1826,25 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
         Direction::Horizontal => area.width,
         Direction::Vertical => area.height,
     };
-    let spacing = gap.saturating_mul((n as u16).saturating_sub(1));
-    let avail = u32::from(total.saturating_sub(spacing));
+    let spacing = gap.saturating_mul(n.saturating_sub(1).min(u16::MAX as usize) as u16);
+    let avail = u64::from(total.saturating_sub(spacing));
 
-    let mut sizes: Vec<u32> = constraints
+    let mut sizes: Vec<u64> = constraints
         .iter()
-        .map(|c| u32::from(constraint_preferred(c, total)))
+        .enumerate()
+        .map(|(i, c)| {
+            u64::from(constraint_preferred(c, total).max(minima.get(i).copied().unwrap_or(0)))
+        })
         .collect();
-    let sum: u32 = sizes.iter().sum();
+    let sum: u64 = sizes.iter().sum();
 
     if sum < avail {
         let extra = avail - sum;
-        let weights: Vec<u32> = constraints.iter().map(constraint_grow_weight).collect();
-        let wsum: u32 = weights.iter().sum();
+        let weights: Vec<u64> = constraints
+            .iter()
+            .map(|constraint| u64::from(constraint_grow_weight(constraint)))
+            .collect();
+        let wsum: u64 = weights.iter().sum();
         if let Some(base) = extra.checked_div(wsum) {
             let mut used = 0;
             for (i, w) in weights.iter().enumerate() {
@@ -1470,7 +1872,7 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
             if deficit == 0 {
                 break;
             }
-            let floor = u32::from(constraint_floor(&constraints[i]));
+            let floor = u64::from(constraint_floor(&constraints[i]));
             let slack = sizes[i].saturating_sub(floor);
             let cut = slack.min(deficit);
             sizes[i] -= cut;
@@ -1489,16 +1891,16 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
     // Clamp `Max` constraints after distribution so a `Max(v)` never exceeds v.
     for (i, c) in constraints.iter().enumerate() {
         if let Constraint::Max(v) = c {
-            sizes[i] = sizes[i].min(u32::from(*v));
+            sizes[i] = sizes[i].min(u64::from(*v));
         }
     }
 
     let mut out = Vec::with_capacity(n);
-    let mut offset = u32::from(match direction {
+    let mut offset = u64::from(match direction {
         Direction::Horizontal => area.x,
         Direction::Vertical => area.y,
     });
-    let end = offset + u32::from(total);
+    let end = offset + u64::from(total);
     for size in sizes {
         let start = offset.min(end);
         let len = size.min(end - start);
@@ -1506,7 +1908,7 @@ fn split_area(constraints: &[Constraint], area: Rect, direction: Direction, gap:
             Direction::Horizontal => Rect::new(start as u16, area.y, len as u16, area.height),
             Direction::Vertical => Rect::new(area.x, start as u16, area.width, len as u16),
         });
-        offset = start + len + u32::from(gap);
+        offset = start + len + u64::from(gap);
     }
     out
 }
@@ -1517,18 +1919,136 @@ fn paint_children_buf(
     area: Rect,
     direction: Direction,
     gap: u16,
+    natural_height: bool,
+    wrap_text: bool,
 ) {
     if children.is_empty() {
         return;
     }
-    let constraints: Vec<Constraint> = children.iter().map(|c| c.constraint).collect();
-    let chunks = split_area(&constraints, area, direction, gap);
+    let constraints: Vec<Constraint> = children
+        .iter()
+        .map(|child| {
+            if direction == Direction::Vertical
+                && (natural_height || (wrap_text && auto_text_height(child)))
+            {
+                Constraint::Length(scroll_child_height(child, direction, area.width))
+            } else {
+                child.constraint
+            }
+        })
+        .collect();
+    let minima: Vec<_> = if wrap_text && !natural_height && direction == Direction::Vertical {
+        children
+            .iter()
+            .map(|child| scroll_child_height(child, direction, area.width))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let chunks = split_area_with_minima(&constraints, area, direction, gap, &minima);
 
     for (i, child) in children.iter().enumerate() {
         if let Some(&chunk) = chunks.get(i) {
-            paint_node_buf(&child.node, buf, chunk);
+            paint_node_buf(
+                &child.node,
+                buf,
+                chunk,
+                natural_height && natural_child_height(child, direction),
+                wrap_text && natural_child_height(child, direction),
+            );
         }
     }
+}
+
+fn natural_child_height(child: &WidgetChild, direction: Direction) -> bool {
+    direction != Direction::Vertical
+        || auto_text_height(child)
+        || !matches!(
+            child.constraint,
+            Constraint::Length(_) | Constraint::Min(_) | Constraint::Max(_)
+        )
+}
+
+fn auto_text_height(child: &WidgetChild) -> bool {
+    matches!(&child.node, WidgetNode::Content { block: Some(spec), .. } if spec.auto_height)
+}
+
+fn scroll_child_height(child: &WidgetChild, direction: Direction, width: u16) -> u16 {
+    if natural_child_height(child, direction) {
+        scroll_node_height(&child.node, width).max(1)
+    } else {
+        child_extent(child, direction, Direction::Vertical)
+    }
+}
+
+fn scroll_children_height(
+    children: &[WidgetChild],
+    direction: Direction,
+    gap: u16,
+    width: u16,
+) -> u16 {
+    if direction == Direction::Vertical {
+        let gaps = children.len().saturating_sub(1).min(u16::MAX as usize) as u16;
+        children
+            .iter()
+            .map(|child| scroll_child_height(child, direction, width))
+            .fold(0u16, u16::saturating_add)
+            .saturating_add(gap.saturating_mul(gaps))
+    } else {
+        let constraints: Vec<_> = children.iter().map(|child| child.constraint).collect();
+        let chunks = split_area(&constraints, Rect::new(0, 0, width, 0), direction, gap);
+        children
+            .iter()
+            .zip(chunks)
+            .map(|(child, area)| scroll_node_height(&child.node, area.width))
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+fn scroll_node_height(node: &WidgetNode, width: u16) -> u16 {
+    let (content, block) = match node {
+        WidgetNode::Content {
+            lines,
+            block,
+            alignment,
+            ..
+        } => {
+            let inner_width = width.saturating_sub(
+                block
+                    .as_ref()
+                    .map_or(0, |spec| spec.overhead(Direction::Horizontal)),
+            );
+            let height = Paragraph::new(Text::from(lines.clone()))
+                .alignment(*alignment)
+                .wrap(Wrap { trim: false })
+                .line_count(inner_width);
+            (height.min(u16::MAX as usize) as u16, block)
+        }
+        WidgetNode::Container {
+            children,
+            direction,
+            gap,
+            block,
+            ..
+        } => {
+            let inner_width = width.saturating_sub(
+                block
+                    .as_ref()
+                    .map_or(0, |spec| spec.overhead(Direction::Horizontal)),
+            );
+            (
+                scroll_children_height(children, *direction, *gap, inner_width),
+                block,
+            )
+        }
+        WidgetNode::Empty => return 0,
+    };
+    content.saturating_add(
+        block
+            .as_ref()
+            .map_or(0, |spec| spec.overhead(Direction::Vertical)),
+    )
 }
 
 struct Scrollable<'a> {
@@ -1559,62 +2079,100 @@ impl<'a> Scrollable<'a> {
         }
     }
 
-    fn total_content_height(&self) -> u16 {
-        let n = self.children.len() as u16;
-        let total_gap = self.gap.saturating_mul(n.saturating_sub(1));
-        let sum: u16 = self
-            .children
+    fn total_content_height(&self) -> usize {
+        self.children
             .iter()
-            .map(|c| constraint_min_height(&c.constraint))
-            .sum();
-        sum.saturating_add(total_gap)
+            .map(|child| {
+                usize::from(scroll_child_height(
+                    child,
+                    self.direction,
+                    self.viewport.width,
+                ))
+            })
+            .fold(0usize, usize::saturating_add)
+            .saturating_add(
+                usize::from(self.gap).saturating_mul(self.children.len().saturating_sub(1)),
+            )
     }
 
-    fn clamped_offset(&self) -> usize {
-        let total = self.total_content_height() as usize;
-        let max = total.saturating_sub(self.viewport.height as usize);
+    fn clamped_offset(&self, total_height: usize) -> usize {
+        let max = total_height.saturating_sub(usize::from(self.viewport.height));
         if self.scroll_to_bottom {
             return max;
         }
         self.scroll_offset.min(max)
     }
 
-    fn paint(&self, buf: &mut Buffer) {
-        if self.children.is_empty() || self.viewport.height == 0 {
+    fn paint(&self, buf: &mut Buffer, natural_height: bool) {
+        let visible = self.viewport.intersection(buf.area);
+        if self.children.is_empty() || visible.is_empty() {
             return;
         }
         if self.direction != Direction::Vertical {
-            paint_children_buf(self.children, buf, self.viewport, self.direction, self.gap);
+            paint_children_buf(
+                self.children,
+                buf,
+                self.viewport,
+                self.direction,
+                self.gap,
+                natural_height,
+                true,
+            );
             return;
         }
         let total_height = self.total_content_height();
-        if total_height <= self.viewport.height {
-            paint_children_buf(self.children, buf, self.viewport, self.direction, self.gap);
+        if total_height <= usize::from(self.viewport.height) {
+            paint_children_buf(
+                self.children,
+                buf,
+                self.viewport,
+                self.direction,
+                self.gap,
+                natural_height,
+                true,
+            );
             return;
         }
-        let offset = self.clamped_offset();
-        let virtual_area = Rect::new(0, 0, self.viewport.width, total_height);
-        let mut virtual_buf = Buffer::empty(virtual_area);
-        let constraints: Vec<Constraint> = self.children.iter().map(|c| c.constraint).collect();
-        let chunks = split_area(&constraints, virtual_area, self.direction, self.gap);
-        let vis_start = offset as u16;
-        let vis_end = vis_start + self.viewport.height;
-        for (i, child) in self.children.iter().enumerate() {
-            if let Some(&chunk) = chunks.get(i) {
-                if chunk.bottom() <= vis_start || chunk.y >= vis_end {
-                    continue;
+        let vis_start =
+            self.clamped_offset(total_height) + usize::from(visible.y - self.viewport.y);
+        let vis_end = vis_start.saturating_add(usize::from(visible.height));
+        let mut viewport_buf = Buffer::empty(Rect::new(0, 0, self.viewport.width, visible.height));
+        let mut child_start = 0usize;
+        for child in self.children {
+            let height = scroll_child_height(child, self.direction, self.viewport.width);
+            let child_end = child_start.saturating_add(usize::from(height));
+            let start = child_start.max(vis_start);
+            let end = child_end.min(vis_end);
+            if start < end {
+                // Keep Ratatui coordinates local while logical list offsets remain usize.
+                let local_start = (start - child_start) as u16;
+                let rows = (end - start) as u16;
+                let mut child_buf =
+                    Buffer::empty(Rect::new(0, local_start, self.viewport.width, rows));
+                paint_node_buf(
+                    &child.node,
+                    &mut child_buf,
+                    Rect::new(0, 0, self.viewport.width, height),
+                    natural_child_height(child, self.direction),
+                    natural_child_height(child, self.direction),
+                );
+                for y in 0..rows {
+                    for x in 0..self.viewport.width {
+                        viewport_buf[(x, (start - vis_start) as u16 + y)] =
+                            std::mem::take(&mut child_buf[(x, local_start + y)]);
+                    }
                 }
-                paint_node_buf(&child.node, &mut virtual_buf, chunk);
             }
-        }
-        for y in 0..self.viewport.height {
-            let src_y = offset as u16 + y;
-            if src_y >= total_height {
+            child_start = child_end.saturating_add(usize::from(self.gap));
+            if child_start >= vis_end {
                 break;
             }
-            for x in 0..self.viewport.width {
-                let cell = std::mem::take(&mut virtual_buf[(x, src_y)]);
-                buf[(self.viewport.x + x, self.viewport.y + y)] = cell;
+        }
+        for y in 0..visible.height {
+            for x in 0..visible.width {
+                let src_x = visible.x - self.viewport.x + x;
+                let cell = std::mem::take(&mut viewport_buf[(src_x, y)]);
+                buf[(visible.x + x, visible.y + y)] = cell;
             }
         }
     }
@@ -1622,19 +2180,56 @@ impl<'a> Scrollable<'a> {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Resolve active classes for an element (static + conditional).
-fn active_classes(el: &Element, ctx: &TemplateContext) -> Vec<String> {
-    let mut classes: Vec<String> = el
-        .classes
+fn element_is_hidden(
+    el: &Element,
+    ctx: &TemplateContext,
+    classes: &[String],
+) -> Result<bool, CrepusError> {
+    if classes.iter().any(|class| class == "hidden") {
+        return Ok(true);
+    }
+    for binding in &el.bindings {
+        if binding.prop.eq_ignore_ascii_case("hidden")
+            && !matches!(
+                crepuscularity_core::eval::eval_binding(binding, ctx)?,
+                None | Some(TemplateValue::Bool(false) | TemplateValue::Null)
+            )
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn element_is_statically_unfocusable(el: &Element) -> bool {
+    el.classes
         .iter()
-        .filter_map(|c| active_class(ctx, &interpolate_str(ctx, c)))
-        .collect();
+        .any(|class| matches!(class.as_str(), "hidden" | "invisible"))
+        || el.bindings.iter().any(|binding| {
+            binding.prop.eq_ignore_ascii_case("hidden")
+                && eval_literal(&binding.value).is_some_and(|value| {
+                    if binding.origin == BindingOrigin::Attribute {
+                        !matches!(value, TemplateValue::Null)
+                    } else {
+                        !matches!(value, TemplateValue::Bool(false) | TemplateValue::Null)
+                    }
+                })
+        })
+}
+
+/// Resolve active classes for an element (static + conditional).
+fn active_classes(el: &Element, ctx: &TemplateContext) -> Result<Vec<String>, CrepusError> {
+    let mut classes = Vec::new();
+    for class in &el.classes {
+        classes.extend(
+            ctx.interpolate(class)?
+                .split_whitespace()
+                .filter_map(|token| active_class(ctx, token)),
+        );
+    }
     for binding in &el.bindings {
         if binding.origin == BindingOrigin::Attribute && binding.matches_prop("class") {
-            // As with existing TUI scalar bindings, evaluation errors render as null.
-            if let Some(value) =
-                crepuscularity_core::eval::eval_binding(binding, ctx).unwrap_or(None)
-            {
+            if let Some(value) = crepuscularity_core::eval::eval_binding(binding, ctx)? {
                 classes.extend(
                     value_to_str(&value)
                         .split_whitespace()
@@ -1644,13 +2239,15 @@ fn active_classes(el: &Element, ctx: &TemplateContext) -> Vec<String> {
         }
     }
     for cc in &el.conditional_classes {
-        if eval_condition(ctx, &cc.condition) {
-            if let Some(class) = active_class(ctx, &interpolate_str(ctx, &cc.class)) {
-                classes.push(class);
-            }
+        if ctx.eval_condition(&cc.condition)? {
+            classes.extend(
+                ctx.interpolate(&cc.class)?
+                    .split_whitespace()
+                    .filter_map(|token| active_class(ctx, token)),
+            );
         }
     }
-    classes
+    Ok(classes)
 }
 
 fn active_class(ctx: &TemplateContext, class: &str) -> Option<String> {
@@ -1665,7 +2262,11 @@ fn active_class(ctx: &TemplateContext, class: &str) -> Option<String> {
     Some(class.to_string())
 }
 
-fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> ScrollConfig {
+fn scroll_config(
+    el: &Element,
+    ctx: &TemplateContext,
+    classes: &[String],
+) -> Result<ScrollConfig, CrepusError> {
     let scrollable = classes.iter().any(|class| {
         matches!(
             class.as_str(),
@@ -1673,22 +2274,23 @@ fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> Scr
         )
     });
     if !scrollable {
-        return ScrollConfig::default();
+        return Ok(ScrollConfig::default());
     }
     let scroll_to_bottom = el
         .bindings
         .iter()
         .find(|b| b.prop == "scroll-bottom" && b.origin != BindingOrigin::Attribute)
-        .map(|b| {
-            let v = eval_value(&b.value, ctx);
-            match v {
+        .map(|b| -> Result<bool, CrepusError> {
+            let v = eval_expr(&b.value, ctx)?;
+            Ok(match v {
                 TemplateValue::Bool(b) => b,
                 _ => {
                     let s = value_to_str(&v);
                     s == "true" || s == "1"
                 }
-            }
+            })
         })
+        .transpose()?
         .unwrap_or(false);
     let offset = el
         .bindings
@@ -1700,18 +2302,19 @@ fn scroll_config(el: &Element, ctx: &TemplateContext, classes: &[String]) -> Scr
                     "scroll-offset" | "scroll-y" | "scroll"
                 )
         })
-        .map(|binding| value_to_str(&eval_value(&binding.value, ctx)))
+        .map(|binding| eval_expr(&binding.value, ctx).map(|value| value_to_str(&value)))
+        .transpose()?
         .or_else(|| {
             let value = ctx.get_str("scroll_offset");
             (!value.is_empty()).then_some(value)
         })
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
-    ScrollConfig {
+    Ok(ScrollConfig {
         offset,
         scroll_to_bottom,
         scrollable: true,
-    }
+    })
 }
 
 #[derive(Default)]
@@ -1742,16 +2345,19 @@ fn known_target_prefix(prefix: &str) -> bool {
     )
 }
 
-/// Build a ratatui `Line` from a `TextPart` slice.
-fn build_line(parts: &[TextPart], ctx: &TemplateContext) -> Line<'static> {
-    let spans: Vec<Span<'static>> = parts
-        .iter()
-        .map(|part| match part {
-            TextPart::Literal(s) => Span::raw(s.clone()),
-            TextPart::Expr(expr) => Span::raw(value_to_str(&eval_value(expr, ctx))),
-        })
-        .collect();
-    Line::from(spans)
+/// Resolve text parts before splitting lines, including newlines across parts.
+fn build_lines(
+    parts: &[TextPart],
+    ctx: &TemplateContext,
+) -> Result<Vec<Line<'static>>, CrepusError> {
+    let mut content = String::new();
+    for part in parts {
+        match part {
+            TextPart::Literal(text) => content.push_str(text),
+            TextPart::Expr(expr) => content.push_str(&value_to_str(&eval_expr(expr, ctx)?)),
+        }
+    }
+    Ok(Text::raw(content).lines)
 }
 
 /// Convert `StyleHints` into a `BlockSpec` if borders / title / padding are needed.
@@ -1770,6 +2376,8 @@ fn hints_to_block(hints: &StyleHints) -> Option<BlockSpec> {
         title: hints.title.clone(),
         title_alignment: hints.title_alignment,
         padding: hints.padding,
+        auto_height: false,
+        invisible: false,
     })
 }
 
@@ -1837,6 +2445,22 @@ mod slot_rotate_tests {
     }
 
     #[test]
+    fn current_slot_rotate_line_preserves_large_tick_counts() {
+        let phrases = lines(&["one", "two", "three"]);
+        for (interval, now, expected) in [
+            (1, u32::MAX as u64, "one"),
+            (1, u32::MAX as u64 + 1, "two"),
+            (1000, (u32::MAX as u64 + 2) * 1000, "three"),
+            (1, u64::MAX, "one"),
+        ] {
+            assert_eq!(
+                rendered(current_slot_rotate_line(&phrases, interval, now)),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn current_slot_rotate_line_handles_empty() {
         let line = current_slot_rotate_line(&[], 1000, 12345);
         assert_eq!(rendered(line), "");
@@ -1865,58 +2489,82 @@ mod slot_rotate_tests {
 }
 
 #[cfg(test)]
-mod binding_origin_tests {
+mod constraint_size_tests {
     use super::*;
 
-    fn element(source: &str) -> Element {
-        let nodes =
-            crepuscularity_core::parse_template_with_path(source, Some(Path::new("view.ng")))
-                .unwrap();
-        let Node::Element(el) = nodes.into_iter().next().unwrap() else {
-            panic!("element expected")
+    #[test]
+    fn large_child_counts_do_not_wrap_spacing_or_total_sizes() {
+        let area = Rect::new(0, 0, 10, 1);
+        let constraints = vec![Constraint::Length(u16::MAX); 65538];
+        let chunks = split_area(&constraints, area, Direction::Horizontal, 0);
+        assert_eq!(chunks[0].width, 10);
+        assert!(chunks[1..].iter().all(|chunk| chunk.width == 0));
+        let constraints = vec![Constraint::Fill(1); 65537];
+        let chunks = split_area(&constraints, area, Direction::Horizontal, 1);
+        assert!(chunks.iter().all(|chunk| chunk.width == 0));
+    }
+
+    #[test]
+    fn preferred_sizes_clamp_before_narrowing() {
+        assert_eq!(
+            constraint_preferred(&Constraint::Percentage(u16::MAX), u16::MAX),
+            u16::MAX
+        );
+        assert_eq!(
+            constraint_preferred(&Constraint::Ratio(u32::MAX, 1), u16::MAX),
+            u16::MAX
+        );
+        assert_eq!(constraint_preferred(&Constraint::Percentage(50), 100), 50);
+        assert_eq!(constraint_preferred(&Constraint::Ratio(1, 2), 100), 50);
+        assert_eq!(constraint_preferred(&Constraint::Ratio(1, 0), 100), 0);
+    }
+}
+
+#[cfg(test)]
+mod loop_visit_tests {
+    use super::*;
+
+    #[test]
+    fn a_stopped_loop_does_not_visit_remaining_rows() {
+        let nodes = parse_template("for item in items\n  span \"{item}\"").unwrap();
+        let Node::For(block) = &nodes[0] else {
+            panic!("expected loop");
         };
-        el
-    }
-
-    #[test]
-    fn attribute_class_is_literal_and_null_is_absent() {
         let mut ctx = TemplateContext::new();
-        ctx.set("classes", "text-red-500 {missing}");
-        let el = element("<div [attr.CLASS]=\"classes\"></div>");
-        assert_eq!(active_classes(&el, &ctx), ["text-red-500", "{missing}"]);
-        assert!(active_classes(&element("<div [attr.CLASS]=\"null\"></div>"), &ctx).is_empty());
+        let mut row = TemplateContext::new();
+        row.set("value", 1);
+        ctx.set("items", TemplateValue::List(vec![row; 3]));
+        let mut visits = 0;
+        for_each_loop_context(block, &ctx, |child| {
+            visits += 1;
+            assert_eq!(child.get_str("item"), "1");
+            false
+        })
+        .unwrap();
+        assert_eq!(visits, 1);
+        assert!(!ctx.vars.contains_key("item"));
     }
+}
 
+#[cfg(test)]
+mod attribute_interval_tests {
+    use super::*;
     #[test]
-    fn attribute_names_do_not_activate_tui_control_paths() {
-        let ctx = TemplateContext::new();
-        let attr = element("<div [attr.interval]=\"99\" [attr.scroll-bottom]=\"true\" [attr.scroll-offset]=\"7\"></div>");
-        assert_eq!(slot_rotate_interval_ms(&attr, &ctx), 3200);
-        let config = scroll_config(&attr, &ctx, &["overflow-scroll".into()]);
-        assert_eq!(config.offset, 0);
-        assert!(!config.scroll_to_bottom);
-        let ordinary =
-            element("<div [interval]=\"99\" [scroll-bottom]=\"true\" [scroll-offset]=\"7\"></div>");
-        assert_eq!(slot_rotate_interval_ms(&ordinary, &ctx), 99);
-        let config = scroll_config(&ordinary, &ctx, &["overflow-scroll".into()]);
-        assert_eq!(config.offset, 7);
-        assert!(config.scroll_to_bottom);
-    }
-
-    #[test]
-    fn null_attribute_title_is_omitted_while_false_is_literal() {
-        let ctx = TemplateContext::new();
-        for (value, expected) in [("null", false), ("false", true)] {
-            let el = element(&format!(
-                "<div class=\"border\" [attr.TITLE]=\"{value}\">Body</div>"
-            ));
-            let area = Rect::new(0, 0, 20, 3);
-            let mut buffer = Buffer::empty(area);
-            BufferRenderer::new()
-                .render_nodes(&[Node::Element(el)], &ctx, &mut buffer, area)
-                .unwrap();
-            let top: String = (0..20).map(|x| buffer[(x, 0)].symbol()).collect();
-            assert_eq!(top.contains("false"), expected, "{top}");
+    fn html_interval_attributes_do_not_configure_rotation() {
+        for (binding, expected) in [("[attr.interval]", 3200), ("[interval]", 99)] {
+            let source = format!("<slot-rotate {binding}='99'>one<!--split-->two</slot-rotate>");
+            let nodes = crepuscularity_core::parse_template_with_path(
+                &source,
+                Some(std::path::Path::new("view.ng")),
+            )
+            .unwrap();
+            let Node::Element(element) = &nodes[0] else {
+                panic!()
+            };
+            assert_eq!(
+                slot_rotate_interval_ms(element, &TemplateContext::new()),
+                expected
+            );
         }
     }
 }

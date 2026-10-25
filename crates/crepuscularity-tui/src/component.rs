@@ -69,6 +69,8 @@ impl ComponentRegistry {
         );
     }
 
+    /// Register named components and defaults from a component file. Relative includes
+    /// use the render context base_dir; supply the file parent for file-backed components.
     pub fn register_file(&mut self, path: &Path) -> Result<(), CrepusError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| CrepusError::render(format!("component file error: {:?}: {}", path, e)))?;
