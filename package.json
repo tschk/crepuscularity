@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "@happy-dom/global-registrator": "^20.11.2"
+    "@happy-dom/global-registrator": "^20.11.2",
+    "jsdom": "^29.1.1"
   }
 }

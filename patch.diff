@@ -1,0 +1,22 @@
+--- docs-site/runtime/src/lib.rs
++++ docs-site/runtime/src/lib.rs
+@@ -801,15 +801,15 @@
+     }
+
+     if let (Some(existing_label), Some(incoming_label)) = (
+-        existing_row.query_selector("span")?,
+-        incoming_row.query_selector("span")?,
++        existing_row.first_element_child(),
++        incoming_row.first_element_child(),
+     ) {
+         existing_label.set_inner_html(&incoming_label.inner_html());
+     }
+
+     let (Some(existing_value), Some(incoming_value)) = (
+-        existing_row.query_selector("b")?,
+-        incoming_row.query_selector("b")?,
++        existing_row.last_element_child(),
++        incoming_row.last_element_child(),
+     ) else {
+         return Ok(());
+     };
