@@ -1,0 +1,26 @@
+fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name: &str) -> String {
+    let ttl = esc(title);
+    let site = esc(site_name);
+    let a = esc(&theme.accent);
+    let s = esc(&theme.surface);
+    let t = esc(&theme.text);
+    let m = esc(&theme.muted);
+    let b = esc(&theme.border);
+
+    let script = include_str!("docs_script.js");
+    let mut style = include_str!("docs_style.css").to_string();
+    style = style.replace("{a}", &a);
+    style = style.replace("{s}", &s);
+    style = style.replace("{t}", &t);
+    style = style.replace("{m}", &m);
+    style = style.replace("{b}", &b);
+
+    let mut template = include_str!("docs_template.html").to_string();
+    template = template.replace("{ttl}", &ttl);
+    template = template.replace("{site}", &site);
+    template = template.replace("{nav}", nav);
+    template = template.replace("{body}", body);
+    template = template.replace("{style}", &style);
+    template = template.replace("{script}", script);
+    template
+}
