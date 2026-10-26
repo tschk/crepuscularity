@@ -381,6 +381,48 @@ void main() {
   });
 
   group('limits', () {
+    test('very deep and cyclic raw input is rejected before decoding', () {
+      Map<String, Object?> node = {'kind': 'text', 'content': 'leaf'};
+      for (var i = 0; i < 20000; i++) {
+        node = {
+          'kind': 'stack',
+          'children': [node],
+        };
+      }
+      expect(
+        ViewIr.fromJson({
+          'version': IR_VERSION,
+          'root': [node],
+        }).root,
+        isEmpty,
+      );
+      final cycle = <String, Object?>{'kind': 'if'};
+      cycle['thenChildren'] = [cycle];
+      expect(ViewNode.fromJson(node), isA<UnsupportedNode>());
+      expect(ViewNode.fromJson(cycle), isA<UnsupportedNode>());
+      expect(
+        ViewIr.fromJson({
+          'root': [cycle],
+        }).root,
+        isEmpty,
+      );
+    });
+
+    test('document custom limits may exceed single-node defaults', () {
+      Map<String, Object?> node = {'kind': 'text', 'content': 'leaf'};
+      for (var i = 0; i < 10; i++) {
+        node = {
+          'kind': 'stack',
+          'children': [node],
+        };
+      }
+      expect(ViewNode.fromJson(node), isA<UnsupportedNode>());
+      final ir = ViewIr.fromJson({
+        'root': [node],
+      }, limits: const CrepusLimits(maxDepth: 12));
+      expect(ir.root.single, isA<StackNode>());
+    });
+
     test('a document exactly at the node cap is kept', () {
       final root = List.generate(60, (i) => {'kind': 'text', 'content': '$i'});
       expect(ViewIr.fromJson({'version': 5, 'root': root}).root, hasLength(60));

@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity_macros"
-version = "0.5.12"
+version = "0.5.13"
 edition = "2021"
 license = "ISC"
 description = "Compile-time view! macro for Crepuscularity templates (UNSTABLE; in active development)."
@@ -18,7 +18,7 @@ proc-macro = true
 path = "src/lib.rs"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.0" }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }

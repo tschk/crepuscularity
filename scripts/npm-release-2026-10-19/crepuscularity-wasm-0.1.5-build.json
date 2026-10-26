@@ -1,0 +1,24 @@
+{
+  "builtFromSource": "2c397d226d0fe65cd4f141ba7057c2a2d2a34ed3",
+  "builtAtUtc": "2026-10-19T15:29:55.549110+00:00",
+  "npmPackage": "@tschk/crepuscularity-wasm@0.1.5",
+  "rustCrate": "crepuscularity-wasm@0.1.2",
+  "target": "wasm32-unknown-unknown",
+  "profile": "release",
+  "wasmBindgen": "wasm-bindgen 0.2.126",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "artifactSha256": {
+    "crates/crepuscularity-wasm/npm/browser/crepuscularity_wasm_bg.wasm": "0c7b3bcf46cfb800895a27820d52baa0290027f8a221d2904afb1678d7fb1347",
+    "crates/crepuscularity-wasm/npm/wasm/crepuscularity_wasm_bg.wasm": "0c7b3bcf46cfb800895a27820d52baa0290027f8a221d2904afb1678d7fb1347",
+    "crates/crepuscularity-wasm/pkg/crepuscularity_wasm_bg.wasm": "0c7b3bcf46cfb800895a27820d52baa0290027f8a221d2904afb1678d7fb1347"
+  },
+  "checks": {
+    "parserAndInstalledNodeBun": {
+      "passed": 72,
+      "failed": 0,
+      "assertions": 285
+    },
+    "chromiumWorkerSixFrontends": "passed",
+    "webkitWorkerSixFrontends": "passed"
+  }
+}

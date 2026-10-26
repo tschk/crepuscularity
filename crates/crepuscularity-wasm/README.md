@@ -15,7 +15,11 @@ ir_version() -> u32
 ```
 
 `parse_template_json` selects a parser frontend from `filename`'s extension, so
-`.crepus`, `.jsx`/`.tsx`, `.svelte` and `.vue` all reach the same IR.
+`.crepus`, `.jsx`/`.tsx`, `.svelte`, `.vue`, `.astro`, and Angular component
+templates (`*.component.html`, `*.ng.html`, `*.ng`) all reach the same IR.
+View IR currently stores one bare handler per event. Modifiers and repeated
+handlers for the same event are rejected during lowering rather than discarded.
+The HTML renderer has a richer event contract.
 
 The IR crosses the boundary as a JSON string rather than a structured
 `JsValue`: it avoids a `serde-wasm-bindgen` dependency, and `JSON.parse` on one
@@ -24,8 +28,8 @@ string beats field-by-field reflection for trees of any real size.
 ## Building
 
 Requires the `wasm32-unknown-unknown` target and a `wasm-bindgen` CLI matching
-the `wasm-bindgen` crate version — `build.sh` installs a matching one if they
-have drifted.
+the `wasm-bindgen` crate version, plus Bun for the JavaScript smoke tests.
+`build.sh` reports a version mismatch; put a matching CLI on `PATH` to build.
 
 ```sh
 ./build.sh

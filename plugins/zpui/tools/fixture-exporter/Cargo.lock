@@ -74,7 +74,7 @@ version = "0.1.0"
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "caseless",
  "crepuscularity-colors",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-native"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "crepuscularity-core",
  "serde",

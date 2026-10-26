@@ -1,6 +1,6 @@
 [package]
 name = "crepuscularity-tauri-macros"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "ISC"
 description = "Command macros for crepuscularity-tauri."
@@ -10,6 +10,7 @@ repository = "https://github.com/tschk/crepuscularity"
 proc-macro = true
 
 [dependencies]
+heck = "0.5"
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }

@@ -331,7 +331,6 @@ fn imported_components_reject_unimplemented_vue_wrapper_and_slot_semantics() {
         "<Child :style=\"props.label\"/>",
         "<Child :children=\"props.label\"/>",
         "<Child v-model=\"props.label\"/>",
-        "<Child ref=\"child\"/>",
         "<Child :key=\"props.label\"/>",
         "<Child :is=\"props.label\"/>",
         "<Child :innerHTML=\"props.label\"/>",

@@ -180,6 +180,72 @@ mod mobile_tests {
     }
 
     #[test]
+    fn mobile_http_waits_for_a_complete_request_line() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            mobile::handle_mobile_dev_stream(&mut stream, &test_state()).unwrap();
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        client.write_all(b"GET /i").unwrap();
+        let mut byte = [0];
+        let error = client
+            .read(&mut byte)
+            .expect_err("must not respond to a partial request line");
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        client.write_all(b"r HTTP/1.1\r\n\r\n").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        server.join().unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("Hi"), "{response}");
+    }
+
+    #[test]
+    fn mobile_http_rejects_truncated_and_oversized_request_lines() {
+        use std::io::{Read, Write};
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        for request in [
+            "GET /health HTTP/1.1".to_owned(),
+            format!("GET /health {}\r\n", "x".repeat(4096)),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                mobile::handle_mobile_dev_stream(&mut stream, &test_state()).unwrap();
+            });
+            let mut client = TcpStream::connect(address).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            client.write_all(request.as_bytes()).unwrap();
+            client.shutdown(Shutdown::Write).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            server.join().unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 400 Bad Request"),
+                "{response}"
+            );
+        }
+    }
+
+    #[test]
     fn health_response_reports_sequence() {
         let response = mobile_dev_response("/health", &test_state());
         assert!(response.starts_with("HTTP/1.1 200 OK"));
@@ -205,6 +271,53 @@ mod mobile_tests {
         assert!(response.contains("event: crepus-mobile"));
         assert!(response.contains("\"sequence\":7"));
         assert!(response.contains("\"kind\":\"fullReload\""));
+    }
+
+    #[test]
+    fn refresh_included_template_uses_last_good_ir() {
+        let (_temp, state) = temp_state("div\n  \"Before\"");
+        let mut state = state;
+        state.ctx.base_dir = state
+            .template_path
+            .parent()
+            .map(std::path::Path::to_path_buf);
+        let child = state.template_path.with_file_name("child.crepus");
+        std::fs::write(&child, "\"Before\"").unwrap();
+        let source = "div\n  include child.crepus";
+        std::fs::write(&state.template_path, source).unwrap();
+        *state.last_template.write().unwrap() = source.into();
+        let mut previous: crepuscularity_native::ViewIr =
+            serde_json::from_str(&state.last_ir_json.read().unwrap()).unwrap();
+        std::fs::write(&child, "\"After\"").unwrap();
+        refresh_mobile_state(&state);
+        assert!(
+            state.last_ir_json.read().unwrap().contains("After"),
+            "{:?}",
+            state.last_event.read().unwrap()
+        );
+        assert!(matches!(
+            state.last_event.read().unwrap().message,
+            HotReloadMessage::Patch { .. }
+        ));
+        if let HotReloadMessage::Patch { mutations } = &state.last_event.read().unwrap().message {
+            crepuscularity_native::apply_mutations(&mut previous, mutations).unwrap();
+        }
+        let cached: crepuscularity_native::ViewIr =
+            serde_json::from_str(&state.last_ir_json.read().unwrap()).unwrap();
+        assert_eq!(previous, cached);
+        assert!(std::fs::read_to_string(state.root.join("fixture.json"))
+            .unwrap()
+            .contains("After"));
+        std::fs::remove_file(&child).unwrap();
+        refresh_mobile_state(&state);
+        assert!(matches!(
+            state.last_event.read().unwrap().message,
+            HotReloadMessage::Error { .. }
+        ));
+        assert!(state.last_ir_json.read().unwrap().contains("After"));
+        std::fs::write(&child, "\"Recovered\"").unwrap();
+        refresh_mobile_state(&state);
+        assert!(state.last_ir_json.read().unwrap().contains("Recovered"));
     }
 
     #[test]
@@ -336,6 +449,33 @@ android {
     }
 
     #[test]
+    fn gradle_kts_value_ignores_only_unquoted_line_comments() {
+        for (source, expected) in [
+            (
+                r#"applicationId = "dev.app" // release identity"#,
+                "dev.app",
+            ),
+            (r#"applicationId="dev.app"//comment"#, "dev.app"),
+            (r#"applicationId = "" // empty"#, ""),
+            ("applicationId = dev.app // legacy bare value", "dev.app"),
+            (
+                r#"applicationId = "https://example.test" // suffix"#,
+                "https://example.test",
+            ),
+            (
+                r#"applicationId = "dev.quoted\"//value" // suffix"#,
+                r#"dev.quoted\"//value"#,
+            ),
+        ] {
+            assert_eq!(
+                gradle_kts_value(source, "applicationId").as_deref(),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn android_component_uses_generated_shell_package() {
         assert_eq!(
             android_main_activity_component("hk.tsc.acme"),
@@ -358,7 +498,7 @@ targets:
             &main_bundle_id(project),
             ShareExtensionPlatform::Ios,
         );
-        assert!(target.contains("  AcmeShare:"));
+        assert!(target.contains("  \"AcmeShare\":"));
         assert!(target.contains("type: app-extension"));
         assert!(target.contains("platform: iOS"));
         assert!(target.contains("path: ShareExtension"));
@@ -370,7 +510,7 @@ targets:
     fn macos_share_target_uses_macos_sources_and_rust_target() {
         let target =
             share_extension_target("AcmeMacShare", "hk.tsc.acme", ShareExtensionPlatform::Macos);
-        assert!(target.contains("  AcmeMacShare:"));
+        assert!(target.contains("  \"AcmeMacShare\":"));
         assert!(target.contains("platform: macOS"));
         assert!(target.contains("path: MacShareExtension"));
         assert!(target.contains("aarch64-apple-darwin"));
@@ -442,6 +582,36 @@ scheme = "CrepusMobileApp"
         let gradle = fs::read_to_string(android_dir.join("app/build.gradle.kts")).unwrap();
         assert!(gradle.contains("namespace = \"hk.tsc.acme\""));
         assert!(gradle.contains("applicationId = \"hk.tsc.acme\""));
+    }
+
+    #[test]
+    fn android_identity_rewrites_preserve_suffix_and_comments() {
+        let temp = tempfile::tempdir().unwrap();
+        let android = temp.path().join("android");
+        fs::create_dir_all(android.join("app")).unwrap();
+        let path = android.join("app/build.gradle.kts");
+        fs::write(&path, "android {\n  namespace = \"old.namespace\" // namespace note\n  defaultConfig {\n    applicationIdSuffix = \".debug\" // suffix note\n    applicationId = \"old.app\" // identity note\n  }\n}\n").unwrap();
+        apply_android_config(
+            &android,
+            &MobileAndroidConfig {
+                application_id: Some("new.app".into()),
+                namespace: Some("new.namespace".into()),
+            },
+        );
+        let result = fs::read_to_string(path).unwrap();
+        assert!(
+            result.contains("applicationIdSuffix = \".debug\" // suffix note"),
+            "{result}"
+        );
+        assert!(
+            result.contains("applicationId = \"new.app\" // identity note"),
+            "{result}"
+        );
+        assert!(
+            result.contains("namespace = \"new.namespace\" // namespace note"),
+            "{result}"
+        );
+        assert_eq!(result.matches("applicationId =").count(), 1, "{result}");
     }
 
     #[test]

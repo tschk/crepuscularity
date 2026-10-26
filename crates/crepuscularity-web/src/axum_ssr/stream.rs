@@ -1,8 +1,9 @@
-//! Streaming SSR: renders head shell synchronously, flushes, then sends body chunks.
+//! Streaming SSR: renders on a blocking thread, sending the head before body chunks.
 //!
 //! The HTML5 document shell (`<!DOCTYPE html>` + `<head>` section) is rendered and flushed
-//! immediately so the browser can start loading external resources (fonts, CSS, etc.)
+//! first so the browser can start loading external resources (fonts, CSS, etc.)
 //! while the body is still rendering. The rendered body content follows as a second chunk.
+use crate::ssr::{append_hydration_payload, render_document_head};
 use crate::{render_nodes_ssr, BindMap, SsrDocument};
 use axum::body::Body;
 use axum::response::{IntoResponse, Response};
@@ -14,33 +15,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// Render the HTML5 document head synchronously and return it as bytes.
-/// The head includes `<!DOCTYPE html>` + `<html>` + `<head>... </head>`.
-/// Caller must append `<body>` + body content + `</body></html>`.
-fn render_document_head(doc: &SsrDocument<'_>) -> String {
-    let body_class = doc
-        .body_class
-        .map(|c| format!(r#" class="{}""#, crate::escape_html(c)))
-        .unwrap_or_default();
-    let title_esc = doc
-        .title
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;");
-    format!(
-        "<!DOCTYPE html>\n<html lang=\"{}\">\n<head>\n  <meta charset=\"utf-8\">\n  \
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  \
-         <title>{}</title>\n</head>\n<body{}>\n",
-        crate::escape_html(doc.lang),
-        title_esc,
-        body_class
-    )
-}
-
 /// Stream an SSR response with true head-first streaming.
 ///
-/// Renders the HTML5 document head and sends it immediately as the first chunk.
+/// Renders the HTML5 document head in a blocking task and sends it as the first chunk.
 /// The body is rendered via [`render_nodes_ssr`] and sent as subsequent chunks.
 /// The closing `</body></html>` is appended as the final chunk.
 ///
@@ -52,22 +29,18 @@ pub async fn stream_ssr_response_with_nodes(
 ) -> Response {
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
 
-    // Build head shell string (moved into the closure for sending)
-    let head_html = render_document_head(&doc);
-
-    // Spawn body rendering on blocking thread
+    // Build and send the head before rendering the body on the blocking thread.
     tokio::task::spawn_blocking(move || {
-        // ponytail: flush head first so browser starts loading resources early.
-        // If the channel is full, body render will wait — head is already in flight.
-        let _ = tx.blocking_send(Result::<Vec<u8>, std::io::Error>::Ok(
-            head_html.as_bytes().to_vec(),
-        ));
+        let head_html = render_document_head(&doc);
+        if tx.blocking_send(Ok(head_html.into_bytes())).is_err() {
+            return;
+        }
 
         let counter = Cell::new(0u32);
         let mut bind = BindMap::new();
         let render_result =
             render_nodes_ssr(&nodes, &ctx, &counter, &mut bind, true).and_then(|mut html| {
-                crate::ssr::append_hydration_payload(&mut html, &ctx, &bind)?;
+                append_hydration_payload(&mut html, &ctx, &bind)?;
                 Ok(html)
             });
         let body: String = match render_result {
@@ -75,7 +48,7 @@ pub async fn stream_ssr_response_with_nodes(
             Err(e) => {
                 let err = format!(
                     "<pre style='color:red'>Render error: {}</pre>\n</body>\n</html>\n",
-                    e
+                    crate::escape_html(&e.to_string())
                 );
                 let _ = tx.blocking_send(Result::<Vec<u8>, std::io::Error>::Ok(err.into_bytes()));
                 return;
@@ -83,7 +56,7 @@ pub async fn stream_ssr_response_with_nodes(
         };
         let _ = tx.blocking_send(Result::<Vec<u8>, std::io::Error>::Ok(body.into_bytes()));
         let _ = tx.blocking_send(Result::<Vec<u8>, std::io::Error>::Ok(Vec::from(
-            "</body>\n</html>\n",
+            "\n</body>\n</html>\n",
         )));
     });
 
@@ -105,11 +78,17 @@ pub async fn stream_ssr_response(
     ctx: TemplateContext,
     doc: SsrDocument<'static>,
 ) -> Response {
-    let nodes: Arc<Vec<Node>> = match crepuscularity_core::ast_cache::parse_content(&template) {
+    let parsed = tokio::task::spawn_blocking(move || {
+        crepuscularity_core::ast_cache::parse_content(&template).map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("spawn_blocking panicked: {e}")));
+    let nodes = match parsed {
         Ok(n) => n,
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("content-type", "text/plain; charset=utf-8")
                 .body(Body::from(format!("Template parse error: {e}")))
                 .unwrap();
         }

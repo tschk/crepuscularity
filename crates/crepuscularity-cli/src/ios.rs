@@ -1,7 +1,7 @@
-//! `crepus ios` — XcodeGen + SwiftPM **NativeShell** host app scaffolding (View IR demos).
+//! `crepus ios` — SwiftPM **NativeShell** host app scaffolding (View IR demos).
 //!
-//! Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) for
-//! `crepus ios generate` / `crepus ios build`.
+//! Default generation uses the built-in Apple project generator. Explicit `--spec`
+//! uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`wax install xcodegen`).
 //!
 //! **`crepus.toml`** at the app root stores `[ios]` (`scheme`, `destination`).
 //! `generate` / `build` walk up from the current directory until they find it (or `--dir` pins the root).
@@ -35,8 +35,7 @@ pub fn execute(cmd: IosCommands) {
         IosCommands::New { name } => scaffold_ios_app(&name),
         IosCommands::Generate { dir, spec } => {
             let (root, cfg) = resolve_ios_root_and_config(&dir);
-            let _ = spec;
-            generate_project(&root, &cfg);
+            generate_project(&root, &cfg, spec.as_deref());
         }
         IosCommands::Build {
             build,
@@ -47,11 +46,10 @@ pub fn execute(cmd: IosCommands) {
         } => {
             let options = build.into_options_or_exit();
             let (root, cfg) = resolve_ios_root_and_config(&dir);
-            let _ = spec;
             let scheme = scheme.unwrap_or(cfg.scheme.clone());
             let destination = destination.unwrap_or(cfg.ios_destination.clone());
-            generate_project(&root, &cfg);
-            run_xcodebuild(&root, &scheme, &destination, &cfg, options);
+            let project = generate_project(&root, &cfg, spec.as_deref());
+            run_xcodebuild(&root, &project, &scheme, &destination, &cfg, options);
         }
     }
 }
@@ -145,6 +143,26 @@ fn legacy_config_from_project_yml(root: &Path) -> Option<IosSection> {
     })
 }
 
+// Keep the authored directory/display name separate from generated Swift identifiers.
+fn swift_app_stem(name: &str) -> String {
+    let normalized: String = name
+        .chars()
+        .map(|ch| {
+            if unicode_ident::is_xid_continue(ch) || matches!(ch, '-' | '_' | ' ') {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let stem = to_pascal_case(&normalized);
+    if stem.is_empty() {
+        "Crepus".into()
+    } else {
+        stem
+    }
+}
+
 fn scaffold_ios_app(name: &str) {
     let t0 = Instant::now();
     let dir = Path::new(name);
@@ -152,7 +170,9 @@ fn scaffold_ios_app(name: &str) {
         ui::error(&format!("'{}' already exists", name));
     }
 
-    let pascal = to_pascal_case(name);
+    scaffold::create_project_dir(dir).unwrap_or_else(|e| ui::error(&e));
+
+    let pascal = swift_app_stem(name);
     let app_target = app_target_name(&pascal);
 
     let native = dir.join("NativeShell");
@@ -324,9 +344,51 @@ Replace `fixture.json` under `NativeShell/Sources/NativeShell/` when you change 
     )
 }
 
-fn generate_project(dir: &Path, cfg: &IosSection) {
+fn generate_project(dir: &Path, cfg: &IosSection, spec: Option<&str>) -> PathBuf {
+    if let Some(spec) = spec {
+        if !dir.join(spec).is_file() {
+            ui::error(&format!(
+                "XcodeGen spec not found: {}",
+                dir.join(spec).display()
+            ));
+        }
+        let resolved = Command::new("xcodegen")
+            .current_dir(dir)
+            .args(["dump", "--spec", spec, "--type", "json"])
+            .output()
+            .unwrap_or_else(|e| ui::error(&format!("xcodegen dump: {e}")));
+        if !resolved.status.success() {
+            ui::error(&format!(
+                "xcodegen dump failed: {}",
+                String::from_utf8_lossy(&resolved.stderr).trim()
+            ));
+        }
+        let resolved: serde_json::Value = serde_json::from_slice(&resolved.stdout)
+            .unwrap_or_else(|e| ui::error(&format!("invalid xcodegen dump JSON: {e}")));
+        let name = resolved["name"]
+            .as_str()
+            .filter(|name| {
+                !name.is_empty() && Path::new(name).file_name() == Some(std::ffi::OsStr::new(name))
+            })
+            .unwrap_or_else(|| ui::error("xcodegen dump lacks a valid project name"));
+        let project = dir.join(format!("{name}.xcodeproj"));
+        let status = Command::new("xcodegen")
+            .current_dir(dir)
+            .args(["generate", "--spec", spec, "--project", "."])
+            .status()
+            .unwrap_or_else(|e| ui::error(&format!("xcodegen: {e}")));
+        if !status.success() {
+            ui::error("xcodegen generate failed");
+        }
+        if !project.is_dir() {
+            ui::error(&format!("xcodegen did not create {}", project.display()));
+        }
+        eprintln!("{}", style("project: ok").green());
+        return project;
+    }
+
     let bundle_id = cfg.bundle_id.as_deref().unwrap_or("dev.crepuscularity.app");
-    crate::apple_project::generate(
+    let project = crate::apple_project::generate(
         dir,
         crate::apple_project::Config {
             name: &cfg.scheme,
@@ -339,22 +401,17 @@ fn generate_project(dir: &Path, cfg: &IosSection) {
     )
     .unwrap_or_else(|e| ui::error(&e));
     eprintln!("{}", style("project: ok").green());
+    project
 }
 
 fn run_xcodebuild(
     dir: &Path,
+    proj: &Path,
     scheme: &str,
     destination: &str,
     cfg: &IosSection,
     options: BuildOptions,
 ) {
-    let proj = find_xcodeproj(dir).unwrap_or_else(|| {
-        ui::error(&format!(
-            "no .xcodeproj in {} — run `crepus ios generate` first",
-            dir.display()
-        ));
-    });
-
     let proj_name = proj
         .file_name()
         .and_then(|n| n.to_str())
@@ -398,13 +455,28 @@ fn run_xcodebuild(
     eprintln!("{}", style("xcodebuild: ok").green());
 }
 
-fn find_xcodeproj(dir: &Path) -> Option<PathBuf> {
-    let rd = fs::read_dir(dir).ok()?;
-    for ent in rd.flatten() {
-        let p = ent.path();
-        if p.extension().is_some_and(|e| e == "xcodeproj") {
-            return Some(p);
+#[cfg(test)]
+mod identifier_tests {
+    #[test]
+    fn swift_app_stems_preserve_valid_unicode_and_replace_punctuation() {
+        for (name, expected) in [
+            ("my.app", "MyApp"),
+            ("my\"app", "MyApp"),
+            ("my\napp", "MyApp"),
+            ("123-app", "_123App"),
+            ("snow 雪", "Snow雪"),
+            ("cafe\u{301}", "Cafe\u{301}"),
+            ("_\u{301}a", "_\u{301}a"),
+            ("normal-app_name", "NormalAppName"),
+            ("🦋", "Crepus"),
+            ("...", "Crepus"),
+        ] {
+            let stem = super::swift_app_stem(name);
+            assert_eq!(stem, expected, "{name:?}");
+            let mut chars = stem.chars();
+            let first = chars.next().unwrap();
+            assert!(first == '_' || unicode_ident::is_xid_start(first));
+            assert!(chars.all(unicode_ident::is_xid_continue));
         }
     }
-    None
 }

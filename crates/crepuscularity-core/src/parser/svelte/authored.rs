@@ -1232,7 +1232,11 @@ impl Markup<'_> {
                     (key.contains(':')
                         && !matches!(
                             key.as_str(),
-                            "bind:value" | "bind:checked" | "bind:files" | "bind:open"
+                            "bind:value"
+                                | "bind:checked"
+                                | "bind:files"
+                                | "bind:open"
+                                | "bind:group"
                         ))
                         || matches!(key.as_str(), "xmlns" | "is")
                         || key.starts_with("@attach")
@@ -1724,13 +1728,16 @@ impl Markup<'_> {
                     } else if !component && key == "checked" {
                         // Static HTML checked strings express presence, including the empty string.
                         out.push_str(&format!(" {key_out}={{true}}"));
-                        if name == "input" && !named_keys.iter().any(|key| key == "defaultChecked")
+                        if name == "input"
+                            && !intrinsic_spread
+                            && !named_keys.iter().any(|key| key == "defaultChecked")
                         {
                             out.push_str(" defaultChecked={true}");
                         }
                     } else {
                         out.push_str(&format!(" {key_out}=\"{}\"", value.replace('"', "&quot;")));
                         if name == "input"
+                            && !intrinsic_spread
                             && key == "value"
                             && !named_keys.iter().any(|key| key == "defaultValue")
                         {
@@ -1744,6 +1751,7 @@ impl Markup<'_> {
                 }
             }
             let reset_default = if name == "input"
+                && !intrinsic_spread
                 && !shorthand
                 && matches!(&attribute.value, JsxAttrValue::Bool(true))
             {
@@ -4209,6 +4217,7 @@ mod group_contract_tests {
         for source in [
             "<div bind:group={x}/>",
             "<input bind:group={x}/>",
+            "<input {...props} bind:group={x}/>",
             "<input type=\"text\" bind:group={x}/>",
             "<input type={kind} bind:group={x}/>",
             "<input type=\"radio\" bind:group={x} bind:group={y}/>",
@@ -4245,6 +4254,8 @@ mod intrinsic_spread_admission_tests {
     fn form_intrinsic_spreads_are_preserved() {
         for source in [
             "<input {...props}/>",
+            "<input type=\"checkbox\" {...props} bind:group={items}/>",
+            "<input type=\"radio\" {...props} bind:group={choice}/>",
             "<select {...props}/>",
             "<option {...props}/>",
             "<textarea {...props}/>",
@@ -4260,7 +4271,6 @@ mod intrinsic_spread_admission_tests {
     fn unverified_intrinsic_spread_combinations_remain_explicit_errors() {
         for source in [
             "<title {...props}/>",
-            "<input {...props} bind:group={items}/>",
             "<svelte:element this={tag} {...props}/>",
             "<svg><path {...props}/></svg>",
             "<math><mi {...props}/></math>",

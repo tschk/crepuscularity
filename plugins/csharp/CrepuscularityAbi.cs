@@ -19,26 +19,35 @@ public sealed class CrepusAbiSession : IDisposable
 
     public void SetTemplate(string template, string? baseDir = null)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (template.Contains('\0'))
+            throw new ArgumentException("Template must not contain NUL characters.", nameof(template));
+        if (baseDir?.Contains('\0') == true)
+            throw new ArgumentException("Base directory must not contain NUL characters.", nameof(baseDir));
         Check(Native.crepus_session_set_template_string(_session, template, baseDir));
     }
 
     public void SetContext(object context)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         Check(Native.crepus_session_set_context_json(_session, JsonSerializer.Serialize(context)));
     }
 
     public void PatchContext(object context)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         Check(Native.crepus_session_apply_context_patch_json(_session, JsonSerializer.Serialize(context)));
     }
 
     public JsonDocument RenderIr()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         return TakeJson(Native.crepus_session_render_ir_json(_session));
     }
 
     public JsonDocument DispatchEvent(object evt)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         return TakeJson(Native.crepus_session_dispatch_event_json(_session, JsonSerializer.Serialize(evt)));
     }
 
