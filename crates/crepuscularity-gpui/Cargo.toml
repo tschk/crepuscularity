@@ -45,7 +45,3 @@ crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" 
 crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", default-features = false }
 # gpui-symbols = { version = "0.6", optional = true } # incompatible with gpui-ce
 pollster = "0.4"
-
-[dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
-gpui_platform = { workspace = true, features = ["test-support"] }
