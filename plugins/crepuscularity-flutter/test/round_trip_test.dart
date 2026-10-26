@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:crepuscularity_flutter/crepuscularity_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +103,55 @@ Future<void> _expectAgreement(
 }
 
 void main() {
+  testWidgets('resolved source styles survive the IR boundary', (tester) async {
+    const source =
+        'text p-1.5 text-[18.5px] bg-[#1234] border-[2.5px] border-[#f008] rounded-[6px] opacity-25 tracking-wide "Styled"';
+    final node = viewIrFromSource(source).root.single as TextNode;
+    final ir = <String, Object?>{
+      'version': IR_VERSION,
+      'root': [
+        {
+          'kind': 'text',
+          'content': node.content,
+          'style': node.style!.toJson(),
+        },
+      ],
+    };
+    final rustSource = File('test/fixtures/styles.crepus').readAsStringSync();
+    expect(rustSource.trim(), source);
+    final rustIr =
+        jsonDecode(File('test/fixtures/styles.json').readAsStringSync())
+            as Map<String, Object?>;
+    final rustNode = ViewIr.fromJson(rustIr).root.single as TextNode;
+    expect(rustNode.style!.toJson(), node.style!.toJson());
+    for (final view in [
+      CrepusView.fromSource(source),
+      CrepusView.fromIr(ir),
+      CrepusView.fromIr(rustIr),
+    ]) {
+      await tester.pumpWidget(_host(view));
+      final text = find.text('Styled');
+      expect(tester.widget<Text>(text).style!.fontSize, 18.5);
+      expect(tester.widget<Text>(text).style!.letterSpacing, 0.4);
+      final opacity = find.ancestor(of: text, matching: find.byType(Opacity));
+      expect(tester.widget<Opacity>(opacity).opacity, 0.25);
+      final decoration = find.ancestor(
+        of: text,
+        matching: find.byType(DecoratedBox),
+      );
+      final box =
+          tester.widget<DecoratedBox>(decoration).decoration as BoxDecoration;
+      expect(box.color, const Color(0x44112233));
+      expect(
+        box.border,
+        Border.all(color: const Color(0x88ff0000), width: 2.5),
+      );
+      expect(box.borderRadius, BorderRadius.circular(6));
+      final padding = find.ancestor(of: text, matching: find.byType(Padding));
+      expect(tester.widget<Padding>(padding).padding, const EdgeInsets.all(6));
+    }
+  });
+
   testWidgets('a text document round trips', (tester) async {
     await _expectAgreement(
       tester,
@@ -250,7 +302,13 @@ scroll col
           'kind': 'scroll',
           'axis': 'column',
           'children': [
-            {'kind': 'text', 'content': 'inside'},
+            {
+              'kind': 'stack',
+              'axis': 'column',
+              'children': [
+                {'kind': 'text', 'content': 'inside'},
+              ],
+            },
           ],
         },
       ],
@@ -405,7 +463,7 @@ a href=https://example.com/docs target=_blank rel=noopener
     final style = viewIrFromSource(source).root.single.style!;
     expect(style.fontSize, 20);
     expect(style.fontWeight, 700);
-    expect(style.foregroundColor, '#ef4444');
+    expect(style.foregroundColor, '#fb2c36');
     expect(style.padding, 8);
 
     await tester.pumpWidget(_host(CrepusView.fromSource(source)));
@@ -422,7 +480,7 @@ a href=https://example.com/docs target=_blank rel=noopener
               'style': {
                 'fontSize': 20,
                 'fontWeight': 700,
-                'foregroundColor': '#ef4444',
+                'foregroundColor': '#fb2c36',
                 'padding': 8,
               },
             },

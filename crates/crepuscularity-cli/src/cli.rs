@@ -248,7 +248,11 @@ pub enum MoonshineCommands {
 pub enum WebEmitTarget {
     #[default]
     Html,
+    Imba,
+    React,
     Moonshine,
+    MoonshineDom,
+    MoonshineSsr,
     Svelte,
     Vue,
     Solid,
@@ -274,7 +278,7 @@ pub enum WebCommands {
         target_id: Option<String>,
         #[arg(long)]
         manifest: Option<PathBuf>,
-        /// Framework emit target (default: html WASM site). Non-html writes a stub under dist/.
+        /// Framework emit target (default: html WASM site). Non-html writes source components or authored module graphs under the output directory.
         #[arg(long, value_enum, default_value_t = WebEmitTarget::Html)]
         emit: WebEmitTarget,
     },

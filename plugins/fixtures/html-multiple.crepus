@@ -1,0 +1,6 @@
+span
+  "First <&\"雪"
+span
+  "Second"
+button @click="save"
+  "Action"

@@ -3,11 +3,10 @@ use crepuscularity_core::preprocess::{
     extract_head_block, google_font_css_family_name, google_fonts_head_markup,
     merge_unique_font_families, strip_indent_decorators,
 };
-use crepuscularity_core::{DriverCache, Fingerprint};
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -16,7 +15,7 @@ use crate::docs_generator;
 use crate::error::CrepusCliError;
 use crate::ui;
 use crate::wasm_bundle::{
-    cargo_build_wasm32, find_wasm_file, run_wasm_bindgen, run_wasm_opt, wasm_profile_dirs,
+    cargo_build_wasm32, find_wasm_file, run_wasm_bindgen, run_wasm_opt, wasm_profile_dir,
     WasmOptStatus,
 };
 use crepuscularity_web::{escape_html, render_bundle_with_ssr};
@@ -42,62 +41,56 @@ pub(crate) struct WebBuildArgs {
 }
 
 fn resolve_wasm_build_args(args: &WebBuildArgs) -> WasmBuildArgs {
-    if let Some(site_dir) = &args.site_dir {
-        let local_targets =
-            crate::crepus_toml::load_web_targets(Some(site_dir.join("crepus.toml")));
-        let picked = local_targets.as_ref().and_then(|targets| {
-            crate::crepus_toml::resolve_pick(targets, args.target_id.as_deref()).ok()
-        });
-        let out_dir = args
-            .out_dir
-            .clone()
-            .or_else(|| picked.as_ref().map(|target| target.out_dir.clone()))
-            .unwrap_or_else(|| site_dir.join("dist"));
-        let entry = args
-            .entry
-            .clone()
-            .or_else(|| picked.as_ref().map(|target| target.entry.clone()))
-            .unwrap_or_else(|| "index.crepus".into());
-        let meta = args
-            .meta
-            .clone()
-            .or_else(|| picked.as_ref().map(|target| target.meta.clone()));
-        return WasmBuildArgs {
-            site_dir: site_dir.clone(),
-            out_dir,
-            entry,
-            meta,
-            options: args.options,
-        };
+    let targets = if let Some(manifest) = &args.manifest {
+        crate::crepus_toml::load_web_targets(Some(manifest.clone()))
+    } else if let Some(site) = &args.site_dir {
+        // Manifest-target builds already supply resolved metadata; do not select again.
+        if args.meta.is_some() {
+            None
+        } else {
+            crate::crepus_toml::try_load_web_targets(Some(site.join("crepus.toml")))
+                .unwrap_or_else(|error| ui::error(&error))
+        }
+    } else {
+        crate::crepus_toml::load_web_targets(None)
+    };
+    let picked = targets.as_ref().map(|targets| {
+        crate::crepus_toml::resolve_pick(targets, args.target_id.as_deref())
+            .unwrap_or_else(|error| ui::error(&error))
+    });
+    if picked.is_none() && (args.manifest.is_some() || args.target_id.is_some()) {
+        let source = args
+            .manifest
+            .as_ref()
+            .or(args.site_dir.as_ref())
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "the current directory".into());
+        ui::error(&format!("cannot load web targets from {source}"));
     }
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Some(targets) = crate::crepus_toml::load_web_targets(args.manifest.clone()) {
-        let picked = crate::crepus_toml::resolve_pick(&targets, args.target_id.as_deref())
-            .unwrap_or_else(|m| ui::error(&m));
-        let out_dir = args.out_dir.clone().unwrap_or(picked.out_dir);
-        let entry = args.entry.clone().unwrap_or(picked.entry);
-        return WasmBuildArgs {
-            site_dir: picked.site_dir,
-            out_dir,
-            entry,
-            meta: Some(picked.meta),
-            options: args.options,
-        };
-    }
-
-    let site_dir = cwd;
+    let site_dir = args
+        .site_dir
+        .clone()
+        .or_else(|| picked.as_ref().map(|target| target.site_dir.clone()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let out_dir = args
         .out_dir
         .clone()
+        .or_else(|| picked.as_ref().map(|target| target.out_dir.clone()))
         .unwrap_or_else(|| site_dir.join("dist"));
-    let entry = args.entry.clone().unwrap_or_else(|| "index.crepus".into());
-
+    let entry = args
+        .entry
+        .clone()
+        .or_else(|| picked.as_ref().map(|target| target.entry.clone()))
+        .unwrap_or_else(|| "index.crepus".into());
+    let meta = args
+        .meta
+        .clone()
+        .or_else(|| picked.as_ref().map(|target| target.meta.clone()));
     WasmBuildArgs {
         site_dir,
         out_dir,
-        entry,
-        meta: args.meta.clone(),
+        entry: super::normalize_bundle_entry(&entry),
+        meta,
         options: args.options,
     }
 }
@@ -105,6 +98,7 @@ fn resolve_wasm_build_args(args: &WebBuildArgs) -> WasmBuildArgs {
 pub(crate) fn build_site_wasm(cli: &WebBuildArgs) {
     let t0 = Instant::now();
     let b = resolve_wasm_build_args(cli);
+    validate_static_output(&b.site_dir, &b.out_dir).unwrap_or_else(|error| ui::error(&error));
     let runtime_dir = b.site_dir.join("runtime");
     if !runtime_dir.join("Cargo.toml").is_file() {
         ui::error(&format!(
@@ -127,10 +121,8 @@ pub(crate) fn build_site_wasm(cli: &WebBuildArgs) {
 
     let mut files = load_and_validate_files(&b);
     let template_head_html = extract_and_render_head(&b.entry, &mut files);
-    let llms_site_text = files
-        .get(&b.entry)
-        .map(|source| render_crepus_readable_text(source));
-    let bundle_str = write_bundle_and_cache(&b, &files);
+    let llms_site_text = entry_readable_text(&b.entry, &files);
+    let bundle_str = write_bundle(&b, &files);
 
     let head = load_site_head(&b.site_dir);
     let head = merge_site_head_meta(head, b.meta.as_ref());
@@ -159,17 +151,29 @@ fn load_and_validate_files(b: &WasmBuildArgs) -> HashMap<String, String> {
     if files.is_empty() {
         ui::error(&format!("no .crepus files under {}", b.site_dir.display()));
     }
-    if !files.contains_key(&b.entry) {
+    let entry_path = b
+        .entry
+        .split_once('#')
+        .map_or(b.entry.as_str(), |(path, _)| path);
+    if !files.contains_key(entry_path) {
         ui::error(&format!(
             "entry {:?} not found in virtual file map (keys: {:?})",
             b.entry,
             files.keys().take(5).collect::<Vec<_>>()
         ));
     }
+    if let Some((path, name)) = b.entry.split_once('#') {
+        let components = crepuscularity_core::parse_component_file(&files[path])
+            .unwrap_or_else(|e| ui::error(&format!("parse entry {}: {e}", b.entry)));
+        if !components.components.contains_key(name) {
+            ui::error(&format!("component not found: {name} in {path}"));
+        }
+    }
     files
 }
 
 fn extract_and_render_head(entry: &str, files: &mut HashMap<String, String>) -> String {
+    let entry = entry.split_once('#').map_or(entry, |(path, _)| path);
     let mut template_head_html = String::new();
     if let Some(entry_content) = files.get(entry).cloned() {
         let (head_raw, body_raw) = extract_head_block(&entry_content);
@@ -181,7 +185,7 @@ fn extract_and_render_head(entry: &str, files: &mut HashMap<String, String>) -> 
     template_head_html
 }
 
-fn write_bundle_and_cache(b: &WasmBuildArgs, files: &HashMap<String, String>) -> String {
+fn write_bundle(b: &WasmBuildArgs, files: &HashMap<String, String>) -> String {
     let bundle = json!({
         "entry": b.entry,
         "files": files,
@@ -190,19 +194,16 @@ fn write_bundle_and_cache(b: &WasmBuildArgs, files: &HashMap<String, String>) ->
         ui::error(&format!("serialize bundle: {e}"));
     });
 
-    let _ = std::fs::create_dir_all(b.site_dir.join(".crepus-cache"));
-    let cache = DriverCache::open(&b.site_dir);
-    let fp = Fingerprint::new(&bundle_str, None, "web-wasm-bundle");
     std::fs::create_dir_all(&b.out_dir).unwrap_or_else(|e| {
         ui::error(&format!("mkdir {}: {e}", b.out_dir.display()));
     });
     let bundle_path = b.out_dir.join("crepus-bundle.json");
-    let skip_bundle_write = bundle_path.is_file() && cache.is_up_to_date(&fp, &bundle_str);
+    let skip_bundle_write = std::fs::read(&bundle_path)
+        .is_ok_and(|existing| existing.as_slice() == bundle_str.as_bytes());
     if !skip_bundle_write {
         std::fs::write(&bundle_path, &bundle_str).unwrap_or_else(|e| {
             ui::error(&format!("write {}: {e}", bundle_path.display()));
         });
-        cache.record(&fp, &bundle_str);
     }
     bundle_str
 }
@@ -238,8 +239,10 @@ fn generate_index_and_assets(
         .unwrap_or_else(|e| ui::error(&format!("write .nojekyll: {e}")));
     std::fs::write(b.out_dir.join("index.html"), index_html)
         .unwrap_or_else(|e| ui::error(&format!("write index.html: {e}")));
-    std::fs::write(b.out_dir.join("app.js"), super::WEB_APP_JS)
-        .unwrap_or_else(|e| ui::error(&format!("write app.js: {e}")));
+    for (name, source) in super::WEB_RUNTIME_ASSETS {
+        std::fs::write(b.out_dir.join(name), source)
+            .unwrap_or_else(|e| ui::error(&format!("write {name}: {e}")));
+    }
 }
 
 fn process_docs_and_static(
@@ -293,7 +296,8 @@ fn process_docs_and_static(
         }
     }
 
-    if let Err(e) = crate::web_islands::build_web_islands(&b.site_dir, &b.out_dir, files) {
+    if let Err(e) = crate::web_islands::build_web_islands(&b.site_dir, &b.out_dir, files, &b.entry)
+    {
         ui::error(&e);
     }
 
@@ -324,15 +328,13 @@ fn compile_and_optimize_wasm(b: &WasmBuildArgs, runtime_dir: &Path) {
         }
     }
 
-    let (workspace_target, local_target) = wasm_profile_dirs(&b.site_dir, runtime_dir, b.options);
-    let wasm_path = find_wasm_file(&workspace_target)
-        .or_else(|| find_wasm_file(&local_target))
-        .unwrap_or_else(|| {
-            ui::error(&format!(
-                "built .wasm not found under target/wasm32-unknown-unknown/{}/",
-                b.options.cargo_profile()
-            ))
-        });
+    let target = wasm_profile_dir(runtime_dir, b.options).unwrap_or_else(|error| ui::error(&error));
+    let wasm_path = find_wasm_file(&target, runtime_dir).unwrap_or_else(|| {
+        ui::error(&format!(
+            "runtime library .wasm not found in {} (check runtime Cargo.toml [lib] crate-type)",
+            target.display()
+        ))
+    });
 
     let sp = ui::spinner("wasm-bindgen");
     match run_wasm_bindgen(&wasm_path, &pkg_dir, "runtime") {
@@ -366,34 +368,70 @@ fn compile_and_optimize_wasm(b: &WasmBuildArgs, runtime_dir: &Path) {
 }
 
 fn load_all_crepus(root: &Path, dir: &Path, map: &mut HashMap<String, String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    // HTML bundles resolve includes exclusively from this supplied source map.
+    load_all_crepus_inner(root, dir, map, &mut HashSet::new(), true);
+}
+
+fn load_all_crepus_inner(
+    root: &Path,
+    dir: &Path,
+    map: &mut HashMap<String, String>,
+    ancestors: &mut HashSet<PathBuf>,
+    framework_templates: bool,
+) {
+    let Ok(canonical) = std::fs::canonicalize(dir) else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            // Skip output and cargo targets
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if matches!(
-                name,
-                "dist" | "target" | ".git" | "node_modules" | ".crepus-dev"
-            ) {
-                continue;
-            }
-            load_all_crepus(root, &path, map);
-        } else if path.extension().is_some_and(|e| e == "crepus") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let key = relative_key(root, &path);
-                let normalized = super::normalize_fullwidth_braces(&content);
-                map.insert(key, normalized);
+    // Sibling aliases keep their lexical bundle paths; only active ancestors are cycles.
+    if !ancestors.insert(canonical.clone()) {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Skip output and cargo targets
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if matches!(
+                    name,
+                    "dist" | "target" | ".git" | "node_modules" | ".crepus-dev"
+                ) {
+                    continue;
+                }
+                load_all_crepus_inner(root, &path, map, ancestors, framework_templates);
+            } else if path.extension().is_some_and(|e| e == "crepus")
+                || (framework_templates && is_framework_template(&path))
+            {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let key = relative_key(root, &path);
+                    let content = if path.extension().is_some_and(|e| e == "crepus") {
+                        super::normalize_fullwidth_braces(&content)
+                    } else {
+                        content
+                    };
+                    map.insert(key, content);
+                }
             }
         }
     }
+    ancestors.remove(&canonical);
 }
 
-/// Public wrapper used by `--emit` stubs (same walk as the WASM site builder).
-pub(crate) fn load_all_crepus_public(root: &Path, dir: &Path, map: &mut HashMap<String, String>) {
-    load_all_crepus(root, dir, map);
+pub(crate) fn is_framework_template(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "crepus" | "jsx" | "tsx" | "csx" | "svelte" | "vue" | "astro" | "ng" | "html"
+    )
+}
+
+/// Collect supported template frontends for framework source emission.
+pub(crate) fn load_framework_templates(root: &Path, dir: &Path, map: &mut HashMap<String, String>) {
+    load_all_crepus_inner(root, dir, map, &mut HashSet::new(), true);
 }
 
 pub(crate) struct EmitPaths {
@@ -407,15 +445,22 @@ pub(crate) fn resolve_emit_paths(
     site: Option<PathBuf>,
     out_dir: Option<PathBuf>,
     entry: Option<String>,
+    target_id: Option<String>,
+    manifest: Option<PathBuf>,
 ) -> EmitPaths {
-    let site_dir =
-        site.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let out_dir = out_dir.unwrap_or_else(|| site_dir.join("dist"));
-    let entry = entry.unwrap_or_else(|| "index.crepus".into());
-    EmitPaths {
-        site_dir,
+    let resolved = resolve_wasm_build_args(&WebBuildArgs {
+        site_dir: site,
         out_dir,
         entry,
+        target_id,
+        manifest,
+        meta: None,
+        options: BuildOptions::debug(),
+    });
+    EmitPaths {
+        site_dir: resolved.site_dir,
+        out_dir: resolved.out_dir,
+        entry: resolved.entry,
     }
 }
 
@@ -664,12 +709,20 @@ pub(crate) fn render_index_html(
         .replace("__THEME_BORDER__", &escape_html(&t.border))
 }
 
-/// Escape JSON string for safe embedding in HTML `<script type="application/json">`.
-/// Replaces `</script>` with the Unicode escape sequence so the parser doesn't see a closing tag.
-fn ssr_escape_json(json: &str) -> String {
-    json.replace("</script>", "<\\/script>")
-        .replace("</Script>", "<\\/Script>")
-        .replace("</SCRIPT>", "<\\/SCRIPT>")
+/// Escape `<` so JSON cannot close its HTML script element or start an HTML comment.
+pub(crate) fn ssr_escape_json(json: &str) -> String {
+    json.replace('<', "\\u003c")
+}
+
+#[test]
+fn embedded_json_cannot_close_script_with_mixed_case_tag() {
+    let value = serde_json::json!({"text": "</sCrIpT><script>alert(1)</script><!--"});
+    let escaped = ssr_escape_json(&value.to_string());
+    assert!(!escaped.contains('<'));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&escaped).unwrap(),
+        value
+    );
 }
 
 struct ResolvedSeoTags<'a> {
@@ -1054,30 +1107,95 @@ fn render_llms_noscript(head: &SiteHead) -> String {
 struct ReadableElement {
     tag: String,
     href: Option<String>,
+    link_output: Option<usize>,
+}
+
+fn entry_readable_text(entry: &str, files: &HashMap<String, String>) -> Option<String> {
+    if let Some((path, name)) = entry.split_once('#') {
+        let source = files.get(path)?;
+        let (_, body, _) = crepuscularity_core::parser::split_frontmatter_parts(source);
+        let (_, selected, _) = crepuscularity_core::parser::split_component_body_sections(body)
+            .into_iter()
+            .find(|(component, _, _)| component == name)?;
+        Some(render_crepus_readable_text(&selected))
+    } else {
+        files
+            .get(entry)
+            .map(|source| render_crepus_readable_text(source))
+    }
 }
 
 fn render_crepus_readable_text(source: &str) -> String {
-    let mut stack: Vec<ReadableElement> = Vec::new();
-    let mut out: Vec<String> = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('.') {
-            continue;
+    let nodes = match crepuscularity_core::parse_template(source) {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            ui::warning(&format!("extract readable site text: {error}"));
+            return String::new();
         }
-        let depth = (line.len() - line.trim_start().len()) / 2;
-        stack.truncate(depth);
-        if let Some(text) = quoted_crepus_text(trimmed) {
-            push_readable_text(&mut out, &stack, text);
-            continue;
-        }
-        if let Some(element) = readable_element(trimmed) {
-            stack.push(element);
-        }
-    }
+    };
+    let mut out = Vec::new();
+    collect_readable_text(&nodes, &mut Vec::new(), &mut out);
     out.join("\n\n")
 }
 
-fn push_readable_text(out: &mut Vec<String>, stack: &[ReadableElement], text: String) {
+fn collect_readable_text(
+    nodes: &[crepuscularity_core::ast::Node],
+    stack: &mut Vec<ReadableElement>,
+    out: &mut Vec<String>,
+) {
+    use crepuscularity_core::ast::{Node, TextPart};
+
+    // This is a source summary; dynamic branches and loop bodies are visited once.
+    for node in nodes {
+        match node {
+            Node::Element(element) => {
+                let href = element
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.prop == "href")
+                    .and_then(|binding| serde_json::from_str::<String>(&binding.value).ok());
+                stack.push(ReadableElement {
+                    tag: element.tag.clone(),
+                    href,
+                    link_output: None,
+                });
+                collect_readable_text(&element.children, stack, out);
+                stack.pop();
+            }
+            Node::Text(parts) => {
+                let mut text = String::new();
+                for part in parts {
+                    match part {
+                        TextPart::Literal(value) => text.push_str(value),
+                        TextPart::Expr(expr) => {
+                            text.push('{');
+                            text.push_str(expr);
+                            text.push('}');
+                        }
+                    }
+                }
+                push_readable_text(out, stack, text);
+            }
+            Node::RawText(text) => push_readable_text(out, stack, text.clone()),
+            Node::If(block) => {
+                collect_readable_text(&block.then_children, stack, out);
+                if let Some(children) = &block.else_children {
+                    collect_readable_text(children, stack, out);
+                }
+            }
+            Node::For(block) => collect_readable_text(&block.body, stack, out),
+            Node::Match(block) => {
+                for arm in &block.arms {
+                    collect_readable_text(&arm.body, stack, out);
+                }
+            }
+            Node::Include(include) => collect_readable_text(&include.slot, stack, out),
+            Node::LetDecl(_) | Node::Embed(_) | Node::RawHtml(_) => {}
+        }
+    }
+}
+
+fn push_readable_text(out: &mut Vec<String>, stack: &mut [ReadableElement], text: String) {
     if text.trim().is_empty() {
         return;
     }
@@ -1094,48 +1212,30 @@ fn push_readable_text(out: &mut Vec<String>, stack: &[ReadableElement], text: St
         out.push(format!("{tag} {text}"));
         return;
     }
-    if let Some(href) = stack
-        .iter()
-        .rev()
-        .find_map(|element| element.href.as_deref())
-    {
-        let link = format!("[{text}]({href})");
-        if let Some(last) = out.last_mut() {
-            if last.ends_with(&format!("]({href})")) {
-                let insert_at = last.find("](").unwrap_or(last.len());
-                last.insert_str(insert_at, &text);
-                return;
-            }
+    if let Some((href, link_output)) = stack.iter_mut().rev().find_map(|element| {
+        element
+            .href
+            .as_deref()
+            .map(|href| (href, &mut element.link_output))
+    }) {
+        let text = text
+            .replace('\\', "\\\\")
+            .replace('[', "\\[")
+            .replace(']', "\\]");
+        let suffix = format!("]({href})");
+        let may_merge = link_output.is_some() && *link_output == out.len().checked_sub(1);
+        if let Some(last) = out
+            .last_mut()
+            .filter(|last| may_merge && last.ends_with(&suffix))
+        {
+            last.insert_str(last.len() - suffix.len(), &text);
+            return;
         }
-        out.push(link);
+        *link_output = Some(out.len());
+        out.push(format!("[{text}]({href})"));
         return;
     }
     out.push(text);
-}
-
-fn readable_element(trimmed: &str) -> Option<ReadableElement> {
-    let tag = trimmed.split_whitespace().next()?.to_string();
-    if tag.starts_with('@') {
-        return None;
-    }
-    Some(ReadableElement {
-        tag,
-        href: attr_value(trimmed, "href"),
-    })
-}
-
-fn quoted_crepus_text(trimmed: &str) -> Option<String> {
-    if !trimmed.starts_with('"') || !trimmed.ends_with('"') || trimmed.len() < 2 {
-        return None;
-    }
-    Some(trimmed[1..trimmed.len() - 1].replace("\\\"", "\""))
-}
-
-fn attr_value(line: &str, name: &str) -> Option<String> {
-    let needle = format!("{name}=\"");
-    let (_, remainder) = line.split_once(&needle)?;
-    let (value, _) = remainder.split_once('"')?;
-    Some(value.to_string())
 }
 
 fn llms_base_url(llms: &crate::crepus_toml::LlmsConfig, head: &SiteHead) -> String {
@@ -1328,7 +1428,9 @@ fn render_head_raw(head_raw: &str) -> String {
                 }
                 let sub_indent = sub.len() - sub.trim_start().len();
                 if sub_indent > indent {
-                    let dedented = &sub[indent + 2..];
+                    let dedented = sub
+                        .get((indent + 2).min(sub_indent)..)
+                        .unwrap_or_else(|| sub.trim_start());
                     css.push_str(dedented);
                     css.push('\n');
                     i += 1;
@@ -1355,7 +1457,7 @@ fn copy_unocss(vendor_dir: &Path) {
 }
 
 /// Build site `runtime/` to WASM once and populate `.crepus-dev/` with the same assets as a `crepus web build` dist folder.
-pub(crate) fn ensure_web_dev_artifacts(site_dir: &Path) -> Result<(), CrepusCliError> {
+pub(crate) fn ensure_web_dev_artifacts(site_dir: &Path, entry: &str) -> Result<(), CrepusCliError> {
     let options = BuildOptions::debug();
     let runtime_dir = site_dir.join("runtime");
     if !runtime_dir.join("Cargo.toml").is_file() {
@@ -1372,53 +1474,355 @@ pub(crate) fn ensure_web_dev_artifacts(site_dir: &Path) -> Result<(), CrepusCliE
     std::fs::create_dir_all(&pkg_dir).map_err(|e| CrepusCliError::io(e, pkg_dir.clone()))?;
 
     copy_unocss(&vendor_dir);
-    std::fs::write(dev.join("app.js"), super::WEB_APP_JS)
-        .map_err(|e| CrepusCliError::io(e, dev.join("app.js")))?;
+    for (name, source) in super::WEB_RUNTIME_ASSETS {
+        std::fs::write(dev.join(name), source)
+            .map_err(|e| CrepusCliError::io(e, dev.join(name)))?;
+    }
 
     let mut files: HashMap<String, String> = HashMap::new();
     load_all_crepus(site_dir, site_dir, &mut files);
-    crate::web_islands::build_web_islands(site_dir, &dev, &files)
+    crate::web_islands::build_web_islands(site_dir, &dev, &files, entry)
         .map_err(CrepusCliError::context)?;
 
     cargo_build_wasm32(&runtime_dir, options).map_err(CrepusCliError::context)?;
-    let (workspace_target, local_target) = wasm_profile_dirs(site_dir, &runtime_dir, options);
-    let wasm_path = find_wasm_file(&workspace_target)
-        .or_else(|| find_wasm_file(&local_target))
-        .ok_or_else(|| CrepusCliError::context(format!("built .wasm not found under target/wasm32-unknown-unknown/{}/ (install wasm32 target and fix runtime errors)", options.cargo_profile())))?;
+    let target = wasm_profile_dir(&runtime_dir, options).map_err(CrepusCliError::context)?;
+    let wasm_path = find_wasm_file(&target, &runtime_dir).ok_or_else(|| {
+        CrepusCliError::context(format!(
+            "runtime library .wasm not found in {} (check runtime Cargo.toml [lib] crate-type)",
+            target.display()
+        ))
+    })?;
     run_wasm_bindgen(&wasm_path, &pkg_dir, "runtime").map_err(CrepusCliError::context)?;
+    Ok(())
+}
+
+fn validate_static_output(site: &Path, output: &Path) -> Result<(), String> {
+    let source = super::module_emit::absolute_resolved(&site.join("static"))?;
+    let output = super::module_emit::absolute_resolved(output)?;
+    if output.starts_with(&source) {
+        return Err(format!(
+            "web output must not be inside static source {}",
+            source.display()
+        ));
+    }
     Ok(())
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     use walkdir::WalkDir;
-    let mut files_to_copy = Vec::new();
-
-    for entry in WalkDir::new(src).follow_links(true) {
-        let entry = entry.map_err(std::io::Error::other)?;
-        let path = entry.path();
-
-        let relative_path = path.strip_prefix(src).map_err(std::io::Error::other)?;
-        let dst_path = dst.join(relative_path);
-
-        if path.is_dir() {
-            std::fs::create_dir_all(&dst_path)?;
-        } else {
-            files_to_copy.push((path.to_path_buf(), dst_path));
+    let source = src.canonicalize()?;
+    let destination = super::module_emit::absolute_resolved(dst).map_err(std::io::Error::other)?;
+    if source == destination {
+        return Ok(());
+    }
+    if source.starts_with(&destination) || destination.starts_with(&source) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "static copy trees must not overlap",
+        ));
+    }
+    let entries = WalkDir::new(src)
+        .follow_links(true)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)?;
+    for entry in &entries {
+        if entry.path().canonicalize()?.starts_with(&destination) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "static source must not resolve inside the destination tree",
+            ));
         }
     }
-
+    std::fs::create_dir_all(dst)?;
+    let root = dst.canonicalize()?;
+    let mut directories = Vec::new();
+    let mut files_to_copy = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        let relative = path.strip_prefix(src).map_err(std::io::Error::other)?;
+        crate::scaffold::validate_copy_destination(&root, relative)?;
+        let output = dst.join(relative);
+        if entry.file_type().is_dir() {
+            directories.push(output);
+        } else {
+            files_to_copy.push((path.to_path_buf(), output));
+        }
+    }
+    // Validate the complete plan before creating descendants or overwriting files.
+    for directory in directories {
+        std::fs::create_dir_all(directory)?;
+    }
     files_to_copy
         .into_par_iter()
-        .try_for_each(|(s, d)| -> std::io::Result<()> {
-            let _ = std::fs::copy(s, d)?;
+        .try_for_each(|(source, destination)| -> std::io::Result<()> {
+            std::fs::copy(source, destination)?;
             Ok(())
         })?;
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(unix)]
+    fn static_copy_rejects_redirected_destinations_before_any_file_write() {
+        use std::os::unix::fs::symlink;
+        for parent_link in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            let destination = root.path().join("destination");
+            let outside = root.path().join("outside");
+            std::fs::create_dir_all(source.join("images")).unwrap();
+            std::fs::create_dir_all(&destination).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(source.join("safe.txt"), "new safe").unwrap();
+            std::fs::write(destination.join("safe.txt"), "keep safe").unwrap();
+            std::fs::write(source.join("images/logo.txt"), "new logo").unwrap();
+            std::fs::write(outside.join("logo.txt"), "keep outside").unwrap();
+            if parent_link {
+                symlink(&outside, destination.join("images")).unwrap();
+            } else {
+                std::fs::create_dir(destination.join("images")).unwrap();
+                symlink(
+                    outside.join("logo.txt"),
+                    destination.join("images/logo.txt"),
+                )
+                .unwrap();
+            }
+            assert!(super::copy_dir_recursive(&source, &destination).is_err());
+            assert_eq!(
+                std::fs::read_to_string(outside.join("logo.txt")).unwrap(),
+                "keep outside"
+            );
+            assert_eq!(
+                std::fs::read_to_string(destination.join("safe.txt")).unwrap(),
+                "keep safe"
+            );
+        }
+    }
+
+    #[test]
+    fn static_output_preflight_keeps_normal_and_in_place_outputs() {
+        let site = tempfile::tempdir().unwrap();
+        assert!(super::validate_static_output(site.path(), &site.path().join("dist")).is_ok());
+        assert!(super::validate_static_output(site.path(), site.path()).is_ok());
+        assert!(
+            super::validate_static_output(site.path(), &site.path().join("static/new")).is_err()
+        );
+        assert!(!site.path().join("static").exists());
+        assert!(!site.path().join("dist").exists());
+    }
+
+    #[test]
+    fn static_copy_rejects_overlapping_trees_before_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("asset.txt"), "source").unwrap();
+        std::fs::write(root.path().join("asset.txt"), "keep destination").unwrap();
+        assert!(super::copy_dir_recursive(&source, &source.join("nested")).is_err());
+        assert!(!source.join("nested").exists());
+        assert!(super::copy_dir_recursive(&source, root.path()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("asset.txt")).unwrap(),
+            "keep destination"
+        );
+    }
+
+    #[test]
+    fn static_copy_onto_itself_preserves_assets() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("asset.txt"), "keep source").unwrap();
+        super::copy_dir_recursive(root.path(), root.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("asset.txt")).unwrap(),
+            "keep source"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn static_copy_rejects_source_aliases_into_output_before_writes() {
+        for directory in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            let output = root.path().join("output");
+            std::fs::create_dir(&source).unwrap();
+            std::fs::create_dir(&output).unwrap();
+            std::fs::write(source.join("safe.txt"), "new").unwrap();
+            std::fs::write(output.join("safe.txt"), "keep safe").unwrap();
+            std::fs::write(output.join("asset.txt"), "keep asset").unwrap();
+            if directory {
+                std::os::unix::fs::symlink(&output, source.join("nested")).unwrap();
+            } else {
+                std::os::unix::fs::symlink(output.join("asset.txt"), source.join("asset.txt"))
+                    .unwrap();
+            }
+            assert!(super::copy_dir_recursive(&source, &output).is_err());
+            assert_eq!(
+                std::fs::read_to_string(output.join("asset.txt")).unwrap(),
+                "keep asset"
+            );
+            assert_eq!(
+                std::fs::read_to_string(output.join("safe.txt")).unwrap(),
+                "keep safe"
+            );
+            assert!(!output.join("nested").exists());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn static_copy_preserves_external_source_aliases() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let external = root.path().join("external");
+        let output = root.path().join("output");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir(&external).unwrap();
+        std::fs::write(external.join("asset.txt"), "external asset").unwrap();
+        std::os::unix::fs::symlink(&external, source.join("linked")).unwrap();
+        super::copy_dir_recursive(&source, &output).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(output.join("linked/asset.txt")).unwrap(),
+            "external asset"
+        );
+        assert_eq!(
+            std::fs::read_to_string(external.join("asset.txt")).unwrap(),
+            "external asset"
+        );
+    }
+
+    #[test]
+    fn static_copy_preserves_normal_nested_files() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        std::fs::create_dir_all(source.join("nested/deep")).unwrap();
+        std::fs::write(source.join("nested/deep/asset.txt"), "asset").unwrap();
+        super::copy_dir_recursive(&source, &destination).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("nested/deep/asset.txt")).unwrap(),
+            "asset"
+        );
+    }
+
+    #[test]
+    fn html_bundle_collects_included_template_frontends() {
+        for (filename, source) in [
+            ("child.vue", "<template><p>VISIBLE</p></template>"),
+            ("child.svelte", "<p>VISIBLE</p>"),
+            ("child.jsx", "<p>VISIBLE</p>"),
+            ("child.astro", "<p>VISIBLE</p>"),
+            ("child.ng", "<p>VISIBLE</p>"),
+        ] {
+            let site = tempfile::tempdir().unwrap();
+            std::fs::write(
+                site.path().join("index.crepus"),
+                format!("include {filename}"),
+            )
+            .unwrap();
+            std::fs::write(site.path().join(filename), source).unwrap();
+            let mut files = std::collections::HashMap::new();
+            super::load_all_crepus(site.path(), site.path(), &mut files);
+            let bundle = serde_json::json!({"entry": "index.crepus", "files": files}).to_string();
+            let html = crepuscularity_web::render_bundle(&bundle)
+                .unwrap_or_else(|error| panic!("{filename}: {error}"));
+            assert!(html.contains("VISIBLE"), "{filename}: {html}");
+        }
+    }
+
+    #[test]
+    fn html_bundle_collects_frontends_in_named_components_and_forwarded_slots() {
+        let site = tempfile::tempdir().unwrap();
+        for (name, source) in [
+            (
+                "index.crepus",
+                "include cards.crepus#Card\n  include child.vue",
+            ),
+            ("cards.crepus", "--- Card\ninclude wrapper.crepus\n  slot"),
+            ("wrapper.crepus", "div\n  slot"),
+            ("child.vue", "<template><p>SLOT VISIBLE</p></template>"),
+        ] {
+            std::fs::write(site.path().join(name), source).unwrap();
+        }
+        let mut files = std::collections::HashMap::new();
+        super::load_all_crepus(site.path(), site.path(), &mut files);
+        let bundle = serde_json::json!({"entry": "index.crepus", "files": files}).to_string();
+        assert!(crepuscularity_web::render_bundle(&bundle)
+            .unwrap()
+            .contains("SLOT VISIBLE"));
+    }
+
+    #[test]
+    fn framework_collection_preserves_sources_and_skips_output_and_dependencies() {
+        let site = tempfile::tempdir().unwrap();
+        for name in [
+            "App.vue",
+            "App.SVELTE",
+            "App.tsx",
+            "App.jsx",
+            "App.csx",
+            "App.astro",
+            "App.ng",
+            "App.ng.html",
+            "App.component.html",
+        ] {
+            std::fs::write(site.path().join(name), "<span>Literal ｛braces｝</span>").unwrap();
+        }
+        std::fs::write(site.path().join("index.crepus"), "text value=｛name｝").unwrap();
+        std::fs::write(site.path().join("index.html"), "not a template entry").unwrap();
+        for name in ["dist", "target", "node_modules", ".git", ".crepus-dev"] {
+            let path = site.path().join(name);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::write(path.join("Ignored.vue"), "ignored").unwrap();
+        }
+        let mut files = std::collections::HashMap::new();
+        super::load_framework_templates(site.path(), site.path(), &mut files);
+        assert_eq!(files.len(), 11, "{files:?}");
+        assert_eq!(files["App.vue"], "<span>Literal ｛braces｝</span>");
+        assert_eq!(files["App.SVELTE"], "<span>Literal ｛braces｝</span>");
+        assert_eq!(files["index.crepus"], "text value={name}");
+
+        files.clear();
+        super::load_all_crepus(site.path(), site.path(), &mut files);
+        assert_eq!(files.len(), 11);
+        assert_eq!(files["App.vue"], "<span>Literal ｛braces｝</span>");
+        assert_eq!(files["index.crepus"], "text value={name}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn template_collection_does_not_revisit_ancestor_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("index.crepus"), "span \"Root\"").unwrap();
+        std::os::unix::fs::symlink(directory.path(), directory.path().join("cycle")).unwrap();
+        let mut files = std::collections::HashMap::new();
+        super::load_all_crepus(directory.path(), directory.path(), &mut files);
+        assert_eq!(files.len(), 1, "{:?}", files.keys().collect::<Vec<_>>());
+        assert_eq!(files["index.crepus"], "span \"Root\"");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn independent_directory_aliases_keep_their_template_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let site = directory.path().join("site");
+        let shared = directory.path().join("shared");
+        std::fs::create_dir(&site).unwrap();
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::write(shared.join("card.crepus"), "span \"Shared\"").unwrap();
+        for alias in ["first", "second"] {
+            std::os::unix::fs::symlink(&shared, site.join(alias)).unwrap();
+        }
+        let mut files = std::collections::HashMap::new();
+        super::load_all_crepus(&site, &site, &mut files);
+        assert_eq!(files.len(), 2);
+        assert!(files.contains_key("first/card.crepus"));
+        assert!(files.contains_key("second/card.crepus"));
+    }
+
     use super::*;
 
     fn seo_head() -> SiteHead {
@@ -1459,6 +1863,119 @@ mod tests {
             apple_touch_icon: None,
         };
         head
+    }
+
+    #[test]
+    fn readable_text_keeps_separate_anchors_with_the_same_destination() {
+        let source = r#"a href="https://example.com" "First"
+a href="https://example.com" "Second"
+"#;
+        assert_eq!(
+            super::render_crepus_readable_text(source),
+            "[First](https://example.com)\n\n[Second](https://example.com)"
+        );
+    }
+
+    #[test]
+    fn readable_link_fragments_append_after_delimiters_inside_the_label() {
+        let source = r#"a href="https://example.com"
+  span "A](B"
+  span " tail"
+"#;
+        assert_eq!(
+            super::render_crepus_readable_text(source),
+            "[A\\](B tail](https://example.com)"
+        );
+    }
+
+    #[test]
+    fn readable_text_includes_inline_headings_links_and_expression_placeholders() {
+        let source = r#"h1 "Title"
+a href="https://example.com" "Inline link"
+a href="https://example.org"
+  span "Nested"
+  span " link"
+p title="Not body text" "Hello {name}"
+"#;
+        assert_eq!(super::render_crepus_readable_text(source),
+            "# Title\n\n[Inline link](https://example.com)\n\n[Nested link](https://example.org)\n\nHello {name}");
+    }
+
+    #[test]
+    fn readable_text_visits_control_bodies_and_preserves_escaped_literals() {
+        let source = r#"if enabled
+  span "Yes"
+else
+  span "No"
+for item in items
+  span "Item {item}"
+include card.crepus
+  span "Slot"
+p "Say \"hi\""
+"#;
+        assert_eq!(
+            super::render_crepus_readable_text(source),
+            "Yes\n\nNo\n\nItem {item}\n\nSlot\n\nSay \"hi\""
+        );
+    }
+
+    #[test]
+    fn named_wasm_entry_keeps_head_bundle_and_selected_readable_text() {
+        let site = tempfile::tempdir().unwrap();
+        std::fs::create_dir(site.path().join("pages")).unwrap();
+        std::fs::write(site.path().join("pages/cards.crepus"),
+            "head\n  title \"Component page\"\n--- Card\nh1\n  \"Selected card\"\ninclude child.crepus\n--- Other\nspan\n  \"Sibling content\"").unwrap();
+        std::fs::write(
+            site.path().join("pages/child.crepus"),
+            "span \"Relative child\"",
+        )
+        .unwrap();
+        let build = super::WasmBuildArgs {
+            site_dir: site.path().to_path_buf(),
+            out_dir: site.path().join("dist"),
+            entry: "pages/cards.crepus#Card".into(),
+            meta: None,
+            options: crate::build_options::BuildOptions::debug(),
+        };
+        let mut files = super::load_and_validate_files(&build);
+        let head = super::extract_and_render_head(&build.entry, &mut files);
+        assert_eq!(head, "<title>Component page</title>");
+        let text = super::entry_readable_text(&build.entry, &files).unwrap();
+        assert!(text.contains("Selected card"), "{text}");
+        assert!(!text.contains("Sibling content"), "{text}");
+        let bundle = super::write_bundle(&build, &files);
+        let parsed: serde_json::Value = serde_json::from_str(&bundle).unwrap();
+        assert_eq!(parsed["entry"], build.entry);
+        assert!(parsed["files"]["pages/cards.crepus"]
+            .as_str()
+            .unwrap()
+            .contains("--- Other"));
+        let rendered = crepuscularity_web::render_bundle(&bundle).unwrap();
+        assert!(rendered.contains("Selected card"), "{rendered}");
+        assert!(rendered.contains("Relative child"), "{rendered}");
+        assert!(!rendered.contains("Sibling content"), "{rendered}");
+        super::generate_index_and_assets(&build, &files, &bundle, &SiteHead::default(), &head);
+        for (name, expected) in crate::web::WEB_RUNTIME_ASSETS {
+            assert_eq!(
+                std::fs::read_to_string(build.out_dir.join(name)).unwrap(),
+                expected,
+                "{name}"
+            );
+        }
+        let html = std::fs::read_to_string(build.out_dir.join("index.html")).unwrap();
+        assert!(html.contains("<title>Component page</title>"));
+        assert!(html.contains("<div id=\"crepus-root\"><h1"), "{html}");
+    }
+
+    #[test]
+    fn head_css_preserves_content_with_short_indentation() {
+        for indent in [" ", "\t", "\u{2003}", "  "] {
+            let source = format!("style\n{indent}éclair {{ color: red; }}\ntitle \"After\"");
+            assert_eq!(
+                super::render_head_raw(&source),
+                "<style>\néclair { color: red; }</style>\n<title>After</title>"
+            );
+        }
     }
 
     #[test]
@@ -1586,5 +2103,103 @@ section
         assert!(sitemap.contains("<loc>https://example.com/</loc>"));
         assert!(sitemap.contains("<loc>https://example.com/docs/cli.html</loc>"));
         assert!(sitemap.contains("<loc>https://example.com/docs/runtime.html</loc>"));
+    }
+}
+
+#[cfg(test)]
+mod bundle_output_tests {
+    use super::*;
+
+    fn args(site: &Path, output: &str) -> WasmBuildArgs {
+        WasmBuildArgs {
+            site_dir: site.to_path_buf(),
+            out_dir: site.join(output),
+            entry: "index.crepus".into(),
+            meta: None,
+            options: BuildOptions::debug(),
+        }
+    }
+
+    fn files() -> HashMap<String, String> {
+        HashMap::from([("index.crepus".into(), "text \"Current source\"".into())])
+    }
+
+    #[test]
+    fn changed_destination_is_repaired_after_an_identical_previous_build() {
+        let site = tempfile::tempdir().unwrap();
+        let build = args(site.path(), "dist");
+        let desired = write_bundle(&build, &files());
+        let destination = build.out_dir.join("crepus-bundle.json");
+        std::fs::write(&destination, "stale or damaged artifact").unwrap();
+        assert_eq!(write_bundle(&build, &files()), desired);
+        assert_eq!(std::fs::read_to_string(destination).unwrap(), desired);
+    }
+
+    #[test]
+    fn alternate_output_is_checked_independently_of_a_previous_destination() {
+        let site = tempfile::tempdir().unwrap();
+        let first = args(site.path(), "first");
+        let second = args(site.path(), "second");
+        let desired = write_bundle(&first, &files());
+        let stale = HashMap::from([("index.crepus".into(), "text \"Old source\"".into())]);
+        write_bundle(&second, &stale);
+        assert_eq!(write_bundle(&second, &files()), desired);
+        assert_eq!(
+            std::fs::read_to_string(second.out_dir.join("crepus-bundle.json")).unwrap(),
+            desired
+        );
+        assert_eq!(
+            std::fs::read_to_string(first.out_dir.join("crepus-bundle.json")).unwrap(),
+            desired
+        );
+    }
+
+    #[test]
+    fn identical_destination_keeps_its_existing_modified_time() {
+        let site = tempfile::tempdir().unwrap();
+        let build = args(site.path(), "dist");
+        let desired = write_bundle(&build, &files());
+        let destination = build.out_dir.join("crepus-bundle.json");
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&destination)
+            .unwrap();
+        file.set_times(
+            std::fs::FileTimes::new().set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_234_567_890),
+            ),
+        )
+        .unwrap();
+        let before = std::fs::metadata(&destination).unwrap().modified().unwrap();
+        drop(file);
+        assert_eq!(write_bundle(&build, &files()), desired);
+        assert_eq!(
+            std::fs::metadata(destination).unwrap().modified().unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(test)]
+mod build_path_tests {
+    use super::*;
+
+    #[test]
+    fn resolved_manifest_build_metadata_does_not_trigger_a_second_target_selection() {
+        let site = tempfile::tempdir().unwrap();
+        std::fs::write(site.path().join("crepus.toml"),
+            "[[targets]]\ntype='web'\nid='first'\nsite='.'\n[[targets]]\ntype='web'\nid='second'\nsite='.'\n").unwrap();
+        let resolved = resolve_wasm_build_args(&WebBuildArgs {
+            site_dir: Some(site.path().to_path_buf()),
+            out_dir: Some(site.path().join("chosen-output")),
+            entry: Some("chosen.crepus".into()),
+            target_id: None,
+            manifest: None,
+            meta: Some(crate::crepus_toml::WebTargetMeta::default()),
+            options: BuildOptions::debug(),
+        });
+        assert_eq!(resolved.site_dir, site.path());
+        assert_eq!(resolved.out_dir, site.path().join("chosen-output"));
+        assert_eq!(resolved.entry, "chosen.crepus");
     }
 }

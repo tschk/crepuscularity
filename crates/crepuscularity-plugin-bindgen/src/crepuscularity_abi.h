@@ -9,6 +9,8 @@ extern "C" {
 
 typedef struct CrepusSession CrepusSession;
 /* event_json is valid until the next crepus_session_dispatch_event_json on the same session. */
+/* Callbacks must not call session functions (including free) on that same session. */
+/* Re-entry is rejected; read crepus_last_error(). A rejected free leaves it alive. */
 typedef void (*CrepusEventCallback)(const char *event_json, void *userdata);
 
 /* CrepusSession is not thread-safe: use one session per thread or external locking. */
@@ -16,6 +18,8 @@ typedef void (*CrepusEventCallback)(const char *event_json, void *userdata);
 CrepusSession *crepus_session_new(void);
 void crepus_session_free(CrepusSession *session);
 int32_t crepus_session_set_template_string(CrepusSession *session, const char *template_utf8, const char *base_dir_utf8);
+/* Selects a component for template or file sources; NULL clears the override. */
+/* For files, overrides entry's #Component suffix; clearing restores that entry. */
 int32_t crepus_session_set_component(CrepusSession *session, const char *component_utf8);
 int32_t crepus_session_set_files_json(CrepusSession *session, const char *files_json_utf8);
 int32_t crepus_session_set_context_json(CrepusSession *session, const char *context_json_utf8);

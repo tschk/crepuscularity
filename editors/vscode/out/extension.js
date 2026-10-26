@@ -35,47 +35,102 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
-const path = __importStar(require("path"));
+const server_executable_1 = require("./server-executable");
 const vscode = __importStar(require("vscode"));
 const node_1 = require("vscode-languageclient/node");
 let client;
-function resolveServerExecutable(folder, configured) {
-    if (configured.trim()) {
-        return configured;
+let generation = 0;
+let active = false;
+let stopping = Promise.resolve();
+function stopClient() {
+    const current = client;
+    client = undefined;
+    if (current) {
+        const pending = stopping.then(async () => {
+            // LanguageClient rejects stop() while start() is still in progress.
+            try {
+                await current.ready;
+            }
+            catch {
+                return;
+            }
+            try {
+                await current.instance.stop();
+            }
+            catch (error) {
+                // Retain the handle so a later restart can retry shutdown first.
+                if (!client)
+                    client = current;
+                throw error;
+            }
+        });
+        // Report this attempt's failure, without poisoning future shutdown attempts.
+        stopping = pending.catch(() => { });
+        return pending;
     }
-    if (folder) {
-        return path.join(folder.uri.fsPath, "target", "debug", "crepus-lsp");
-    }
-    return "crepus-lsp";
+    return stopping;
 }
-async function startClient() {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    const cfg = vscode.workspace.getConfiguration("crepus");
-    const command = resolveServerExecutable(folder, cfg.get("languageServerPath", ""));
-    const serverOptions = {
-        run: { command, args: ["--stdio"], transport: node_1.TransportKind.stdio },
-        debug: { command, args: ["--stdio"], transport: node_1.TransportKind.stdio },
-    };
-    const clientOptions = {
-        documentSelector: [{ scheme: "file", language: "crepus" }],
-    };
-    client = new node_1.LanguageClient("crepus-lsp", "Crepus Language Server", serverOptions, clientOptions);
-    await client.start();
+function reportStartError(error, token) {
+    if (active && token === generation) {
+        void vscode.window.showErrorMessage(`Crepus language server failed to start: ${String(error)}`);
+    }
+}
+async function startClient(token) {
+    try {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        const cfg = vscode.workspace.getConfiguration("crepus");
+        const command = await (0, server_executable_1.resolveServerExecutable)(folder?.uri.fsPath, cfg.get("languageServerPath", ""));
+        if (!active || token !== generation)
+            return;
+        const serverOptions = {
+            run: { command, args: ["--stdio"], transport: node_1.TransportKind.stdio },
+            debug: { command, args: ["--stdio"], transport: node_1.TransportKind.stdio },
+        };
+        const clientOptions = {
+            documentSelector: [{ scheme: "file", language: "crepus" }],
+        };
+        const instance = new node_1.LanguageClient("crepus-lsp", "Crepus Language Server", serverOptions, clientOptions);
+        const current = { instance, ready: instance.start() };
+        client = current;
+        try {
+            await current.ready;
+        }
+        catch (error) {
+            if (client === current)
+                client = undefined;
+            throw error;
+        }
+    }
+    catch (error) {
+        reportStartError(error, token);
+    }
 }
 function activate(context) {
-    void startClient();
+    active = true;
+    void startClient(++generation);
     context.subscriptions.push(vscode.commands.registerCommand("crepus.restartLanguageServer", async () => {
-        if (client) {
-            await client.stop();
-            client = undefined;
+        if (!active)
+            return;
+        const token = ++generation;
+        try {
+            do {
+                await stopClient();
+                // Another restart may have awaited a failed stop that restored its handle.
+            } while (active && token === generation && client);
+            if (active && token === generation)
+                await startClient(token);
         }
-        await startClient();
+        catch (error) {
+            reportStartError(error, token);
+        }
     }), new vscode.Disposable(() => {
-        void client?.stop();
+        void deactivate().catch(() => { });
     }));
 }
 async function deactivate() {
-    if (client) {
-        await client.stop();
-    }
+    active = false;
+    ++generation;
+    do {
+        await stopClient();
+    } while (!active && client);
 }

@@ -29,7 +29,13 @@ inspector = ["gpui/inspector"]
 leak-detection = ["gpui/leak-detection"]
 screen-capture = ["gpui_platform/screen-capture"]
 runtime-shaders = ["gpui_platform/runtime_shaders"]
-test-support = ["gpui_platform/test-support"]
+test-support = ["gpui_platform/test-support", "crepuscularity-runtime/test-support"]
+input-latency-histogram = ["gpui/input-latency-histogram"]
+profiler = ["gpui/profiler"]
+bench = ["gpui/bench"]
+windows-manifest = ["gpui/windows-manifest"]
+# Pinned platform release routes this to the Windows WGPU backend.
+wgpu = ["gpui_platform/wgpu"]
 gpui-text-extras = [
     "crepuscularity_macros/gpui_text_run_styles",
     "crepuscularity-runtime/gpui_text_run_styles",

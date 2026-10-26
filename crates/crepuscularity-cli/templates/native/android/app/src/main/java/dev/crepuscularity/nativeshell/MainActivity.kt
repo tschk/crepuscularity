@@ -36,7 +36,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        CrepusRustActions.shutdownAndroid()
+        if (CrepusRustActions.detach(this)) {
+            CrepusRustActions.shutdownAndroid()
+        }
         super.onDestroy()
     }
 }

@@ -52,7 +52,7 @@ crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase
 
 ## Overview
 
-Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. React output is available through the Moonshine TSX emit (`crepus web build --emit moonshine`); JSX, Svelte, Vue, Astro, and Angular are supported as **input** syntaxes, not as output targets.
+Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. Importable React, Svelte 5, Vue 3, SolidJS, and Imba components are available through `crepus web build --emit react|svelte|vue|solid|imba`; `--emit moonshine` generates a Moonshine app entry. JSX, Svelte, Vue, Astro, and Angular are also supported as template input syntaxes.
 
 Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS + iOS apps.
 
@@ -148,10 +148,11 @@ compiling to the same AST: indentation (`.crepus`), JSX/HTML tags
 The Svelte, Vue, Astro, and Angular frontends are hand-written Rust with no
 `svelte`, `vue`, `astro`, or `@angular` dependency.
 
-They compile the **template only**. `<script>`, frontmatter, and component
-classes are extracted and never executed, so runes, stores, the Composition
-API, `Astro.props`, `@Input`/`@Output`, and lifecycle hooks do not run;
-unsupported markup constructs are hard parse errors rather than silent drops.
+The shared parsers compile the **template only**. `<script>` and frontmatter
+are extracted rather than executed, and Angular component classes are not run.
+Native Moonshine module builds have separate authored Svelte and Vue compilers;
+see the support matrix for their bounded script behavior. Unsupported markup
+constructs are hard parse errors rather than silent drops;
 [`docs/frontends.md`](docs/frontends.md) lists exactly what is and is not
 supported.
 
@@ -196,6 +197,7 @@ crepus embedded snapshot … --out x.ppm  # UNSTABLE: debug PPM only (use Ui + r
 
 - **Rendered site (GitHub Pages):** [here](https://crepuscularity.undivisible.dev) — WASM landing page plus HTML generated from the Markdown in [`docs/`](docs/). Built in CI with `crepus web build --manifest docs-site/crepus.toml`.
 - **Sources:** [docs/README.md](docs/README.md) indexes [DSL](docs/dsl.md) (including SwiftUI semantic tag mappings), [components](docs/components.md), [CLI](docs/cli.md), [runtime/reactivity](docs/runtime.md), [GPUI](docs/gpui.md), [TUI](docs/tui.md), [embedded / framebuffer](docs/embedded.md) (**UNSTABLE** — STM32, ESP32, SPI panels), [Lite](docs/lite.md), [native shells](docs/native.md), [polyglot plugins](docs/polyglot.md), and [extensions](docs/webext.md). Compiler-focused detail stays in-repo as [CREPUS_WEB_IMPLEMENTATION_SPEC.md](docs/CREPUS_WEB_IMPLEMENTATION_SPEC.md) but is not shipped on the public docs site.
+- **Web runtime threads:** [worker defaults and compatibility](docs/web-runtime.md).
 - **Native shells:** [examples/native-shells](examples/native-shells/README.md) — SwiftUI/XcodeGen (**`ios/`**), Gradle/Compose (**`android/`**), and shared **View IR** `fixture.json` next to **`crepuscularity-native`** (replaces the old separate **`crepuscularity-native-ui`** checkout).
 - **Contributors & coding agents:** root [**`AGENTS.md`**](AGENTS.md) is the canonical instructions (macOS `SDKROOT`, `cargo fmt` / `clippy` / `test` before push, workspace layout, DSL notes). **`CLAUDE.md`** is a symlink to **`AGENTS.md`** so duplicate context files cannot drift.
 
@@ -324,3 +326,61 @@ The required variables are `SDKROOT` for SDK headers, `DEVELOPER_DIR` for the ac
 
 ISC License — see [LICENSE](LICENSE).
 
+
+### Importable web framework components
+
+`crepus web build --site ./my-site --emit react` writes
+`dist/CrepusEmit.react.tsx` and `dist/crepus-view-ir.json`. Import the default
+component into an existing React app and pass `scope` data and `handlers` callbacks.
+No Moonshine runtime is required for this target.
+
+Other source targets are `svelte` (Svelte 5), `vue` (Vue 3), and `solid` (SolidJS).
+Each needs its host compiler/runtime and the existing class-token CSS setup.
+`moonshine` emits the Moonshine app entry; `html` builds the WASM site.
+These emitters consume template View IR. Source framework scripts are not executed,
+and reactive include-local scope remains incomplete.
+
+`--emit imba` provides an initial Imba backend: keep `CrepusEmit.imba` and
+`CrepusEmit.bindings.ts` together and import the named `CrepusEmit` tag. It supports
+text/buttons, core layouts/lists, links/images, conditions/loops, inputs,
+pickers, tabs, sliders, progress/meters, checkboxes/switches, and dividers/spacers. Other nodes fail with an explicit error.
+The tag takes `scope` and `handlers` props; after replacing props from external
+host code, request the component's normal render/update cycle. Its TypeScript
+companion preserves shared expression semantics without treating JavaScript as
+Imba syntax. Compilation and browser interactions were verified with
+`imba@2.0.0-alpha.253`.
+
+`--emit moonshine-dom` and `--emit moonshine-ssr` write plain TypeScript
+components (`CrepusEmit.moonshine-dom.ts` / `CrepusEmit.moonshine-ssr.ts`).
+They use `@tschk/moonshine-dom/dom` or `/ssr` and `/control`, with no JSX
+compiler, React/Solid host, or WASM parser at runtime. These initial targets
+support text, buttons, stacks, scrolling containers, lists, links, images,
+badges, dividers, text inputs, checkboxes/switches, pickers, sliders,
+progress/meters, and conditions/loops;
+other nodes fail explicitly. Classes and IDs are preserved for host CSS.
+
+```ts
+import Counter from "./dist/CrepusEmit.moonshine-dom";
+import { render } from "@tschk/moonshine-dom/dom";
+import { createSignal } from "@tschk/moonshine-dom/reactive";
+
+const [scope, setScope] = createSignal({ count: 0 });
+const dispose = render(() => Counter({
+  scope,
+  handlers: { increment: () => setScope({ count: scope().count + 1 }) },
+}), document.getElementById("app")!);
+```
+
+For server output, import the generated SSR component and call
+`renderToString(() => Counter({ scope: { count: 0 } }))` from
+`@tschk/moonshine-dom/ssr`. `scope` accepts a record or reactive accessor;
+replace signal data to update browser output. Handlers receive DOM events
+for form changes and no arguments for button clicks. Source scripts and
+reactive include-local scope retain the limitations described above.
+
+For these direct DOM targets, unbound sliders retain user edits across unrelated
+scope updates; bound sliders clamp live numeric values and use the normalized
+snapshot for invalid data. Picker change handlers receive the DOM event.
+The SSR runtime requires a bound nonempty single picker to match an option;
+unmatched values throw because HTML cannot preserve an unselected single picker.
+The browser target permits unmatched values and clears the selection.

@@ -57,7 +57,8 @@ impl CatalogComponent {
     fn display_name(&self) -> &str {
         self.title
             .as_deref()
-            .or(self.name.as_deref())
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| self.name.as_deref().filter(|name| !name.trim().is_empty()))
             .unwrap_or(&self.id)
     }
 }
@@ -157,8 +158,8 @@ fn path_for_target(comp: &CatalogComponent, t: ComponentTarget) -> Option<String
         ComponentTarget::Moonshine => comp.targets.moonshine.clone(),
         ComponentTarget::Gpui => comp.targets.gpui.clone(),
     };
-    if explicit.is_some() {
-        return explicit;
+    if let Some(path) = explicit.filter(|path| !path.trim().is_empty()) {
+        return Some(path);
     }
 
     let key = target_key(t);
@@ -197,11 +198,11 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
 
     if crate_meta.is_none() && disk_comp.is_none() {
         let mut ids: Vec<&str> = crepuscularity_components::component_ids().to_vec();
-        if ids.is_empty() {
-            if let Some(cat) = &disk_catalog {
-                ids = cat.components.iter().map(|c| c.id.as_str()).collect();
-            }
+        if let Some(cat) = &disk_catalog {
+            ids.extend(cat.components.iter().map(|c| c.id.as_str()));
         }
+        ids.sort_unstable();
+        ids.dedup();
         return Err(CrepusCliError::context(format!(
             "unknown component {id:?}; known: {}",
             ids.join(", ")
@@ -389,6 +390,36 @@ mod tests {
             Some("@tschk/moonshine-components")
         );
         assert!(path_for_target(c, ComponentTarget::Svelte).is_none());
+    }
+
+    #[test]
+    fn blank_explicit_paths_use_conventional_hints() {
+        for path in ["", "   "] {
+            let raw = serde_json::json!({"components": [{"id": "button", "platforms": ["moonshine"], "targets": {"moonshine": path, "svelte": path}}]});
+            let catalog: Catalog = serde_json::from_value(raw).unwrap();
+            let component = &catalog.components[0];
+            assert_eq!(
+                path_for_target(component, ComponentTarget::Moonshine).as_deref(),
+                Some("@tschk/moonshine-components")
+            );
+            assert!(path_for_target(component, ComponentTarget::Svelte).is_none());
+        }
+    }
+
+    #[test]
+    fn blank_display_titles_fall_back_to_name_or_id() {
+        for title in ["", "   "] {
+            let with_name: CatalogComponent = serde_json::from_value(
+                serde_json::json!({"id": "button", "title": title, "name": "Button"}),
+            )
+            .unwrap();
+            assert_eq!(with_name.display_name(), "Button");
+            let without_name: CatalogComponent = serde_json::from_value(
+                serde_json::json!({"id": "button", "title": title, "name": " "}),
+            )
+            .unwrap();
+            assert_eq!(without_name.display_name(), "button");
+        }
     }
 
     #[test]
