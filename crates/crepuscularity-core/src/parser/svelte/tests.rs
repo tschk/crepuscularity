@@ -502,3 +502,21 @@ fn svelte_component_raw_extracts_all_blocks_and_catches_trailing_markup() {
     assert_eq!(err.message, "unexpected trailing markup in Svelte template");
     assert_eq!(err.byte_offset, Some(9));
 }
+
+#[test]
+fn parse_svelte_component_raw_extracts_all_parts() {
+    let src = "<script context=\"module\">module</script><script>script</script><style>style</style><p>html</p>";
+    let result = parse_svelte_component_raw(src).unwrap();
+    assert_eq!(result.module_script.as_deref(), Some("module"));
+    assert_eq!(result.script.as_deref(), Some("script"));
+    assert_eq!(result.style.as_deref(), Some("style"));
+    assert_eq!(result.nodes.len(), 1);
+}
+
+#[test]
+fn parse_svelte_component_raw_errors_on_trailing_markup() {
+    let err = parse_svelte_component_raw("<div></div></extra>").unwrap_err();
+    assert!(err.message.contains("unexpected trailing markup"));
+    let err2 = parse_svelte_component_raw("{#if true}yes{/if}{/if}").unwrap_err();
+    assert!(err2.message.contains("unexpected trailing markup"));
+}
