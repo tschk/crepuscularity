@@ -8,13 +8,23 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/rendering.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
+import 'color_literals.dart';
+import 'unicode_case.dart';
 
 import 'package:crepuscularity_components/crepuscularity_components.dart';
 
 import 'crepus_parser.dart';
 import 'view_ir.dart';
+
+part 'signed_margin.dart';
 
 /// Host callback for a surfaced action string. The package does not interpret
 /// the string in any way; the host decides what (if anything) it means.
@@ -24,7 +34,7 @@ typedef CrepusActionCallback = void Function(String action);
 const double _unboundedBarWidth = 120;
 
 /// Upper bound applied to every model-authored layout magnitude (padding,
-/// spacing, spacer size, corner radius, border width). It is far larger than
+/// signed margins, spacing, spacer size, corner radius, border width). It is far larger than
 /// any real viewport, so legitimate documents are untouched, but it stops an
 /// absurd finite value like `1e9` from producing an unusable, overflowing
 /// render. Non-finite values are already rejected at decode time.
@@ -81,7 +91,8 @@ class CrepusView extends StatelessWidget {
     this.data = const {},
     this.allowNetworkImages = false,
     CrepusLimits limits = CrepusLimits.defaults,
-  }) : _ir = ViewIr.fromJson(ir, limits: limits);
+  }) : _limits = limits,
+       _ir = ViewIr.fromJson(ir, limits: limits);
 
   /// Render from `.crepus` source (parsed in pure Dart — no Rust round-trip).
   CrepusView.fromSource(
@@ -92,9 +103,11 @@ class CrepusView extends StatelessWidget {
     this.data = const {},
     this.allowNetworkImages = false,
     CrepusLimits limits = CrepusLimits.defaults,
-  }) : _ir = viewIrFromSource(source, limits: limits);
+  }) : _limits = limits,
+       _ir = viewIrFromSource(source, limits: limits);
 
   final ViewIr _ir;
+  final CrepusLimits _limits;
   final CrepusActionCallback? onAction;
   final CrepusTheme theme;
 
@@ -109,18 +122,197 @@ class CrepusView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final resolved = theme._resolved(context);
-    final renderer = _Renderer(resolved, onAction, allowNetworkImages);
+    final renderer = _Renderer(
+      resolved,
+      onAction,
+      allowNetworkImages,
+      _limits.maxNodes,
+    );
     final children = renderer.renderList(_ir.root, data);
-    return Column(
+    return renderer.flow(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
       children: children,
     );
   }
 }
 
+class _ScrollBranch extends StatelessWidget {
+  const _ScrollBranch({
+    required this.vertical,
+    required this.horizontal,
+    required this.child,
+  });
+
+  final bool vertical;
+  final bool horizontal;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
+class _KeyboardTap extends StatefulWidget {
+  const _KeyboardTap({
+    required this.onTap,
+    required this.signedMargins,
+    this.isLink = false,
+    required this.child,
+  });
+  final VoidCallback onTap;
+  final bool signedMargins;
+  final bool isLink;
+  final Widget child;
+
+  @override
+  State<_KeyboardTap> createState() => _KeyboardTapState();
+}
+
+class _KeyboardTapState extends State<_KeyboardTap> {
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_focusChanged);
+  }
+
+  void _focusChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final decoration = BoxDecoration(
+      border: _focus.hasPrimaryFocus
+          ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
+          : null,
+    );
+    final child = widget.signedMargins
+        ? _MarginDecoratedBox(
+            decoration: decoration,
+            position: DecorationPosition.foreground,
+            child: widget.child,
+          )
+        : DecoratedBox(
+            decoration: decoration,
+            position: DecorationPosition.foreground,
+            child: widget.child,
+          );
+    return Shortcuts(
+      shortcuts: _focus.hasPrimaryFocus
+          ? const {
+              SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+              SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+              SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+            }
+          : const {},
+      child: Actions(
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap();
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          focusNode: _focus,
+          includeSemantics: false,
+          // Read focusability after Focus attaches to any ExcludeFocus ancestor.
+          child: Builder(
+            builder: (context) => _MarginFocusSemantics(
+              link: widget.isLink,
+              focusable: _focus.canRequestFocus,
+              focused: _focus.canRequestFocus ? _focus.hasPrimaryFocus : null,
+              onFocus:
+                  defaultTargetPlatform != TargetPlatform.iOS &&
+                      _focus.canRequestFocus
+                  ? _focus.requestFocus
+                  : null,
+              child: widget.signedMargins
+                  ? _MarginGesture(onTap: widget.onTap, child: child)
+                  : GestureDetector(onTap: widget.onTap, child: child),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Renderer {
-  _Renderer(this.theme, this.onAction, this.allowNetworkImages);
+  _Renderer(
+    this.theme,
+    this.onAction,
+    this.allowNetworkImages,
+    this._remainingNodes,
+  );
+
+  int _remainingNodes;
+  int _verticalScrolls = 0;
+  int _horizontalScrolls = 0;
+
+  bool hasSignedMargins = false;
+
+  Widget flow({
+    Axis axis = Axis.vertical,
+    CrossAxisAlignment crossAxisAlignment = CrossAxisAlignment.start,
+    MainAxisAlignment mainAxisAlignment = MainAxisAlignment.start,
+    MainAxisSize mainAxisSize = MainAxisSize.min,
+    required List<Widget> children,
+  }) {
+    // Loose flex also permits natural sizing when the host is unbounded.
+    children = [
+      for (final child in children)
+        if (child is _ScrollBranch &&
+            (axis == Axis.vertical ? child.vertical : child.horizontal))
+          Flexible(child: child)
+        else
+          child,
+    ];
+    final signedMargins = hasSignedMargins;
+    Widget buildFlow(CrossAxisAlignment alignment) {
+      if (signedMargins) {
+        return _MarginFlow(
+          axis: axis,
+          crossAxisAlignment: alignment,
+          mainAxisAlignment: mainAxisAlignment,
+          mainAxisSize: mainAxisSize,
+          children: children,
+        );
+      }
+      return axis == Axis.horizontal
+          ? Row(
+              mainAxisSize: mainAxisSize,
+              crossAxisAlignment: alignment,
+              mainAxisAlignment: mainAxisAlignment,
+              children: children,
+            )
+          : Column(
+              mainAxisSize: mainAxisSize,
+              crossAxisAlignment: alignment,
+              mainAxisAlignment: mainAxisAlignment,
+              children: children,
+            );
+    }
+
+    if (axis == Axis.vertical &&
+        crossAxisAlignment == CrossAxisAlignment.stretch) {
+      // A column inside a row/horizontal scroll has no finite width to stretch.
+      return LayoutBuilder(
+        builder: (context, constraints) => buildFlow(
+          constraints.hasBoundedWidth
+              ? CrossAxisAlignment.stretch
+              : CrossAxisAlignment.start,
+        ),
+      );
+    }
+    return buildFlow(crossAxisAlignment);
+  }
 
   final CrepusTheme theme;
   final CrepusActionCallback? onAction;
@@ -129,6 +321,7 @@ class _Renderer {
   List<Widget> renderList(List<ViewNode> nodes, Map<String, Object?> scope) {
     final widgets = <Widget>[];
     for (final node in nodes) {
+      if (_remainingNodes <= 0) break;
       final rendered = render(node, scope);
       if (rendered != null) widgets.add(rendered);
     }
@@ -136,13 +329,16 @@ class _Renderer {
   }
 
   Widget? render(ViewNode node, Map<String, Object?> scope) {
+    if (_remainingNodes-- <= 0) return null;
+    final verticalBefore = _verticalScrolls;
+    final horizontalBefore = _horizontalScrolls;
     final widget = switch (node) {
       TextNode() => _text(node, scope),
       StackNode() => _stack(node, scope),
       ScrollNode() => _scroll(node, scope),
-      ButtonNode() => _button(node),
-      ToggleNode() => _toggle(node),
-      CheckboxNode() => _checkbox(node),
+      ButtonNode() => _button(node, scope),
+      ToggleNode() => _toggle(node, scope),
+      CheckboxNode() => _checkbox(node, scope),
       ProgressNode() => _progress(node),
       TimerNode() => _timer(node),
       MeterNode() => _meter(node),
@@ -150,7 +346,7 @@ class _Renderer {
       BadgeNode() => _badge(node),
       DividerNode() => _divider(node),
       SpacerNode() => _spacer(node),
-      ImageNode() => _image(node),
+      ImageNode() => _image(node, scope),
       ListNode() => _list(node, scope),
       ListItemNode() => _listItem(node, scope),
       LinkNode() => _link(node, scope),
@@ -160,73 +356,196 @@ class _Renderer {
       UnsupportedNode() => _unsupported(node),
     };
     if (widget == null) return null;
-    return _applyStyle(widget, node.style);
+    final styled = _applyStyle(widget, node.style);
+    final vertical = _verticalScrolls > verticalBefore;
+    final horizontal = _horizontalScrolls > horizontalBefore;
+    return vertical || horizontal
+        ? _ScrollBranch(
+            vertical: vertical,
+            horizontal: horizontal,
+            child: styled,
+          )
+        : styled;
   }
 
   // ── Leaf + container renderers ────────────────────────────────────────────
 
   Widget? _text(TextNode node, Map<String, Object?> scope) {
-    var content = node.content;
-    if (node.bind != null && node.bind!.isNotEmpty) {
-      final bound = _lookup(node.bind!, scope);
-      if (bound != null) content = '$bound';
-    }
-    content = _interpolate(content, scope);
+    final mixedBinding = node.bind?.startsWith('"" + ') == true;
+    final bound = !mixedBinding && node.bind != null && node.bind!.isNotEmpty
+        ? _lookup(node.bind!, scope)
+        : null;
+    final content = mixedBinding
+        ? _mixedText(node.bind!, scope) ?? node.content
+        : bound != null
+        ? _displayValue(bound)
+        : _interpolate(node.content, scope);
     if (content.isEmpty) return null;
     final style = node.style;
+    final fontSize = _fontSize(style?.fontSize);
+    final lineHeight = style?.lineHeight;
+    final lineClamp = style?.lineClamp;
+    final maxLines = style?.textOverflow == 'truncate'
+        ? 1
+        : (lineClamp != null && lineClamp > 0 ? lineClamp : null);
     return Text(
       content,
       style: TextStyle(
         color: _color(style?.foregroundColor) ?? theme.textColor,
-        fontSize: _fontSize(style?.fontSize),
+        fontSize: fontSize,
         fontWeight: _weight(style?.fontWeight),
+        letterSpacing: style?.letterSpacing?.isFinite == true
+            ? style!.letterSpacing
+            : null,
         fontStyle: style?.italic == true ? FontStyle.italic : null,
         decoration: _decoration(style),
-        height: 1.35,
+        height: lineHeight != null && lineHeight.isFinite && lineHeight > 0
+            ? math.min(lineHeight, _maxLayoutExtent / fontSize)
+            : 1.35,
       ),
       textAlign: _textAlign(style?.textAlign),
+      maxLines: maxLines,
+      softWrap: style?.textOverflow == 'truncate' ? false : null,
+      overflow: switch (style?.textOverflow) {
+        'clip' => TextOverflow.clip,
+        'truncate' || 'ellipsis' => TextOverflow.ellipsis,
+        _ => maxLines != null ? TextOverflow.ellipsis : null,
+      },
     );
   }
 
   Widget _stack(StackNode node, Map<String, Object?> scope) {
     final children = renderList(node.children, scope);
     final spaced = _withSpacing(children, node.spacing, node.axis);
-    final widget = node.axis == StackAxis.row
-        ? Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: _crossAxis(node.alignItems),
-            mainAxisAlignment: _mainAxis(node.justifyContent),
-            children: spaced,
-          )
-        : Column(
-            crossAxisAlignment: _crossAxisCol(node.alignItems),
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: _mainAxis(node.justifyContent),
-            children: spaced,
-          );
+    final widget = flow(
+      axis: node.axis == StackAxis.row ? Axis.horizontal : Axis.vertical,
+      crossAxisAlignment: node.axis == StackAxis.row
+          ? _crossAxis(node.alignItems)
+          : _crossAxisCol(node.alignItems),
+      mainAxisAlignment: _mainAxis(node.justifyContent),
+      children: spaced,
+    );
     return _withLongPress(widget, node.onLongPress);
   }
 
   Widget _scroll(ScrollNode node, Map<String, Object?> scope) {
+    if (node.axis == StackAxis.row) {
+      _horizontalScrolls++;
+    } else {
+      _verticalScrolls++;
+    }
     final children = renderList(node.children, scope);
-    return SingleChildScrollView(
+    final widget = SingleChildScrollView(
       scrollDirection: node.axis == StackAxis.row
           ? Axis.horizontal
           : Axis.vertical,
-      child: node.axis == StackAxis.row
-          ? Row(mainAxisSize: MainAxisSize.min, children: children)
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: children,
-            ),
+      child: flow(
+        axis: node.axis == StackAxis.row ? Axis.horizontal : Axis.vertical,
+        children: children,
+      ),
     );
+    return _withLongPress(widget, node.onLongPress);
   }
 
-  Widget _button(ButtonNode node) {
-    final child = Text(node.label);
+  // DSL expressions decode only newline, tab, matching quote and backslash.
+  String _decodeExpressionLiteral(String literal) => literal.replaceAllMapped(
+    RegExp(r'\\([nt"\\])'),
+    (match) => switch (match[1]) {
+      'n' => '\n',
+      't' => '\t',
+      _ => match[1]!,
+    },
+  );
+
+  bool _supportedLabelOperand(String token) =>
+      _validOperand(token) &&
+      (token.startsWith('"') ||
+          num.tryParse(token) != null ||
+          RegExp(
+            r'^[a-zA-Z_$][a-zA-Z0-9_$]*(?:\.(?:[a-zA-Z_$][a-zA-Z0-9_$]*|[0-9]+))*$',
+          ).hasMatch(token));
+
+  // shortcut: unsupported operands retain snapshots until shared DSL evaluation is available.
+  String? _mixedText(String binding, Map<String, Object?> scope) {
+    const prefix = '"" + ';
+    var offset = prefix.length;
+    final out = StringBuffer();
+    while (offset < binding.length) {
+      while (offset < binding.length && binding[offset].trim().isEmpty) {
+        offset++;
+      }
+      if (offset == binding.length) return null;
+      final start = offset;
+      if (binding[offset] == '"') {
+        offset++;
+        var closed = false;
+        while (offset < binding.length) {
+          final char = binding[offset++];
+          if (char == r'\' && offset < binding.length) {
+            offset++;
+          } else if (char == '"') {
+            closed = true;
+            break;
+          }
+        }
+        if (!closed) return null;
+        final literal = binding.substring(start + 1, offset - 1);
+        out.write(_decodeExpressionLiteral(literal));
+      } else if (binding[offset] == '(') {
+        var depth = 1;
+        String? quote;
+        offset++;
+        final expressionStart = offset;
+        while (offset < binding.length && depth > 0) {
+          final char = binding[offset++];
+          if (quote != null) {
+            if (char == r'\' && offset < binding.length) {
+              offset++;
+            } else if (char == quote) {
+              quote = null;
+            }
+          } else if (char == '"' || char == "'" || char == '`') {
+            quote = char;
+          } else if (char == '(') {
+            depth++;
+          } else if (char == ')') {
+            depth--;
+          }
+        }
+        if (depth != 0) return null;
+        final token = binding.substring(expressionStart, offset - 1).trim();
+        if (!_supportedLabelOperand(token)) return null;
+        out.write(_displayValue(_operand(token, scope)));
+      } else {
+        return null;
+      }
+      while (offset < binding.length && binding[offset].trim().isEmpty) {
+        offset++;
+      }
+      if (offset == binding.length) return out.toString();
+      if (binding[offset++] != '+') return null;
+    }
+    return null;
+  }
+
+  Widget _button(ButtonNode node, Map<String, Object?> scope) {
+    final supported = node.labelParts.every(
+      (part) =>
+          part.kind == 'literal' || _supportedLabelOperand(part.value.trim()),
+    );
+    // shortcut: retain unsupported snapshots until shared DSL evaluation is available.
+    final label = node.labelParts.isEmpty || !supported
+        ? node.label
+        : node.labelParts.map((part) {
+            if (part.kind == 'literal') return part.value;
+            final value = _operand(part.value.trim(), scope);
+            return _displayValue(value);
+          }).join();
+    final child = Text(label);
     final button = TextButton(
-      onPressed: node.onClick == null ? null : () => _dispatch(node.onClick),
+      onPressed: node.onClick?.isNotEmpty == true
+          ? () => _dispatch(node.onClick)
+          : null,
       style: TextButton.styleFrom(
         foregroundColor: theme.accentColor,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -236,10 +555,18 @@ class _Renderer {
     return _withLongPress(button, node.onLongPress);
   }
 
-  Widget _toggle(ToggleNode node) {
+  bool _checked(String? bind, bool snapshot, Map<String, Object?> scope) {
+    final path = bind?.trim();
+    final value = path == null || path.isEmpty ? null : _lookup(path, scope);
+    return value is bool ? value : snapshot;
+  }
+
+  Widget _toggle(ToggleNode node, Map<String, Object?> scope) {
     final control = Switch(
-      value: node.checked,
-      onChanged: node.onChange == null ? null : (_) => _dispatch(node.onChange),
+      value: _checked(node.bind, node.checked, scope),
+      onChanged: node.onChange?.isNotEmpty == true
+          ? (_) => _dispatch(node.onChange)
+          : null,
     );
     final row = Row(
       mainAxisSize: MainAxisSize.min,
@@ -249,22 +576,24 @@ class _Renderer {
         control,
       ],
     );
-    return _withLongPress(row, node.onLongPress);
+    return MergeSemantics(child: _withLongPress(row, node.onLongPress));
   }
 
-  Widget _checkbox(CheckboxNode node) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Checkbox(
-          value: node.checked,
-          onChanged: node.onChange == null
-              ? null
-              : (_) => _dispatch(node.onChange),
-        ),
-        if (node.label.isNotEmpty)
-          Flexible(child: Text(node.label, style: _bodyStyle())),
-      ],
+  Widget _checkbox(CheckboxNode node, Map<String, Object?> scope) {
+    return MergeSemantics(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Checkbox(
+            value: _checked(node.bind, node.checked, scope),
+            onChanged: node.onChange?.isNotEmpty == true
+                ? (_) => _dispatch(node.onChange)
+                : null,
+          ),
+          if (node.label.isNotEmpty)
+            Flexible(child: Text(node.label, style: _bodyStyle())),
+        ],
+      ),
     );
   }
 
@@ -293,9 +622,18 @@ class _Renderer {
 
   Widget _meter(MeterNode node) {
     final span = node.max - node.min;
-    final fraction = span <= 0
+    final scale = node.min.abs() > node.max.abs()
+        ? node.min.abs()
+        : node.max.abs();
+    final fraction = span < 0
         ? 0.0
-        : ((node.value - node.min) / span).clamp(0, 1);
+        : span == 0
+        ? (node.value >= node.max ? 1.0 : 0.0)
+        : (span.isInfinite
+                  ? (node.value / scale - node.min / scale) /
+                        (node.max / scale - node.min / scale)
+                  : (node.value - node.min) / span)
+              .clamp(0, 1);
     final percent = (fraction * 100).round();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,11 +651,19 @@ class _Renderer {
 
   Widget? _sparkline(SparklineNode node) {
     if (node.values.length < 2) return null;
-    return DitherSparkline(
-      values: node.values,
-      color: ditherColorFromName(node.color),
-      variant: ditherVariantFromName(node.variant),
-      height: 64,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final chart = DitherSparkline(
+          values: node.values,
+          color: ditherColorFromName(node.color),
+          variant: ditherVariantFromName(node.variant),
+          height: 64,
+        );
+        // Full-width charts need a finite width inside rows/horizontal scrolls.
+        return constraints.hasBoundedWidth
+            ? chart
+            : SizedBox(width: _unboundedBarWidth, child: chart);
+      },
     );
   }
 
@@ -331,6 +677,24 @@ class _Renderer {
         child: Text(label, style: _mutedStyle()),
       );
       if (constraints.hasBoundedWidth) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: label,
+            style: DefaultTextStyle.of(context).style.merge(_mutedStyle()),
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          locale: Localizations.maybeLocaleOf(context),
+        )..layout();
+        final rowWidth = _unboundedBarWidth + 8 + painter.width;
+        painter.dispose();
+        if (constraints.maxWidth < rowWidth) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [bar, percentText],
+          );
+        }
         return Row(
           children: [
             Expanded(child: bar),
@@ -399,14 +763,29 @@ class _Renderer {
     return SizedBox(width: size, height: size);
   }
 
-  Widget _image(ImageNode node) {
-    final uri = Uri.tryParse(node.src);
+  // shortcut: unsupported URL expressions retain snapshots until shared DSL
+  // evaluation is available, matching dynamic button labels.
+  String _boundUrl(
+    String snapshot,
+    String? binding,
+    Map<String, Object?> scope,
+  ) {
+    if (binding == null) return snapshot;
+    final token = binding.trim();
+    if (token.startsWith('"" + ')) return _mixedText(token, scope) ?? snapshot;
+    if (!_supportedLabelOperand(token)) return snapshot;
+    return _displayValue(_operand(token, scope));
+  }
+
+  Widget _image(ImageNode node, Map<String, Object?> scope) {
+    final src = _boundUrl(node.src, node.srcBind, scope);
+    final uri = Uri.tryParse(src);
     final isNetwork =
         uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
     final placeholder = _imagePlaceholder(node);
     final image = isNetwork && allowNetworkImages
         ? Image.network(
-            node.src,
+            src,
             fit: BoxFit.cover,
             errorBuilder: (_, _, _) => placeholder,
           )
@@ -427,59 +806,64 @@ class _Renderer {
       final marker = node.ordered ? '$index.' : '•';
       final rendered = render(child, scope);
       if (rendered == null) continue;
+      final markerWidget = Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: Text(marker, style: _mutedStyle()),
+      );
+      final row = hasSignedMargins
+          ? _MarginMarkerRow(children: [markerWidget, rendered])
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final bounded = constraints.hasBoundedWidth;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
+                  children: [
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: constraints.maxWidth,
+                      ),
+                      child: markerWidget,
+                    ),
+                    if (bounded) Flexible(child: rendered) else rendered,
+                  ],
+                );
+              },
+            );
+      const padding = EdgeInsets.symmetric(vertical: 2);
+      final item = hasSignedMargins
+          ? _MarginPadding(padding: padding, child: row)
+          : Padding(padding: padding, child: row);
       items.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          // A `Flexible` child cannot lay out under unbounded width, which is
-          // exactly what a horizontal `stack`/`scroll` parent supplies, so the
-          // marker row degrades to a rigid, intrinsically-sized row there.
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final bounded = constraints.hasBoundedWidth;
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Text(marker, style: _mutedStyle()),
-                  ),
-                  if (bounded) Flexible(child: rendered) else rendered,
-                ],
-              );
-            },
-          ),
-        ),
+        rendered is _ScrollBranch
+            ? _ScrollBranch(
+                vertical: rendered.vertical,
+                horizontal: rendered.horizontal,
+                child: item,
+              )
+            : item,
       );
       index += 1;
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: items,
-    );
+    return flow(children: items);
   }
 
   Widget? _listItem(ListItemNode node, Map<String, Object?> scope) {
     final children = renderList(node.children, scope);
     if (children.isEmpty) return null;
-    final widget = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: children,
-    );
+    final widget = flow(children: children);
     return _withTap(_withLongPress(widget, node.onLongPress), node.onClick);
   }
 
   Widget? _link(LinkNode node, Map<String, Object?> scope) {
     final children = renderList(node.children, scope);
     if (children.isEmpty) return null;
-    final widget = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: children,
+    final widget = flow(children: children);
+    return _withTap(
+      widget,
+      _boundUrl(node.href, node.hrefBind, scope),
+      isLink: true,
     );
-    return _withTap(widget, node.href);
   }
 
   Widget? _ifNode(IfNode node, Map<String, Object?> scope) {
@@ -489,27 +873,24 @@ class _Renderer {
     if (branch == null || branch.isEmpty) return null;
     final children = renderList(branch, scope);
     if (children.isEmpty) return null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: children,
-    );
+    return flow(children: children);
   }
 
   Widget? _forEach(ForEachNode node, Map<String, Object?> scope) {
-    final source = scope[node.bind];
-    if (source is! List) return null;
+    final binding = node.bind.trim();
+    if (_isNullRoot(binding.split('.').first)) return null;
+    final source = scope.containsKey(binding)
+        ? scope[binding]
+        : _lookup(binding, scope);
+    if (source is! List || node.itemBody.isEmpty) return null;
     final children = <Widget>[];
     for (final item in source) {
+      if (_remainingNodes <= 0) break;
       final itemScope = {...scope, node.itemName: item};
       children.addAll(renderList(node.itemBody, itemScope));
     }
     if (children.isEmpty) return null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: children,
-    );
+    return flow(children: children);
   }
 
   Widget? _unsupported(UnsupportedNode node) {
@@ -536,12 +917,19 @@ class _Renderer {
 
   Widget _withLongPress(Widget child, String? action) {
     if (action == null || action.isEmpty) return child;
-    return GestureDetector(onLongPress: () => _dispatch(action), child: child);
+    return hasSignedMargins
+        ? _MarginGesture(onLongPress: () => _dispatch(action), child: child)
+        : GestureDetector(onLongPress: () => _dispatch(action), child: child);
   }
 
-  Widget _withTap(Widget child, String? action) {
+  Widget _withTap(Widget child, String? action, {bool isLink = false}) {
     if (action == null || action.isEmpty) return child;
-    return GestureDetector(onTap: () => _dispatch(action), child: child);
+    return _KeyboardTap(
+      onTap: () => _dispatch(action),
+      signedMargins: hasSignedMargins,
+      isLink: isLink,
+      child: child,
+    );
   }
 
   // ── Style + helpers ───────────────────────────────────────────────────────
@@ -550,38 +938,86 @@ class _Renderer {
     if (style == null) return child;
     var result = child;
     final padding = _padding(style);
-    if (padding != null) result = Padding(padding: padding, child: result);
+    if (padding != null) {
+      result = hasSignedMargins
+          ? _MarginPadding(padding: padding, child: result)
+          : Padding(padding: padding, child: result);
+    }
     final bg = _color(style.backgroundColor);
-    final borderColor = _color(style.borderColor);
+    final borderColor =
+        _color(style.borderColor) ??
+        (style.borderWidth != null && style.borderColor == null
+            ? theme.borderColor
+            : null);
     final radius = style.cornerRadius;
     final safeRadius = radius != null && radius.isFinite && radius > 0
         ? _extent(radius)
         : null;
     if (bg != null || safeRadius != null || borderColor != null) {
       final borderWidth = style.borderWidth;
-      result = DecoratedBox(
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: safeRadius == null
-              ? null
-              : BorderRadius.circular(safeRadius),
-          border: borderColor == null
-              ? null
-              : Border.all(
-                  color: borderColor,
-                  width:
-                      borderWidth != null &&
-                          borderWidth.isFinite &&
-                          borderWidth >= 0
-                      ? _extent(borderWidth)
-                      : 1,
-                ),
-        ),
-        child: result,
+      final decoration = BoxDecoration(
+        color: bg,
+        borderRadius: safeRadius == null
+            ? null
+            : BorderRadius.circular(safeRadius),
+        border: borderColor == null
+            ? null
+            : Border.all(
+                color: borderColor,
+                width:
+                    borderWidth != null &&
+                        borderWidth.isFinite &&
+                        borderWidth >= 0
+                    ? _extent(borderWidth)
+                    : 1,
+              ),
       );
+      result = hasSignedMargins
+          ? _MarginDecoratedBox(decoration: decoration, child: result)
+          : DecoratedBox(decoration: decoration, child: result);
     }
     if (style.opacity != null) {
-      result = Opacity(opacity: style.opacity!.clamp(0, 1), child: result);
+      final opacity = style.opacity!.clamp(0, 1).toDouble();
+      result = hasSignedMargins
+          ? _MarginOpacity(opacity: opacity, child: result)
+          : Opacity(opacity: opacity, child: result);
+    }
+    double? finite(double? value) => value != null && value.isFinite
+        ? value.clamp(-_maxLayoutExtent, _maxLayoutExtent).toDouble()
+        : null;
+    final all = finite(style.margin);
+    final horizontal = finite(style.marginHorizontal);
+    final vertical = finite(style.marginVertical);
+    final start = finite(style.marginLeft);
+    final top = finite(style.marginTop);
+    final end = finite(style.marginRight);
+    final bottom = finite(style.marginBottom);
+    final layers = <EdgeInsetsDirectional>[
+      if (all != null) EdgeInsetsDirectional.all(all),
+      if (horizontal != null || vertical != null)
+        EdgeInsetsDirectional.fromSTEB(
+          horizontal ?? 0,
+          vertical ?? 0,
+          horizontal ?? 0,
+          vertical ?? 0,
+        ),
+      if ([start, top, end, bottom].any((value) => value != null))
+        EdgeInsetsDirectional.fromSTEB(
+          start ?? 0,
+          top ?? 0,
+          end ?? 0,
+          bottom ?? 0,
+        ),
+    ];
+    for (final insets in layers.reversed) {
+      if (insets.isNonNegative) {
+        result = hasSignedMargins
+            ? _MarginPadding(padding: insets, child: result)
+            : Padding(padding: insets, child: result);
+      } else {
+        hasSignedMargins = true;
+        result = _SignedMargin(insets: insets, child: result);
+      }
     }
     return result;
   }
@@ -658,12 +1094,15 @@ class _Renderer {
 
   FontWeight _weight(int? weight) {
     if (weight == null) return FontWeight.w400;
+    if (weight >= 900) return FontWeight.w900;
     if (weight >= 800) return FontWeight.w800;
     if (weight >= 700) return FontWeight.w700;
     if (weight >= 600) return FontWeight.w600;
     if (weight >= 500) return FontWeight.w500;
     if (weight >= 400) return FontWeight.w400;
-    return FontWeight.w300;
+    if (weight >= 300) return FontWeight.w300;
+    if (weight >= 200) return FontWeight.w200;
+    return FontWeight.w100;
   }
 
   TextDecoration? _decoration(ViewStyle? style) {
@@ -704,21 +1143,23 @@ class _Renderer {
     'end' => MainAxisAlignment.end,
     'between' => MainAxisAlignment.spaceBetween,
     'around' => MainAxisAlignment.spaceAround,
+    'evenly' => MainAxisAlignment.spaceEvenly,
     _ => MainAxisAlignment.start,
   };
 
   Color? _color(String? hex) {
     if (hex == null) return null;
-    var t = hex.trim();
-    if (t.startsWith('#')) t = t.substring(1);
+    final normalized = normalizeCssHex(hex);
+    if (normalized == null) return null;
+    var t = normalized.substring(1);
+    final hasAlpha = t.length == 8;
     if (t.length == 6) t = 'ff$t';
     if (t.length == 8) {
-      // Hex is RRGGBBAA in some pipelines and AARRGGBB here; ir.rs emits
-      // #RRGGBB(AA). Normalize #RRGGBBAA → 0xAARRGGBB.
+      // View IR uses CSS RRGGBBAA; Flutter uses AARRGGBB.
       final value = int.tryParse(t, radix: 16);
       if (value == null) return null;
       // If the source had 8 digits (RRGGBBAA), rotate alpha to the front.
-      if (hex.replaceAll('#', '').length == 8) {
+      if (hasAlpha) {
         final rgb = value >> 8;
         final a = value & 0xff;
         return Color((a << 24) | rgb);
@@ -728,23 +1169,67 @@ class _Renderer {
     return null;
   }
 
-  /// Substitute `{path}` tokens from [scope] (dotted paths into maps). Missing
+  String _displayValue(Object? value) => switch (value) {
+    double()
+        when value.isFinite &&
+            value.abs() < 1e15 &&
+            value.truncateToDouble() == value =>
+      value.toInt().toString(),
+    String() || bool() || num() => '$value',
+    List() => '[${value.length} items]',
+    _ => '',
+  };
+
+  /// Substitute `{path}` tokens from [scope] (dotted paths and core properties). Missing
   /// keys resolve to empty string. NOT an expression evaluator.
   String _interpolate(String content, Map<String, Object?> scope) {
     if (!content.contains('{')) return content;
     return content.replaceAllMapped(RegExp(r'\{([^}]*)\}'), (match) {
       final path = match.group(1)!.trim();
       final value = _lookup(path, scope);
-      return value == null ? '' : '$value';
+      return _displayValue(value);
     });
   }
 
+  String _trimProperty(String value) {
+    // Rust str::trim uses Unicode White_Space, which excludes the BOM.
+    const whitespace =
+        r'[\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]';
+    return value.replaceAll(RegExp('^$whitespace+|$whitespace+\$'), '');
+  }
+
+  bool _isNullRoot(String root) =>
+      const {'null', 'none', 'None', 'Null'}.contains(root);
+
   Object? _lookup(String path, Map<String, Object?> scope) {
     final parts = path.split('.');
+    if (_isNullRoot(parts.first)) return null;
     Object? current = scope[parts.first];
     for (final part in parts.skip(1)) {
       if (current is Map) {
         current = current[part];
+      } else if (current is String) {
+        current = switch (part) {
+          'len' || 'length' => current.runes.length,
+          'upper' => crepusUpperCase(current),
+          'lower' => crepusLowerCase(current),
+          'trim' => _trimProperty(current),
+          'is_empty' || 'empty' => current.isEmpty,
+          _ => null,
+        };
+      } else if (current is List) {
+        if (part == 'len' || part == 'length') {
+          current = current.length;
+        } else if (part == 'is_empty' || part == 'empty') {
+          current = current.isEmpty;
+        } else {
+          final index = RegExp(r'^[0-9]+$').hasMatch(part)
+              ? int.tryParse(part)
+              : null;
+          current = index != null && index < current.length
+              ? current[index]
+              : null;
+        }
       } else {
         return null;
       }
@@ -758,27 +1243,129 @@ class _Renderer {
   bool _evalCondition(String condition, Map<String, Object?> scope) {
     var expr = condition.trim();
     if (expr.isEmpty) return false;
-    for (final op in const ['==', '!=']) {
-      final idx = expr.indexOf(op);
-      if (idx > 0) {
-        final left = _operand(expr.substring(0, idx).trim(), scope);
-        final right = _operand(expr.substring(idx + op.length).trim(), scope);
-        final equal = '$left' == '$right';
-        return op == '==' ? equal : !equal;
+    var quoted = false;
+    var operatorIndex = -1;
+    for (var idx = 0; idx < expr.length; idx++) {
+      final char = expr[idx];
+      if (quoted && char == r'\') {
+        idx++;
+        continue;
+      }
+      if (char == '"') {
+        quoted = !quoted;
+        continue;
+      }
+      if (quoted || idx + 1 >= expr.length) continue;
+      final op = expr.substring(idx, idx + 2);
+      if (op == '==' || op == '!=') {
+        if (operatorIndex >= 0) return false;
+        operatorIndex = idx;
+        idx++;
       }
     }
-    if (expr.startsWith('!')) {
-      return !_truthy(_operand(expr.substring(1).trim(), scope));
+    if (quoted) return false;
+    if (operatorIndex >= 0) {
+      final leftToken = expr.substring(0, operatorIndex).trim();
+      final rightToken = expr.substring(operatorIndex + 2).trim();
+      if (!_validOperand(leftToken) || !_validOperand(rightToken)) return false;
+      final left = _operand(leftToken, scope);
+      final right = _operand(rightToken, scope);
+      if ((left is num && !left.isFinite) ||
+          (right is num && !right.isFinite)) {
+        return false;
+      }
+      final equal = _comparisonEqual(left, right);
+      return expr.substring(operatorIndex, operatorIndex + 2) == '=='
+          ? equal
+          : !equal;
     }
-    return _truthy(_operand(expr, scope));
+    if (expr.startsWith('!')) {
+      final token = expr.substring(1).trim();
+      return _validOperand(token) && !_truthy(_operand(token, scope));
+    }
+    return _validOperand(expr) && _truthy(_operand(expr, scope));
+  }
+
+  bool _comparisonEqual(Object? left, Object? right) {
+    if (left is! List && left is! Map && right is! List && right is! Map) {
+      return left is num && right is num
+          ? left == right
+          : _comparisonText(left) == _comparisonText(right);
+    }
+    final pending = <Iterator<(Object?, Object?)>>[
+      [(left, right)].iterator,
+    ];
+    // Host data can contain cycles even though JSON/Core contexts cannot.
+    final seen = HashMap<Object, HashSet<Object>>.identity();
+    while (pending.isNotEmpty) {
+      if (!pending.last.moveNext()) {
+        pending.removeLast();
+        continue;
+      }
+      final (left, right) = pending.last.current;
+      if (left is List || left is Map || right is List || right is Map) {
+        if (left is List && right is List) {
+          if (left.length != right.length) return false;
+          if (!(seen[left] ??= HashSet<Object>.identity()).add(right)) continue;
+          // Keep pair storage proportional to nesting depth, not collection width.
+          pending.add(
+            Iterable<(Object?, Object?)>.generate(left.length, (index) {
+              final i = left.length - index - 1;
+              return (left[i], right[i]);
+            }).iterator,
+          );
+        } else if (left is Map && right is Map) {
+          if (left.length != right.length) return false;
+          if (!(seen[left] ??= HashSet<Object>.identity()).add(right)) continue;
+          for (final key in left.keys) {
+            if (!right.containsKey(key)) return false;
+          }
+          pending.add(
+            left.entries
+                .map((entry) => (entry.value, right[entry.key]))
+                .iterator,
+          );
+        } else {
+          return false;
+        }
+      } else if (left is num && right is num) {
+        if (left != right) return false;
+      } else if (_comparisonText(left) != _comparisonText(right)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Core scalar comparisons coerce null to empty and spell integral doubles
+  // without a trailing .0.
+  // shortcut: Exponent spelling follows Dart until shared DSL scalar formatting
+  // is available.
+  String _comparisonText(Object? value) {
+    final text = value?.toString() ?? '';
+    return value is double && text.endsWith('.0')
+        ? text.substring(0, text.length - 2)
+        : text;
+  }
+
+  bool _validOperand(String token) {
+    if (token.isEmpty || token.startsWith('!')) return false;
+    if (token.startsWith('"')) {
+      return RegExp(r'^"(?:\\.|[^"\\])*"$').hasMatch(token);
+    }
+    final number = num.tryParse(token);
+    if (number != null) return number.isFinite;
+    return !RegExp(r'[\s"=!<>&|()+*/{}\[\]]').hasMatch(token) &&
+        token.split('.').every((part) => part.isNotEmpty);
   }
 
   Object? _operand(String token, Map<String, Object?> scope) {
     if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
-      return token.substring(1, token.length - 1);
+      return _decodeExpressionLiteral(token.substring(1, token.length - 1));
     }
     if (token == 'true') return true;
     if (token == 'false') return false;
+    if (const {'null', 'none', 'None', 'Null'}.contains(token)) return null;
     final number = num.tryParse(token);
     if (number != null) return number;
     return _lookup(token, scope);
@@ -787,7 +1374,7 @@ class _Renderer {
   bool _truthy(Object? value) {
     if (value == null) return false;
     if (value is bool) return value;
-    if (value is num) return value != 0;
+    if (value is num) return value.isFinite && value != 0;
     if (value is String) return value.isNotEmpty;
     if (value is Iterable) return value.isNotEmpty;
     if (value is Map) return value.isNotEmpty;
@@ -820,8 +1407,15 @@ class CrepusTimer extends StatefulWidget {
 
 class _CrepusTimerState extends State<CrepusTimer> {
   Timer? _ticker;
-  Duration _elapsed = Duration.zero;
-  bool _running = false;
+  late final Stopwatch _stopwatch = GestureBinding.instance.samplingClock
+      .stopwatch();
+
+  bool get _running => _stopwatch.isRunning;
+  Duration get _elapsed {
+    if (widget.node.duration <= Duration.zero) return Duration.zero;
+    final elapsed = _stopwatch.elapsed;
+    return elapsed > widget.node.duration ? widget.node.duration : elapsed;
+  }
 
   /// Fine enough that the seconds figure never visibly stalls, coarse enough
   /// that an idle artifact is not repainting at frame rate.
@@ -832,6 +1426,7 @@ class _CrepusTimerState extends State<CrepusTimer> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_animationsOff) _stop();
     // Autostart lives here rather than initState because it consults
     // MediaQuery, which is not available until dependencies resolve.
     if (_autostarted) return;
@@ -843,7 +1438,10 @@ class _CrepusTimerState extends State<CrepusTimer> {
   void didUpdateWidget(covariant CrepusTimer old) {
     super.didUpdateWidget(old);
     // A re-rendered artifact with a different duration is a different timer.
-    if (old.node.duration != widget.node.duration) _reset();
+    if (old.node.duration != widget.node.duration) {
+      _reset();
+      if (widget.node.autostart) _start();
+    }
   }
 
   bool get _animationsOff =>
@@ -852,16 +1450,13 @@ class _CrepusTimerState extends State<CrepusTimer> {
   void _start() {
     if (_running || widget.node.duration <= Duration.zero) return;
     if (_animationsOff) return;
-    _running = true;
+    _stopwatch.start();
     _ticker?.cancel();
-    _ticker = Timer.periodic(_tick, (_) {
+    _ticker = Timer.periodic(_tick, (timer) {
       if (!mounted) return;
       setState(() {
-        _elapsed += _tick;
-        if (_elapsed >= widget.node.duration) {
-          _elapsed = widget.node.duration;
-          _stop();
-        }
+        // The stopwatch retains partial ticks and excludes time spent paused.
+        if (_stopwatch.elapsed >= widget.node.duration) _stop();
       });
     });
   }
@@ -869,12 +1464,12 @@ class _CrepusTimerState extends State<CrepusTimer> {
   void _stop() {
     _ticker?.cancel();
     _ticker = null;
-    _running = false;
+    _stopwatch.stop();
   }
 
   void _reset() {
     _stop();
-    if (mounted) setState(() => _elapsed = Duration.zero);
+    if (mounted) setState(_stopwatch.reset);
   }
 
   @override
@@ -911,12 +1506,12 @@ class _CrepusTimerState extends State<CrepusTimer> {
         widget.barBuilder(fraction, _clock(shown)),
         Padding(
           padding: const EdgeInsets.only(top: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               if (!done)
                 TextButton(
-                  onPressed: _running ? () => setState(_stop) : _start,
+                  onPressed: () => setState(_running ? _stop : _start),
                   child: Text(_running ? 'Pause' : 'Start'),
                 ),
               TextButton(onPressed: _reset, child: const Text('Reset')),

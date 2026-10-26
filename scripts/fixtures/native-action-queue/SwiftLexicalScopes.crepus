@@ -1,0 +1,12 @@
+view
+  for group in groups
+    input bind=group.name @change=sync
+    for child in group.children
+      input bind=group.name @change=sync
+      input bind=child.name @change=sync
+      text "{group.name}:{child.name}"
+      if {group.name == child.name}
+        text "equal"
+      for group in child.groups
+        input bind=group.name @change=sync
+        text "{group.name}:{child.name}"

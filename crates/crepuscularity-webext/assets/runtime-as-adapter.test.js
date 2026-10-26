@@ -34,13 +34,12 @@ describe("runtime_version", () => {
   });
 
   it("should return version string from wasm if runtime_version is defined", async () => {
-    mockWasm = {
-      runtime_version: () => 42,
-      __getString: (ptr) => {
-        if (ptr === 42) return "1.2.3";
-        return "";
-      }
-    };
+    const memory = new originalWebAssembly.Memory({ initial: 1 });
+    const ptr = 16;
+    const text = "1.2.3";
+    new DataView(memory.buffer).setUint32(ptr - 4, text.length * 2, true);
+    new Uint16Array(memory.buffer, ptr, text.length).set([...text].map((char) => char.charCodeAt(0)));
+    mockWasm = { runtime_version: () => ptr, memory };
     await init("dummy.wasm");
     expect(runtime_version()).toBe("1.2.3");
   });

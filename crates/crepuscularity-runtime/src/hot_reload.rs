@@ -48,6 +48,8 @@ pub struct HotReloadState {
     /// Last completed snapshot; empty until the initial background load finishes.
     pub template: Result<Arc<Vec<Node>>, String>,
     pub context: TemplateContext,
+    pub bindings: crate::RuntimeBindings,
+    binding_namespace: String,
     pub changed: Arc<Mutex<bool>>,
 
     prepared: Option<PreparedSnapshot>,
@@ -112,6 +114,24 @@ impl PreparedSnapshot {
             &self.nodes,
             &self.render_context(current),
             Arc::clone(&self.includes),
+        )
+    }
+
+    fn render_bound(
+        &self,
+        current: &TemplateContext,
+        namespace: &str,
+        bindings: &crate::RuntimeBindings,
+    ) -> gpui::AnyElement {
+        if namespace == "root" && bindings.is_empty() {
+            return self.render(current);
+        }
+        crate::renderer::render_nodes_prepared_with_bindings(
+            namespace,
+            &self.nodes,
+            &self.render_context(current),
+            Arc::clone(&self.includes),
+            bindings,
         )
     }
 
@@ -322,6 +342,8 @@ impl HotReloadState {
             path,
             template,
             context,
+            bindings: crate::RuntimeBindings::default(),
+            binding_namespace: format!("hot-template:{:?}", cx.entity_id()),
             changed,
             prepared: None,
             #[cfg(test)]
@@ -370,9 +392,9 @@ impl HotReloadState {
     fn render(&mut self) -> gpui::AnyElement {
         match &self.template {
             Ok(_) => match &self.prepared {
-                Some(snapshot) => {
-                    with_gpui_target_in_place(&mut self.context, |context| snapshot.render(context))
-                }
+                Some(snapshot) => with_gpui_target_in_place(&mut self.context, |context| {
+                    snapshot.render_bound(context, &self.binding_namespace, &self.bindings)
+                }),
                 None => div().into_any_element(),
             },
             Err(err) => {

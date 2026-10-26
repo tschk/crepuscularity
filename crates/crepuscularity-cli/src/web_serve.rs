@@ -1,18 +1,18 @@
-//! `crepus web dev` — hot-reload dev server for `.crepus` templates.
+//! `crepus web dev` — hot-reload dev server for supported template sources.
 //!
 //! # How it works
 //!
-//! 1. Walks `site_dir` and loads all `*.crepus` files into an in-memory
+//! 1. Walks `site_dir` and loads all supported template sources into an in-memory
 //!    **virtual file map** (`Arc<RwLock<HashMap<String, String>>>`).
-//! 2. A `notify` watcher fires on every `.crepus` change; a debounce thread
+//! 2. A `notify` watcher observes templates, authored island dependencies, and runtime sources; a debounce thread
 //!    batches events within a 50 ms window then updates the virtual file map
-//!    and bumps a generation counter.
+//!    and bumps a generation counter. Non-`.crepus` template changes request a
+//!    full page reload, preserving authored island module reload behavior.
 //! 3. A plain `std::net::TcpListener` accept-loop spawns one thread per
 //!    connection — fine for a dev server with ≤ a handful of browser tabs.
 //! 4. `GET /dev-reload` is a **Server-Sent Events** endpoint: the browser
 //!    keeps the connection open; when the generation counter changes the
-//!    server sends `data: reload\n\n` and closes the connection. The browser's
-//!    `EventSource` auto-reconnects on the next page load.
+//!    server sends typed reload/error events and keeps the connection open.
 //! 5. On startup the server runs the same **wasm32 + wasm-bindgen** step as `crepus web build`,
 //!    writing UnoCSS, `app.js`, and `pkg/` under **`.crepus-dev/`** beside the site. Saving
 //!    **`runtime/**/*.rs`** (or `Cargo.toml` / `Cargo.lock` in that crate) repeats that build and
@@ -23,7 +23,7 @@
 //!    plus a dev-reload script. Subordinate `.html` routes get a static preview shell (no WASM) with UnoCSS.
 //! 8. Static assets **`/static/*`** continue to resolve under the site directory.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -48,10 +48,11 @@ use crate::web::{
 };
 use crate::web_docs_hook::{docs_src_path, run_docs_hook, DocsHookTheme};
 
-/// Watcher event: template source or site `runtime/` (WASM crate).
+/// Watcher event: template, authored island dependencies, or site WASM crate.
 enum WatchEvent {
     Crepus(PathBuf),
     RuntimeDirty,
+    IslandDirty(PathBuf),
 }
 
 fn is_runtime_source_path(site_dir: &Path, path: &Path) -> bool {
@@ -69,6 +70,41 @@ fn is_runtime_source_path(site_dir: &Path, path: &Path) -> bool {
         || path.file_name().and_then(|n| n.to_str()) == Some("Cargo.lock")
 }
 
+// Use lexical paths as well as resolved paths: remove/rename notifications may
+// refer to a file that no longer exists, while symlinks must stay inside the site.
+fn is_authored_site_path(site_dir: &Path, path: &Path) -> bool {
+    fn allowed(root: &Path, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(root) else {
+            return false;
+        };
+        !relative.as_os_str().is_empty()
+            && relative.components().all(|part| {
+                let std::path::Component::Normal(name) = part else {
+                    return false;
+                };
+                let name = name.to_string_lossy();
+                !matches!(
+                    name.as_ref(),
+                    ".crepus-dev" | "dist" | "target" | "node_modules" | ".git" | "runtime"
+                ) && !name.starts_with(".crepus-react-island-")
+            })
+    }
+    allowed(site_dir, path)
+        && path
+            .canonicalize()
+            .map_or(true, |resolved| allowed(site_dir, &resolved))
+}
+
+fn island_rebuild_sse_message(path: &Path) -> String {
+    format!(
+        "event: crepus-reload\ndata: {}\n\n",
+        json!({
+            "file": path.file_name().unwrap_or_default().to_string_lossy(),
+            "reload": true
+        })
+    )
+}
+
 fn runtime_rebuild_sse_message() -> String {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -81,8 +117,7 @@ fn runtime_rebuild_sse_message() -> String {
 }
 
 fn runtime_build_error_sse(message: &str) -> String {
-    let escaped = message.replace('\n', "\\n");
-    format!("event: crepus-error\ndata: {escaped}\n\n")
+    format!("event: crepus-error\ndata: {}\n\n", json!(message))
 }
 
 // ── Options ──────────────────────────────────────────────────────────────────
@@ -145,13 +180,13 @@ const RELOAD_SCRIPT: &str = "<script>
   es.addEventListener('crepus-reload',function(e){
     dismissErrorOverlay();
     var info={};try{info=JSON.parse(e.data);}catch(_){}
-    if (info.file && info.file.includes('runtime')) {
+    if (info.reload === true || (info.file && info.file.includes('runtime'))) {
       showToast('\u{21bb} '+(info.file||'template')+' updated');
       setTimeout(function(){location.reload();},150);
     } else {
-      fetch('./crepus-bundle.json', {cache: 'no-store'}).then(r => r.json()).then(function(bundle) {
-        currentBundle = bundle;
-        rerender();
+      fetch('/crepus-bundle.json', {cache: 'no-store'}).then(r => r.json()).then(function(bundle) {
+        var handled = !window.dispatchEvent(new CustomEvent('crepus-update-bundle', {detail: bundle, cancelable: true}));
+        if (!handled) { location.reload(); return; }
         showToast('\u{21bb} '+(info.file||'template')+' updated');
       }).catch(function(){
         location.reload();
@@ -159,7 +194,7 @@ const RELOAD_SCRIPT: &str = "<script>
     }
   });
   es.addEventListener('crepus-error',function(e){
-    showErrorOverlay(e.data.replace(/\\\\n/g,'\\n'));
+    showErrorOverlay(JSON.parse(e.data));
   });
   es.onmessage=function(e){if(e.data==='reload'){dismissErrorOverlay();location.reload();}};
   es.onerror=function(){};
@@ -170,17 +205,12 @@ const RELOAD_SCRIPT: &str = "<script>
 
 /// Recursively collect `.crepus` file paths under `dir`.
 fn walk_crepus_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_crepus_files(&path, out);
-        } else if path.extension().and_then(|x| x.to_str()) == Some("crepus") {
-            out.push(path);
-        }
-    }
+    let mut paths = Vec::new();
+    collect_crepus_files(dir, &mut paths, false, &mut HashSet::new());
+    out.extend(paths.into_iter().filter(|path| {
+        path.extension()
+            .is_some_and(|extension| extension == "crepus")
+    }));
 }
 
 /// Parse every `.crepus` file and return pass/fail lines sorted by relative path.
@@ -227,7 +257,8 @@ fn validate_templates(site_dir: &Path) {
 // ── Public entry point ───────────────────────────────────────────────────────
 
 /// Run the dev server, blocking until the process is killed.
-pub fn run(opts: ServeOptions) {
+pub fn run(mut opts: ServeOptions) {
+    opts.entry = crate::web::normalize_bundle_entry(&opts.entry);
     let site_dir = std::fs::canonicalize(&opts.site_dir).unwrap_or_else(|_| opts.site_dir.clone());
 
     // Validate all templates at startup.
@@ -247,7 +278,7 @@ pub fn run(opts: ServeOptions) {
         console::style("→").dim(),
         console::style(format!("{}/", crate::web::WEB_DEV_ARTIFACT_DIR)).cyan()
     );
-    if let Err(e) = ensure_web_dev_artifacts(&site_dir) {
+    if let Err(e) = ensure_web_dev_artifacts(&site_dir, &opts.entry) {
         eprintln!("  {} {}", console::style("✗").red().bold(), e);
         std::process::exit(1);
     }
@@ -310,6 +341,7 @@ pub fn run(opts: ServeOptions) {
         Arc::clone(&vfm),
         Arc::clone(&generation),
         Arc::clone(&last_sse_msg),
+        opts.entry.clone(),
     );
 
     // Bind TCP listener.
@@ -320,7 +352,7 @@ pub fn run(opts: ServeOptions) {
     });
 
     eprintln!(
-        "\n  {} crepus web dev\n  {} http://localhost:{}\n  {} edit .crepus or runtime/ — templates hot-reload; Rust changes rebuild WASM\n",
+        "\n  {} crepus web dev\n  {} http://localhost:{}\n  {} edit templates, islands, or runtime/ — templates hot-reload; islands reload; Rust rebuilds WASM\n",
         console::style("▶").green().bold(),
         console::style("→").dim(),
         opts.port,
@@ -354,7 +386,7 @@ pub fn run(opts: ServeOptions) {
 
 // ── Virtual file map ─────────────────────────────────────────────────────────
 
-/// Walk `site_dir` recursively and load every `*.crepus` file into `vfm`.
+/// Load supported template sources into the dev virtual file map.
 fn load_all_crepus(site_dir: &Path, vfm: &Arc<RwLock<HashMap<String, String>>>) {
     let mut paths = vec![];
     load_dir_recursive_collect(site_dir, &mut paths);
@@ -376,24 +408,42 @@ fn load_all_crepus(site_dir: &Path, vfm: &Arc<RwLock<HashMap<String, String>>>) 
 }
 
 fn load_dir_recursive_collect(dir: &Path, paths: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    collect_crepus_files(dir, paths, true, &mut HashSet::new());
+}
+
+fn collect_crepus_files(
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+    skip_generated: bool,
+    ancestors: &mut HashSet<PathBuf>,
+) {
+    let Ok(identity) = dir.canonicalize() else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if matches!(
-                name,
-                "dist" | "target" | ".git" | "node_modules" | ".crepus-dev"
-            ) {
-                continue;
+    if !ancestors.insert(identity.clone()) {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if skip_generated
+                    && matches!(
+                        name,
+                        "dist" | "target" | ".git" | "node_modules" | ".crepus-dev"
+                    )
+                {
+                    continue;
+                }
+                collect_crepus_files(&path, paths, skip_generated, ancestors);
+            } else if crate::web::is_framework_template(&path) {
+                paths.push(path);
             }
-            load_dir_recursive_collect(&path, paths);
-        } else if path.extension().is_some_and(|e| e == "crepus") {
-            paths.push(path);
         }
     }
+    // Only ancestry cycles are skipped; separate logical aliases remain importable.
+    ancestors.remove(&identity);
 }
 
 /// Return a forward-slash relative path string from `root` to `abs`.
@@ -420,27 +470,98 @@ fn build_sse_message(path: &Path) -> String {
         .as_millis();
     match std::fs::read_to_string(path).map(|s| parse_template_with_path(&s, Some(path))) {
         Ok(Ok(_)) => format!(
-            "event: crepus-reload\ndata: {{\"file\":\"{}\",\"ts\":{}}}\n\n",
-            filename, ts
+            "event: crepus-reload\ndata: {}\n\n",
+            json!({ "file": filename, "ts": ts }),
         ),
-        Ok(Err(e)) => {
-            let escaped = e.to_string().replace('\n', "\\n");
-            format!("event: crepus-error\ndata: {escaped}\n\n")
-        }
-        Err(e) => {
-            let escaped = e.to_string().replace('\n', "\\n");
-            format!("event: crepus-error\ndata: read error: {escaped}\n\n")
-        }
+        Ok(Err(e)) => runtime_build_error_sse(&e.to_string()),
+        Err(e) => runtime_build_error_sse(&format!("read error: {e}")),
     }
 }
 
 // ── File watcher + debounce ──────────────────────────────────────────────────
+
+fn classify_authored_path(path: &Path) -> WatchEvent {
+    if !path.is_dir() && crate::web::is_framework_template(path) {
+        WatchEvent::Crepus(path.to_path_buf())
+    } else {
+        WatchEvent::IslandDirty(path.to_path_buf())
+    }
+}
+
+fn queue_template_update(
+    path: PathBuf,
+    pending: &mut Vec<PathBuf>,
+    island_path: &mut Option<PathBuf>,
+) {
+    // Frontend files may also be authored island modules. Keep their full-reload
+    // behavior while refreshing bundle bytes.
+    if !path.is_file()
+        || path.extension().and_then(|extension| extension.to_str()) != Some("crepus")
+    {
+        *island_path = Some(path.clone());
+    }
+    pending.push(path);
+}
+
+fn apply_template_updates(
+    site_dir: &Path,
+    vfm: &Arc<RwLock<HashMap<String, String>>>,
+    pending_crepus: &mut Vec<PathBuf>,
+    rt: &tokio::runtime::Runtime,
+) -> (usize, Option<PathBuf>) {
+    if pending_crepus.is_empty() {
+        return (0, None);
+    }
+    let mut changed = 0;
+    let mut last_crepus_path = None;
+    let results = rt.block_on(async {
+        let mut futures = Vec::new();
+        for path in pending_crepus.drain(..) {
+            let site_dir = site_dir.to_path_buf();
+            futures.push(tokio::task::spawn_blocking(move || {
+                let key = relative_key(&site_dir, &path);
+                let mut sources = Vec::new();
+                if path.is_dir() {
+                    load_dir_recursive_collect(&path, &mut sources);
+                    sources.retain(|source| is_authored_site_path(&site_dir, source));
+                } else if crate::web::is_framework_template(&path) {
+                    sources.push(path.clone());
+                }
+                let contents: Vec<_> = sources
+                    .into_iter()
+                    .filter_map(|source| {
+                        std::fs::read_to_string(&source)
+                            .ok()
+                            .map(|content| (relative_key(&site_dir, &source), content))
+                    })
+                    .collect();
+                (key, path, contents)
+            }));
+        }
+        futures_util::future::join_all(futures).await
+    });
+
+    let mut map = vfm
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for (key, path, contents) in results.into_iter().flatten() {
+        // Path components distinguish `views` from its sibling `views-other`.
+        // Evict descendants even when a directory no longer exists or became a file.
+        map.retain(|existing, _| !Path::new(existing).starts_with(Path::new(&key)));
+        map.extend(contents);
+        changed += 1;
+        last_crepus_path = Some(path);
+    }
+    drop(map);
+    (changed, last_crepus_path)
+}
 
 fn start_watcher(
     site_dir: PathBuf,
     vfm: Arc<RwLock<HashMap<String, String>>>,
     generation: Arc<AtomicU64>,
     last_sse_msg: Arc<RwLock<String>>,
+    entry: String,
 ) {
     let (tx, rx) = mpsc::channel::<WatchEvent>();
 
@@ -460,10 +581,11 @@ fn start_watcher(
                         return;
                     }
                     for path in &event.paths {
-                        if path.extension().and_then(|e| e.to_str()) == Some("crepus") {
-                            let _ = tx2.send(WatchEvent::Crepus(path.clone()));
-                        } else if is_runtime_source_path(&site_for_filter, path) {
+                        if is_runtime_source_path(&site_for_filter, path) {
                             let _ = tx2.send(WatchEvent::RuntimeDirty);
+                        } else if is_authored_site_path(&site_for_filter, path) {
+                            let event = classify_authored_path(path);
+                            let _ = tx2.send(event);
                         }
                     }
                 }
@@ -488,12 +610,17 @@ fn start_watcher(
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
         let mut pending_crepus: Vec<PathBuf> = Vec::new();
         let mut runtime_dirty = false;
+        let mut island_path = None;
         let mut last_event = Instant::now();
 
         loop {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(WatchEvent::Crepus(p)) => {
-                    pending_crepus.push(p);
+                    queue_template_update(p, &mut pending_crepus, &mut island_path);
+                    last_event = Instant::now();
+                }
+                Ok(WatchEvent::IslandDirty(path)) => {
+                    queue_template_update(path, &mut pending_crepus, &mut island_path);
                     last_event = Instant::now();
                 }
                 Ok(WatchEvent::RuntimeDirty) => {
@@ -501,64 +628,34 @@ fn start_watcher(
                     last_event = Instant::now();
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if pending_crepus.is_empty() && !runtime_dirty {
+                    if pending_crepus.is_empty() && !runtime_dirty && island_path.is_none() {
                         continue;
                     }
                     if last_event.elapsed() < Duration::from_millis(50) {
                         continue;
                     }
                     let apply_start = Instant::now();
-                    let mut changed = 0usize;
-                    let mut last_crepus_path: Option<PathBuf> = None;
-
-                    if !pending_crepus.is_empty() {
-                        let results = rt.block_on(async {
-                            let mut futures = Vec::new();
-                            for path in pending_crepus.drain(..) {
-                                let site_dir = site_dir.clone();
-                                futures.push(tokio::task::spawn(async move {
-                                    let key = relative_key(&site_dir, &path);
-                                    let res = tokio::fs::read_to_string(&path).await;
-                                    (key, path, res)
-                                }));
-                            }
-                            futures_util::future::join_all(futures).await
-                        });
-
-                        let mut map = vfm
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        for (key, path, result) in results.into_iter().flatten() {
-                            match result {
-                                Ok(content) => {
-                                    map.insert(key, content);
-                                    changed += 1;
-                                    last_crepus_path = Some(path);
-                                }
-                                Err(_) => {
-                                    map.remove(&key);
-                                    changed += 1;
-                                    last_crepus_path = Some(path);
-                                }
-                            }
-                        }
-                        drop(map);
+                    let (mut changed, last_crepus_path) =
+                        apply_template_updates(&site_dir, &vfm, &mut pending_crepus, &rt);
+                    let last_island_path = island_path.take();
+                    changed += usize::from(last_island_path.is_some());
+                    let island_error = if last_crepus_path.is_some() || last_island_path.is_some() {
                         let map = vfm
                             .read()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .clone();
                         let dev_root = site_dir.join(crate::web::WEB_DEV_ARTIFACT_DIR);
-                        if let Err(e) =
-                            crate::web_islands::build_web_islands(&site_dir, &dev_root, &map)
-                        {
-                            eprintln!("  {} island build failed: {e}", console::style("✗").red());
-                        }
-                    }
+                        crate::web_islands::build_web_islands(&site_dir, &dev_root, &map, &entry)
+                            .err()
+                            .map(|error| runtime_build_error_sse(&error))
+                    } else {
+                        None
+                    };
 
                     let mut runtime_rebuilt = false;
                     let wasm_error: Option<String> = if runtime_dirty {
                         runtime_dirty = false;
-                        match ensure_web_dev_artifacts(&site_dir) {
+                        match ensure_web_dev_artifacts(&site_dir, &entry) {
                             Ok(()) => {
                                 runtime_rebuilt = true;
                                 None
@@ -572,6 +669,10 @@ fn start_watcher(
                     let wasm_failed = wasm_error.is_some();
                     let sse = if let Some(err) = wasm_error {
                         err
+                    } else if let Some(err) = island_error {
+                        err
+                    } else if let Some(ref path) = last_island_path {
+                        island_rebuild_sse_message(path)
                     } else if let Some(ref path) = last_crepus_path {
                         build_sse_message(path)
                     } else if runtime_rebuilt {
@@ -580,7 +681,9 @@ fn start_watcher(
                         continue;
                     };
 
-                    let should_notify = changed > 0 || runtime_rebuilt || wasm_failed;
+                    let reload_failed = sse.starts_with("event: crepus-error\n");
+                    let should_notify =
+                        changed > 0 || last_island_path.is_some() || runtime_rebuilt || wasm_failed;
                     if should_notify {
                         if let Ok(mut msg) = last_sse_msg.write() {
                             *msg = sse;
@@ -599,8 +702,12 @@ fn start_watcher(
                             "hot reloaded"
                         );
                         eprintln!(
-                            "  {} hot reloaded {} files in {:.2}s",
-                            console::style("✓").green(),
+                            "  {} processed {} changed files in {:.2}s",
+                            if reload_failed {
+                                console::style("✗").red()
+                            } else {
+                                console::style("✓").green()
+                            },
                             changed,
                             elapsed.as_secs_f64()
                         );
@@ -689,7 +796,11 @@ fn start_docs_markdown_watcher(
 
 /// Resolve `rel` under `base`, rejecting `..` and symlink escapes.
 fn resolve_under_dir(base: &Path, rel: &str) -> Option<PathBuf> {
-    if rel.is_empty() || rel.contains("..") {
+    if rel.is_empty()
+        || Path::new(rel)
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
         return None;
     }
     let base = std::fs::canonicalize(base).ok()?;
@@ -716,15 +827,18 @@ fn serve_docs_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
         let _ = stream.write_all(resp.as_bytes());
         return;
     }
-    let mut rel = url_path.trim_start_matches("/docs").trim_start_matches('/');
+    let mut rel = url_path
+        .strip_prefix("/docs")
+        .unwrap_or(url_path)
+        .trim_start_matches('/');
     if rel.is_empty() {
         rel = "index.html";
     }
-    let Some(path) = resolve_under_dir(&base, rel) else {
+    let Some(path) = resolve_static_file(&base, rel) else {
         write_simple_not_found(stream);
         return;
     };
-    serve_dev_fs_file(stream, &path);
+    serve_dev_fs_file_with_mime(stream, &path, logical_path_mime(rel));
 }
 
 // ── HTTP connection handler ──────────────────────────────────────────────────
@@ -732,12 +846,23 @@ fn serve_docs_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
 fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
 
-    // Read the request line (first line only).
+    // Consume complete headers before routing; TCP reads may split the request anywhere.
     let mut buf = [0u8; 4096];
-    let n = match stream.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return,
-    };
+    let mut n = 0;
+    loop {
+        if n == buf.len() {
+            return;
+        }
+        match stream.read(&mut buf[n..]) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => n += read,
+        }
+        if buf[..n].windows(4).any(|bytes| bytes == b"\r\n\r\n")
+            || buf[..n].windows(2).any(|bytes| bytes == b"\n\n")
+        {
+            break;
+        }
+    }
     let request = std::str::from_utf8(&buf[..n]).unwrap_or("");
     let first_line = request.lines().next().unwrap_or("");
 
@@ -767,6 +892,10 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
             serve_dev_fs_file(&mut stream, &ctx.dev_root.join("app.js"));
         }
 
+        ("GET", p @ ("/runtime-worker.js" | "/runtime-client.js")) => {
+            serve_static_file(&mut stream, p, &ctx.dev_root);
+        }
+
         ("GET", "/vendor/unocss.js") => {
             serve_dev_fs_file(&mut stream, &ctx.dev_root.join("vendor/unocss.js"));
         }
@@ -779,7 +908,7 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
             serve_islands_path(&mut stream, p, &ctx.dev_root);
         }
 
-        ("GET", p) if p.starts_with("/docs") => {
+        ("GET", p) if p == "/docs" || p.starts_with("/docs/") => {
             serve_docs_path(&mut stream, p, &ctx.dev_root);
         }
 
@@ -795,8 +924,8 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
 
         ("GET", p) if p.ends_with(".crepus") || p.ends_with(".html") => {
             let template_key = p.trim_start_matches('/');
-            let template_key = if template_key.ends_with(".html") {
-                template_key.replace(".html", ".crepus")
+            let template_key = if let Some(stem) = template_key.strip_suffix(".html") {
+                format!("{stem}.crepus")
             } else {
                 template_key.to_string()
             };
@@ -865,9 +994,7 @@ fn serve_index_document(
             // Embed bundle JSON inline to eliminate separate HTTP fetch
             let bundle = serde_json::json!({"entry": entry, "files": &files});
             let bundle_str = serde_json::to_string(&bundle).unwrap_or_default();
-            let bundle_escaped = bundle_str
-                .replace("</script>", "<\\/script>")
-                .replace("</Script>", "<\\/Script>");
+            let bundle_escaped = crate::web::build::ssr_escape_json(&bundle_str);
             let replacement = format!(
                 r#"<div id="crepus-root">{}</div><script id="__crepus_bundle__" type="application/json">{}</script>"#,
                 ssr_inner, bundle_escaped
@@ -917,13 +1044,14 @@ fn serve_secondary_preview(
   <script type="module" src="./app.js"></script>"#;
     if let Some(pos) = html.find(needle) {
         let replacement = format!(
-            r#"<div id="crepus-root">{inner}</div>
+            r#"<div id="crepus-root" style="opacity:1">{inner}</div>
   <!-- crepus web dev: preview only (entry is WASM on /) -->"#
         );
         html.replace_range(pos..pos + needle.len(), &replacement);
     } else {
         html = error_document("dev server: could not patch index shell (internal)");
     }
+    html = html.replace("./vendor/unocss.js", "/vendor/unocss.js");
     inject_reload_before_body_end(&mut html);
     write_html_response(stream, &html);
 }
@@ -984,9 +1112,17 @@ fn serve_crepus_bundle(
 }
 
 fn serve_dev_fs_file(stream: &mut TcpStream, path: &Path) {
+    let mime = guess_mime(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or(""),
+    );
+    serve_dev_fs_file_with_mime(stream, path, mime);
+}
+
+fn serve_dev_fs_file_with_mime(stream: &mut TcpStream, path: &Path, mime: &str) {
     match std::fs::read(path) {
         Ok(bytes) => {
-            let mime = guess_mime(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
             let header = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\n\r\n",
                 bytes.len()
@@ -1000,22 +1136,22 @@ fn serve_dev_fs_file(stream: &mut TcpStream, path: &Path) {
 
 fn serve_pkg_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     let rel = url_path.trim_start_matches("/pkg/").trim_start_matches('/');
-    let Some(path) = resolve_under_dir(&dev_root.join("pkg"), rel) else {
+    let Some(path) = resolve_static_file(&dev_root.join("pkg"), rel) else {
         write_simple_not_found(stream);
         return;
     };
-    serve_dev_fs_file(stream, &path);
+    serve_dev_fs_file_with_mime(stream, &path, logical_path_mime(rel));
 }
 
 fn serve_islands_path(stream: &mut TcpStream, url_path: &str, dev_root: &Path) {
     let rel = url_path
         .trim_start_matches("/islands/")
         .trim_start_matches('/');
-    let Some(path) = resolve_under_dir(&dev_root.join("islands"), rel) else {
+    let Some(path) = resolve_static_file(&dev_root.join("islands"), rel) else {
         write_simple_not_found(stream);
         return;
     };
-    serve_dev_fs_file(stream, &path);
+    serve_dev_fs_file_with_mime(stream, &path, logical_path_mime(rel));
 }
 
 fn write_simple_not_found(stream: &mut TcpStream) {
@@ -1030,9 +1166,39 @@ fn write_simple_not_found(stream: &mut TcpStream) {
     let _ = stream.write_all(body);
 }
 
-/// Resolve a static asset under `site_dir`, rejecting `..` and symlink escapes.
+fn decode_url_path(url_path: &str) -> Option<String> {
+    let mut decoded = Vec::with_capacity(url_path.len());
+    let mut bytes = url_path.bytes();
+    while let Some(byte) = bytes.next() {
+        decoded.push(if byte == b'%' {
+            let high = (bytes.next()? as char).to_digit(16)?;
+            let low = (bytes.next()? as char).to_digit(16)?;
+            (high * 16 + low) as u8
+        } else {
+            byte
+        });
+    }
+    let url_path = String::from_utf8(decoded).ok()?;
+    if url_path.contains('\0') {
+        return None;
+    }
+    Some(url_path)
+}
+
+fn logical_path_mime(url_path: &str) -> &'static str {
+    let decoded = decode_url_path(url_path).unwrap_or_default();
+    guess_mime(
+        Path::new(&decoded)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or(""),
+    )
+}
+
+/// Decode a URL path once and resolve it under `site_dir`, rejecting `..` and symlink escapes.
 pub(crate) fn resolve_static_file(site_dir: &Path, url_path: &str) -> Option<PathBuf> {
-    resolve_under_dir(site_dir, url_path.trim_start_matches('/'))
+    let decoded = decode_url_path(url_path)?;
+    resolve_under_dir(site_dir, decoded.trim_start_matches('/'))
 }
 
 fn serve_static_file(stream: &mut TcpStream, url_path: &str, site_dir: &Path) {
@@ -1043,7 +1209,7 @@ fn serve_static_file(stream: &mut TcpStream, url_path: &str, site_dir: &Path) {
 
     match std::fs::read(&file_path) {
         Ok(bytes) => {
-            let mime = guess_mime(file_path.extension().and_then(|e| e.to_str()).unwrap_or(""));
+            let mime = logical_path_mime(url_path);
             let header = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\r\n",
                 bytes.len()
@@ -1065,13 +1231,13 @@ fn serve_static_file(stream: &mut TcpStream, url_path: &str, site_dir: &Path) {
     }
 }
 
-/// Server-Sent Events long-poll: blocks until the generation counter changes,
-/// then sends a typed SSE message (crepus-reload or crepus-error) and closes.
+/// Keep the SSE stream open across updates so edits during reconnect delays are not lost.
 fn long_poll_sse(
     mut stream: TcpStream,
     generation: Arc<AtomicU64>,
     last_sse_msg: Arc<RwLock<String>>,
 ) {
+    let mut start_gen = generation.load(Ordering::Acquire);
     let headers =
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
     if stream.write_all(headers.as_bytes()).is_err() {
@@ -1079,12 +1245,29 @@ fn long_poll_sse(
     }
     let _ = stream.flush();
 
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
-    let start_gen = generation.load(Ordering::Acquire);
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(1)))
+        .is_err()
+    {
+        return;
+    }
 
     loop {
         std::thread::sleep(Duration::from_millis(100));
-        if generation.load(Ordering::Acquire) != start_gen {
+        match stream.peek(&mut [0u8; 1]) {
+            Ok(0) => break,
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break
+            }
+            _ => {}
+        }
+        let next_gen = generation.load(Ordering::Acquire);
+        if next_gen != start_gen {
             let msg = last_sse_msg
                 .read()
                 .map(|g| g.clone())
@@ -1094,9 +1277,10 @@ fn long_poll_sse(
             } else {
                 msg
             };
-            let _ = stream.write_all(msg.as_bytes());
-            let _ = stream.flush();
-            break;
+            if stream.write_all(msg.as_bytes()).is_err() || stream.flush().is_err() {
+                break;
+            }
+            start_gen = next_gen;
         }
     }
 }
@@ -1104,7 +1288,7 @@ fn long_poll_sse(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn guess_mime(ext: &str) -> &'static str {
-    match ext {
+    match ext.to_ascii_lowercase().as_str() {
         "html" | "htm" => "text/html; charset=utf-8",
         "css" => "text/css",
         "js" | "mjs" => "application/javascript",
@@ -1112,6 +1296,9 @@ fn guess_mime(ext: &str) -> &'static str {
         "json" => "application/json",
         "svg" => "image/svg+xml",
         "png" => "image/png",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "gif" => "image/gif",
         "jpg" | "jpeg" => "image/jpeg",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
@@ -1124,6 +1311,411 @@ fn guess_mime(ext: &str) -> &'static str {
 mod tests {
     use crate::crepus_toml::WebTargetMeta;
     use std::collections::HashMap;
+
+    #[test]
+    fn directory_events_reconcile_template_descendants() {
+        use std::sync::{Arc, RwLock};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let site_dir = tempfile::tempdir().unwrap();
+        let site = site_dir.path().canonicalize().unwrap();
+        let files = Arc::new(RwLock::new(HashMap::new()));
+        let apply = |paths: &[std::path::PathBuf]| {
+            let mut pending = Vec::new();
+            let mut island = None;
+            for path in paths {
+                assert!(super::is_authored_site_path(site.as_path(), path));
+                match super::classify_authored_path(path) {
+                    super::WatchEvent::Crepus(path) => {
+                        super::queue_template_update(path, &mut pending, &mut island)
+                    }
+                    super::WatchEvent::IslandDirty(path) => {
+                        super::queue_template_update(path, &mut pending, &mut island)
+                    }
+                    super::WatchEvent::RuntimeDirty => unreachable!(),
+                }
+            }
+            super::apply_template_updates(site.as_path(), &files, &mut pending, &rt);
+        };
+        let folder = site.as_path().join("views");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        std::fs::write(folder.join("nested/card.crepus"), "span \"FIRST\"").unwrap();
+        std::fs::write(folder.join("child.vue"), "<template><p>Vue</p></template>").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&folder, folder.join("self-cycle")).unwrap();
+        std::fs::create_dir(folder.join("node_modules")).unwrap();
+        std::fs::write(folder.join("node_modules/ignored.crepus"), "div").unwrap();
+        apply(std::slice::from_ref(&folder));
+        {
+            let map = files.read().unwrap();
+            assert_eq!(
+                map.len(),
+                2,
+                "directory create/move-in must collect descendants: {map:?}"
+            );
+            assert!(map.contains_key("views/nested/card.crepus"));
+            assert!(map.contains_key("views/child.vue"));
+        }
+        let renamed = site.as_path().join("renamed.vue");
+        std::fs::rename(&folder, &renamed).unwrap();
+        apply(&[folder, renamed.clone()]);
+        {
+            let map = files.read().unwrap();
+            assert_eq!(
+                map.len(),
+                2,
+                "directory rename must replace old prefix: {map:?}"
+            );
+            assert!(map.contains_key("renamed.vue/nested/card.crepus"));
+            assert!(map.contains_key("renamed.vue/child.vue"));
+            assert!(
+                !map.contains_key("renamed.vue"),
+                "extension-named folder is not a source"
+            );
+        }
+        std::fs::remove_dir_all(&renamed).unwrap();
+        apply(std::slice::from_ref(&renamed));
+        assert!(
+            files.read().unwrap().is_empty(),
+            "removed directory must evict descendants"
+        );
+        let incoming = tempfile::tempdir().unwrap();
+        std::fs::create_dir(incoming.path().join("populated")).unwrap();
+        std::fs::write(
+            incoming.path().join("populated/moved.astro"),
+            "<p>Moved</p>",
+        )
+        .unwrap();
+        let destination = site.as_path().join("moved-in");
+        std::fs::rename(incoming.path().join("populated"), &destination).unwrap();
+        apply(std::slice::from_ref(&destination));
+        assert_eq!(
+            files.read().unwrap()["moved-in/moved.astro"],
+            "<p>Moved</p>"
+        );
+        for ignored in [
+            "dist",
+            "target",
+            ".git",
+            "node_modules",
+            ".crepus-dev",
+            "runtime",
+        ] {
+            assert!(!super::is_authored_site_path(
+                site.as_path(),
+                &site.as_path().join(ignored)
+            ));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn directory_event_scans_preserve_descendant_event_path_policy() {
+        use std::sync::{Arc, RwLock};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let site_dir = tempfile::tempdir().unwrap();
+        let site = site_dir.path().canonicalize().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let folder = site.join("views");
+        std::fs::create_dir_all(folder.join("runtime")).unwrap();
+        std::fs::write(folder.join("runtime/private.crepus"), "PRIVATE").unwrap();
+        std::fs::create_dir(folder.join("normal")).unwrap();
+        std::fs::write(folder.join("normal/card.crepus"), "PUBLIC").unwrap();
+        std::fs::create_dir(site.join("target")).unwrap();
+        std::fs::write(site.join("target/generated.crepus"), "GENERATED").unwrap();
+        std::fs::write(outside.path().join("outside.crepus"), "OUTSIDE").unwrap();
+        std::os::unix::fs::symlink(outside.path(), folder.join("external")).unwrap();
+        std::os::unix::fs::symlink(site.join("target"), folder.join("generated")).unwrap();
+        std::os::unix::fs::symlink(folder.join("normal"), folder.join("alias")).unwrap();
+        assert!(super::is_authored_site_path(&site, &folder));
+        let files = Arc::new(RwLock::new(HashMap::new()));
+        let mut pending = Vec::new();
+        let mut island = None;
+        match super::classify_authored_path(&folder) {
+            super::WatchEvent::IslandDirty(path) => {
+                super::queue_template_update(path, &mut pending, &mut island)
+            }
+            _ => panic!("directory must take full-reload route"),
+        }
+        super::apply_template_updates(&site, &files, &mut pending, &rt);
+        let map = files.read().unwrap();
+        assert_eq!(
+            map.len(),
+            2,
+            "event scans must enforce descendant path policy: {map:?}"
+        );
+        assert_eq!(map["views/normal/card.crepus"], "PUBLIC");
+        assert_eq!(map["views/alias/card.crepus"], "PUBLIC");
+    }
+
+    #[test]
+    fn directory_reconciliation_preserves_siblings_and_handles_replacement_and_duplicate_events() {
+        use std::sync::{Arc, RwLock};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let site_dir = tempfile::tempdir().unwrap();
+        let site = site_dir.path().canonicalize().unwrap();
+        let folder = site.as_path().join("views.crepus");
+        std::fs::create_dir(&folder).unwrap();
+        let child = folder.join("child.vue");
+        std::fs::write(&child, "<p>Child</p>").unwrap();
+        let files = Arc::new(RwLock::new(HashMap::from([
+            ("views.crepus-other/keep.crepus".into(), "KEEP".into()),
+            ("outside.crepus".into(), "OUTSIDE".into()),
+        ])));
+        let mut pending = Vec::new();
+        let mut island = None;
+        for path in [&folder, &child, &folder] {
+            match super::classify_authored_path(path) {
+                super::WatchEvent::Crepus(path) | super::WatchEvent::IslandDirty(path) => {
+                    super::queue_template_update(path, &mut pending, &mut island)
+                }
+                _ => unreachable!(),
+            }
+        }
+        assert!(
+            island.is_some(),
+            "extension-named directory must request full reload"
+        );
+        super::apply_template_updates(site.as_path(), &files, &mut pending, &rt);
+        assert_eq!(files.read().unwrap().len(), 3);
+        std::fs::remove_dir_all(&folder).unwrap();
+        std::fs::write(&folder, "span \"Replacement\"").unwrap();
+        let mut pending = vec![folder];
+        super::apply_template_updates(site.as_path(), &files, &mut pending, &rt);
+        let map = files.read().unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["views.crepus"], "span \"Replacement\"");
+        assert_eq!(map["views.crepus-other/keep.crepus"], "KEEP");
+        assert_eq!(map["outside.crepus"], "OUTSIDE");
+        assert!(!map.contains_key("views.crepus/child.vue"));
+    }
+
+    #[test]
+    fn dev_frontend_events_update_create_rename_and_remove_bundle_sources() {
+        use std::sync::{Arc, RwLock};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let site = tempfile::tempdir().unwrap();
+        let files = Arc::new(RwLock::new(HashMap::new()));
+        for extension in [
+            "vue",
+            "svelte",
+            "jsx",
+            "tsx",
+            "csx",
+            "astro",
+            "ng",
+            "ng.html",
+            "component.html",
+        ] {
+            let path = site.path().join(format!("child.{extension}"));
+            let renamed = site.path().join(format!("renamed.{extension}"));
+            for value in ["FIRST", "UPDATED"] {
+                std::fs::write(&path, value).unwrap();
+                let super::WatchEvent::Crepus(event) = super::classify_authored_path(&path) else {
+                    panic!("not a template: {}", path.display())
+                };
+                let mut pending = Vec::new();
+                let mut island_path = None;
+                super::queue_template_update(event, &mut pending, &mut island_path);
+                assert_eq!(island_path.as_ref(), Some(&path));
+                let (changed, last) =
+                    super::apply_template_updates(site.path(), &files, &mut pending, &rt);
+                assert_eq!(changed, 1);
+                assert_eq!(last.as_ref(), Some(&path));
+                assert!(pending.is_empty());
+                assert_eq!(files.read().unwrap()[&format!("child.{extension}")], value);
+            }
+            std::fs::rename(&path, &renamed).unwrap();
+            let mut pending = Vec::new();
+            let mut island_path = None;
+            for path in [&path, &renamed] {
+                let super::WatchEvent::Crepus(event) = super::classify_authored_path(path) else {
+                    panic!("rename must update template sources")
+                };
+                super::queue_template_update(event, &mut pending, &mut island_path);
+            }
+            assert_eq!(island_path.as_ref(), Some(&renamed));
+            super::apply_template_updates(site.path(), &files, &mut pending, &rt);
+            assert!(!files
+                .read()
+                .unwrap()
+                .contains_key(&format!("child.{extension}")));
+            assert_eq!(
+                files.read().unwrap()[&format!("renamed.{extension}")],
+                "UPDATED"
+            );
+            std::fs::remove_file(&renamed).unwrap();
+            let super::WatchEvent::Crepus(event) = super::classify_authored_path(&renamed) else {
+                panic!("removal must update template sources")
+            };
+            let mut pending = Vec::new();
+            let mut island_path = None;
+            super::queue_template_update(event, &mut pending, &mut island_path);
+            assert_eq!(island_path.as_ref(), Some(&renamed));
+            super::apply_template_updates(site.path(), &files, &mut pending, &rt);
+            assert!(files.read().unwrap().is_empty());
+        }
+        for filename in ["island.js", "island.ts", "style.css"] {
+            assert!(matches!(
+                super::classify_authored_path(&site.path().join(filename)),
+                super::WatchEvent::IslandDirty(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn raw_island_frontend_refreshes_bytes_and_requests_full_reload() {
+        use std::sync::{Arc, RwLock};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let site = tempfile::tempdir().unwrap();
+        let path = site.path().join("Counter.tsx");
+        let source = "import React from 'react'; export default () => <button>Updated</button>;";
+        std::fs::write(&path, source).unwrap();
+        let files = Arc::new(RwLock::new(HashMap::new()));
+        let super::WatchEvent::Crepus(event) = super::classify_authored_path(&path) else {
+            panic!("frontend bytes must refresh")
+        };
+        let mut pending = Vec::new();
+        let mut island_path = None;
+        super::queue_template_update(event, &mut pending, &mut island_path);
+        super::apply_template_updates(site.path(), &files, &mut pending, &rt);
+        assert_eq!(files.read().unwrap()["Counter.tsx"], source);
+        let sse = super::island_rebuild_sse_message(island_path.as_ref().unwrap());
+        assert!(sse.starts_with("event: crepus-reload\n"));
+        assert!(sse.contains("\"reload\":true"));
+        let mut validated = Vec::new();
+        super::walk_crepus_files(site.path(), &mut validated);
+        assert!(
+            validated.is_empty(),
+            "opaque modules must not be startup templates"
+        );
+    }
+
+    #[test]
+    fn dev_bundle_collects_supported_included_frontends() {
+        use std::sync::{Arc, RwLock};
+        for (filename, source) in [
+            ("child.vue", "<template><p>VISIBLE</p></template>"),
+            ("child.svelte", "<p>VISIBLE</p>"),
+            ("child.jsx", "<p>VISIBLE</p>"),
+            ("child.astro", "<p>VISIBLE</p>"),
+            ("child.ng", "<p>VISIBLE</p>"),
+        ] {
+            let site = tempfile::tempdir().unwrap();
+            std::fs::write(
+                site.path().join("index.crepus"),
+                format!("include {filename}"),
+            )
+            .unwrap();
+            std::fs::write(site.path().join(filename), source).unwrap();
+            let files = Arc::new(RwLock::new(HashMap::new()));
+            super::load_all_crepus(site.path(), &files);
+            let map = files.read().unwrap();
+            let bundle = serde_json::json!({"entry": "index.crepus", "files": &*map}).to_string();
+            let html = crepuscularity_web::render_bundle(&bundle)
+                .unwrap_or_else(|error| panic!("{filename}: {error}"));
+            assert!(html.contains("VISIBLE"), "{filename}: {html}");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn discovery_stops_cycles_and_preserves_logical_aliases() {
+        use std::os::unix::fs::symlink;
+        use std::sync::{Arc, RwLock};
+        let site = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir(site.path().join("src")).unwrap();
+        std::fs::write(
+            site.path().join("index.crepus"),
+            "include alias/card.crepus",
+        )
+        .unwrap();
+        std::fs::write(site.path().join("src/card.crepus"), "span\n  \"Card\"").unwrap();
+        std::fs::write(external.path().join("remote.crepus"), "div").unwrap();
+        symlink(".", site.path().join("src/again")).unwrap();
+        symlink(site.path().join("src"), site.path().join("alias")).unwrap();
+        symlink(site.path().join("src"), site.path().join("alias2")).unwrap();
+        symlink(external.path(), site.path().join("linked")).unwrap();
+        for name in ["dist", "target", ".git", "node_modules", ".crepus-dev"] {
+            std::fs::create_dir(site.path().join(name)).unwrap();
+            std::fs::write(site.path().join(name).join("ignored.crepus"), "div").unwrap();
+        }
+        let messages = super::template_validation_messages(site.path());
+        assert_eq!(messages.len(), 10, "validation must stop recursive aliases");
+        assert!(messages.iter().all(|message| !message.contains("again")));
+        let files = Arc::new(RwLock::new(HashMap::new()));
+        super::load_all_crepus(site.path(), &files);
+        let map = files.read().unwrap();
+        let mut keys: Vec<_> = map.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "alias/card.crepus",
+                "alias2/card.crepus",
+                "index.crepus",
+                "linked/remote.crepus",
+                "src/card.crepus"
+            ]
+        );
+        assert_eq!(map["alias/card.crepus"], map["src/card.crepus"]);
+        assert_eq!(map["alias2/card.crepus"], map["src/card.crepus"]);
+    }
+
+    #[test]
+    fn island_watch_filter_accepts_authored_deleted_and_atomic_save_paths() {
+        let site = tempfile::tempdir().unwrap();
+        for name in [
+            "Widget.tsx",
+            "lib/helper.ts",
+            "package.json",
+            "image.svg",
+            ".Widget.tsx.swp",
+            "deleted.js",
+        ] {
+            assert!(
+                super::is_authored_site_path(site.path(), &site.path().join(name)),
+                "{name}"
+            );
+        }
+        for name in [
+            ".crepus-dev/islands/app.js",
+            "dist/app.js",
+            "nested/target/file",
+            "node_modules/react/index.js",
+            ".git/index",
+            "runtime/src/lib.rs",
+            "ui/.crepus-react-island-123.tsx",
+            "../outside.ts",
+        ] {
+            assert!(
+                !super::is_authored_site_path(site.path(), &site.path().join(name)),
+                "{name}"
+            );
+        }
+        assert!(!super::is_authored_site_path(
+            site.path(),
+            &site.path().with_extension("outside")
+        ));
+    }
+
+    #[test]
+    fn island_reload_requests_full_reload_and_error_retains_message() {
+        let message =
+            super::island_rebuild_sse_message(std::path::Path::new("components/Widget.tsx"));
+        let payload = message
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(payload["file"], "Widget.tsx");
+        assert_eq!(payload["reload"], true);
+        assert!(super::RELOAD_SCRIPT
+            .contains("info.reload === true || (info.file && info.file.includes('runtime'))"));
+        let error = super::runtime_build_error_sse("Bundling Widget.tsx failed: bad import");
+        assert!(error.starts_with("event: crepus-error\n"));
+        assert!(error.contains("Bundling Widget.tsx failed: bad import"));
+    }
 
     #[test]
     fn template_validation_messages_are_sorted_by_relative_path() {
@@ -1141,10 +1733,472 @@ mod tests {
     }
 
     #[test]
+    fn static_webp_asset_has_image_content_type() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let site = tempfile::tempdir().unwrap();
+        std::fs::write(site.path().join("photo.WEBP"), b"image fixture").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        super::serve_static_file(&mut server, "/photo.WEBP", site.path());
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("Content-Type: image/webp\r\n"));
+        assert!(response.ends_with("\r\n\r\nimage fixture"));
+    }
+
+    #[test]
+    fn runtime_worker_routes_serve_dev_assets() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let site = tempfile::tempdir().unwrap();
+        let dev = site.path().join(".crepus-dev");
+        std::fs::create_dir(&dev).unwrap();
+        let request = |route: &str| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (server, _) = listener.accept().unwrap();
+            let ctx = super::DevRequestContext {
+                vfm: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+                generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                last_sse_msg: std::sync::Arc::new(std::sync::RwLock::new(String::new())),
+                entry: "index.crepus".into(),
+                site_dir: site.path().to_path_buf(),
+                dev_root: dev.clone(),
+                meta: None,
+            };
+            client
+                .write_all(format!("GET {route} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+                .unwrap();
+            super::handle_connection(server, ctx);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            response
+        };
+        for name in ["runtime-worker.js", "runtime-client.js"] {
+            std::fs::write(site.path().join(name), "wrong source directory").unwrap();
+            std::fs::write(dev.join(name), "export const fixture = true;").unwrap();
+            let response = request(&format!("/{name}?v=1"));
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+            assert!(
+                response.contains("Content-Type: application/javascript"),
+                "{response}"
+            );
+            assert!(
+                response.ends_with("export const fixture = true;"),
+                "{response}"
+            );
+            assert!(!response.contains("wrong source directory"));
+            std::fs::remove_file(dev.join(name)).unwrap();
+            #[cfg(unix)]
+            {
+                let outside = tempfile::tempdir().unwrap();
+                std::fs::write(outside.path().join("private.js"), "private fixture").unwrap();
+                std::os::unix::fs::symlink(outside.path().join("private.js"), dev.join(name))
+                    .unwrap();
+                let response = request(&format!("/{name}"));
+                assert!(
+                    response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+                    "{response}"
+                );
+                assert!(!response.contains("private fixture"));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_asset_routes_block_symlink_escape() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("private.js"), b"private fixture").unwrap();
+        for (directory, serve) in [
+            (
+                "pkg",
+                super::serve_pkg_path as fn(&mut TcpStream, &str, &std::path::Path),
+            ),
+            ("islands", super::serve_islands_path),
+            ("docs", super::serve_docs_path),
+        ] {
+            std::fs::create_dir(root.path().join(directory)).unwrap();
+            std::os::unix::fs::symlink(
+                outside.path().join("private.js"),
+                root.path().join(directory).join("escape.js"),
+            )
+            .unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            serve(&mut server, &format!("/{directory}/escape.js"), root.path());
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+                "{directory}: {response}"
+            );
+            assert!(!response.contains("private fixture"));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn asset_routes_use_logical_symlink_extensions_for_mime() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::{Arc, RwLock};
+        let site = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("private.bin"), "PRIVATE").unwrap();
+        for directory in ["static", "pkg", "islands", "docs"] {
+            let base = site.path().join(directory);
+            std::fs::create_dir(&base).unwrap();
+            std::fs::write(base.join("payload.bin"), "export const marker = 'VISIBLE';").unwrap();
+            std::os::unix::fs::symlink("payload.bin", base.join("module.js")).unwrap();
+            std::os::unix::fs::symlink(outside.path().join("private.bin"), base.join("escape.js"))
+                .unwrap();
+            for (filename, success) in [
+                ("module.js?revision=1", true),
+                ("module%2Ejs?revision=2", true),
+                ("escape.js?revision=3", false),
+            ] {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+                client
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let (server, _) = listener.accept().unwrap();
+                let ctx = super::DevRequestContext {
+                    vfm: Arc::new(RwLock::new(HashMap::new())),
+                    generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    last_sse_msg: Arc::new(RwLock::new(String::new())),
+                    entry: "index.crepus".into(),
+                    site_dir: site.path().into(),
+                    dev_root: site.path().into(),
+                    meta: None,
+                };
+                client
+                    .write_all(
+                        format!("GET /{directory}/{filename} HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                            .as_bytes(),
+                    )
+                    .unwrap();
+                super::handle_connection(server, ctx);
+                let mut response = String::new();
+                client.read_to_string(&mut response).unwrap();
+                if success {
+                    assert!(
+                        response.starts_with("HTTP/1.1 200 OK\r\n"),
+                        "{directory}/{filename}: {response}"
+                    );
+                    assert!(
+                        response.contains("\r\nContent-Type: application/javascript\r\n"),
+                        "{directory}/{filename}: {response}"
+                    );
+                    assert_eq!(
+                        response.split_once("\r\n\r\n").unwrap().1,
+                        "export const marker = 'VISIBLE';"
+                    );
+                } else {
+                    assert!(
+                        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+                        "{response}"
+                    );
+                    assert!(!response.contains("PRIVATE"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preview_routes_preserve_directory_names_and_docs_prefixes() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        let site = tempfile::tempdir().unwrap();
+        for (route, template) in [
+            ("/guide.html/page.html", "guide.html/page.crepus"),
+            ("/docs-example.html", "docs-example.crepus"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (server, _) = listener.accept().unwrap();
+            let ctx = super::DevRequestContext {
+                vfm: std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::from(
+                    [(template.to_string(), "p \"preview fixture\"".to_string())],
+                ))),
+                generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                last_sse_msg: std::sync::Arc::new(std::sync::RwLock::new(String::new())),
+                entry: "index.crepus".to_string(),
+                site_dir: site.path().to_path_buf(),
+                dev_root: site.path().to_path_buf(),
+                meta: None,
+            };
+            client.write_all(b"GET ").unwrap();
+            let worker = std::thread::spawn(move || super::handle_connection(server, ctx));
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            client
+                .write_all(format!("{route} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+                .unwrap();
+            worker.join().unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 200 OK\r\n"),
+                "{route}: {response}"
+            );
+            assert!(
+                response.contains("<p>preview fixture</p>"),
+                "{route}: {response}"
+            );
+            assert!(response.contains(r#"id="crepus-root" style="opacity:1""#));
+            assert!(response.contains(r#"src="/vendor/unocss.js""#));
+        }
+    }
+
+    #[test]
+    fn docs_routes_strip_only_the_mount_prefix() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let root = tempfile::tempdir().unwrap();
+        for (directory, relative, decoy, serve) in [
+            (
+                "docs",
+                "docsmith.html",
+                "mith.html",
+                super::serve_docs_path as fn(&mut TcpStream, &str, &std::path::Path),
+            ),
+            (
+                "docs",
+                "docs/guide.html",
+                "guide.html",
+                super::serve_docs_path,
+            ),
+        ] {
+            let base = root.path().join(directory);
+            let target = base.join(relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&target, "nested intended fixture").unwrap();
+            std::fs::write(base.join(decoy), "wrong flattened fixture").unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            let route = format!("/{directory}/{relative}");
+            serve(&mut server, &route, root.path());
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 200 OK\r\n"),
+                "{route}: {response}"
+            );
+            assert!(
+                response.ends_with("\r\n\r\nnested intended fixture"),
+                "{route}: {response}"
+            );
+            assert!(
+                !response.contains("wrong flattened fixture"),
+                "{route}: {response}"
+            );
+        }
+    }
+
+    #[test]
+    fn docs_root_serves_generated_index() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("docs")).unwrap();
+        std::fs::write(root.path().join("docs/index.html"), "<p>generated docs</p>").unwrap();
+        for route in ["/docs", "/docs/", "/docs/index.html"] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            super::serve_docs_path(&mut server, route, root.path());
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+            assert!(response.ends_with("\r\n\r\n<p>generated docs</p>"));
+        }
+    }
+
+    #[test]
+    fn sse_connection_delivers_multiple_updates() {
+        use std::io::{BufRead, BufReader};
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        };
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let shutdown = server.try_clone().unwrap();
+        let generation = Arc::new(AtomicU64::new(0));
+        let message = Arc::new(RwLock::new(String::new()));
+        let worker = std::thread::spawn({
+            let generation = generation.clone();
+            let message = message.clone();
+            move || super::long_poll_sse(server, generation, message)
+        });
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+        }
+        for update in 1..=2 {
+            *message.write().unwrap() = format!("data: {update}\n\n");
+            generation.store(update, Ordering::Release);
+            line.clear();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            assert_eq!(line, format!("data: {update}\n"));
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line, "\n");
+        }
+        reader.get_ref().shutdown(Shutdown::Both).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !worker.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let disconnected = worker.is_finished();
+        let _ = shutdown.shutdown(Shutdown::Both);
+        for _ in 0..20 {
+            if worker.is_finished() {
+                break;
+            }
+            generation.fetch_add(1, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if worker.is_finished() {
+            worker.join().unwrap();
+        }
+        assert!(disconnected, "idle disconnected SSE worker did not exit");
+    }
+
+    #[test]
+    fn error_events_preserve_control_characters_and_literal_escapes() {
+        let message = "界\nline\r\nnext\rdata: fake\\n";
+        let event = super::runtime_build_error_sse(message);
+        let lines: Vec<_> = event.lines().collect();
+        assert_eq!(lines.len(), 3);
+        let decoded: String =
+            serde_json::from_str(lines[1].strip_prefix("data: ").expect("data line"))
+                .expect("JSON error string");
+        assert_eq!(decoded, message);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_events_escape_special_characters_in_filenames() {
+        let site = tempfile::tempdir().expect("tempdir");
+        let filename = "quoted\"\\\n.crepus";
+        let path = site.path().join(filename);
+        std::fs::write(&path, "div").expect("write template");
+        let event = super::build_sse_message(&path);
+        let lines: Vec<_> = event.lines().collect();
+        assert_eq!(lines.len(), 3);
+        let payload: serde_json::Value =
+            serde_json::from_str(lines[1].strip_prefix("data: ").expect("data line"))
+                .expect("valid JSON");
+        assert_eq!(payload["file"], filename);
+    }
+
+    #[test]
+    fn static_routes_decode_encoded_asset_names_once() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let root = tempfile::tempdir().unwrap();
+        for (filename, route) in [
+            ("hello world.txt", "/hello%20world.txt"),
+            ("界.txt", "/%E7%95%8C.txt"),
+            ("literal%20.txt", "/literal%2520.txt"),
+            ("a+b.txt", "/a+b.txt"),
+        ] {
+            std::fs::write(root.path().join(filename), filename).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let (mut server, _) = listener.accept().unwrap();
+            super::serve_static_file(&mut server, route, root.path());
+            drop(server);
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with("HTTP/1.1 200 OK\r\n"),
+                "{route}: {response}"
+            );
+            assert!(
+                response.ends_with(&format!("\r\n\r\n{filename}")),
+                "{route}: {response}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_static_file_allows_dots_inside_asset_names() {
+        let site = tempfile::tempdir().expect("tempdir");
+        let asset = site.path().join("app..css");
+        std::fs::write(&asset, "body {}").expect("write asset");
+        assert_eq!(
+            super::resolve_static_file(site.path(), "/app..css"),
+            Some(asset.canonicalize().expect("canonicalize")),
+        );
+    }
+
+    #[test]
     fn resolve_static_file_rejects_parent_segments() {
         let site = tempfile::tempdir().expect("tempdir");
         assert!(super::resolve_static_file(site.path(), "../secret.txt").is_none());
         assert!(super::resolve_static_file(site.path(), "static/../../etc/passwd").is_none());
+        for path in [
+            "/%2e%2e/secret.txt",
+            "/static/%2E%2E/%2e%2e/secret.txt",
+            "/%",
+            "/%2",
+            "/%GG",
+            "/%FF",
+            "/%00",
+        ] {
+            assert!(
+                super::resolve_static_file(site.path(), path).is_none(),
+                "{path}"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -1158,6 +2212,7 @@ mod tests {
         symlink(outside.path(), site.path().join("escape")).expect("symlink");
 
         assert!(super::resolve_static_file(site.path(), "escape/secret.txt").is_none());
+        assert!(super::resolve_static_file(site.path(), "%65scape%2fsecret.txt").is_none());
     }
 
     #[test]

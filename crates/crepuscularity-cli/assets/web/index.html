@@ -36,6 +36,16 @@ __CREPUS_EXTRA_HEAD__
       display: block;
       will-change: transform, opacity, filter;
     }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .crepus-slot__inner {
+        /* The rotation runtime sets these effects inline. */
+        transition: none !important;
+        opacity: 1 !important;
+        filter: none !important;
+        will-change: auto;
+      }
+    }
     /* ponytail: hide until UnoCSS + app.js are ready to prevent FOUC */
     #crepus-root { opacity: 0; }
   </style>
