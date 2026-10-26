@@ -9,6 +9,9 @@ unsound = "workspace"
 ignore = [
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    "RUSTSEC-2026-0382",
+    "RUSTSEC-2026-0386",
+    "RUSTSEC-2026-0381",
 ]
 
 [licenses]
