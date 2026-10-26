@@ -763,6 +763,38 @@ mod tests {
     }
 
     #[test]
+    fn reads_v1_windows_metadata() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"distDir":"../dist"},"tauri":{"windows":[{"title":"Legacy Window","width":800,"height":600}]}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        let windows = project.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].title, "Legacy Window");
+        assert_eq!(windows[0].width, Some(800));
+        assert_eq!(windows[0].height, Some(600));
+        assert_eq!(windows[0].label, "main");
+    }
+
+    #[test]
+    fn windows_fall_back_to_defaults() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"},"app":{}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        let windows = project.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].title, "Crepuscularity");
+        assert_eq!(windows[0].width, None);
+        assert_eq!(windows[0].height, None);
+        assert_eq!(windows[0].label, "main");
+    }
+
+    #[test]
     fn rejects_missing_config() {
         let root = tempfile::tempdir().unwrap();
         let err = TauriProject::open(root.path()).unwrap_err();
