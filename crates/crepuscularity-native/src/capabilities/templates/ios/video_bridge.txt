@@ -5,39 +5,29 @@ private final class VideoCameraDelegate: NSObject, UIImagePickerControllerDelega
     let action: String
     init(action: String) { self.action = action }
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        picker.dismiss(animated: true) {
-            defer { CrepusHostPicker.shared.clear(delegate: self) }
-            guard let url = info[.mediaURL] as? URL else { CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(self.action)\",\"error\":\"video unavailable\"}"); return }
-            let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
-            do {
-                try FileManager.default.copyItem(at: url, to: path)
-                let bytes = (try FileManager.default.attributesOfItem(atPath: path.path)[.size] as? NSNumber)?.intValue ?? 0
-                let result: [String: Any] = ["ok": true, "action": self.action, "value": ["files": [["name": path.lastPathComponent, "mimeType": UTType(filenameExtension: path.pathExtension)?.preferredMIMEType ?? "application/octet-stream", "bytes": bytes, "filePath": path.path, "importSource": "ios-video-camera", "mediaKind": "video"]]]]
-                if let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) { CrepusRustActions.emit(json) }
-            } catch {
-                try? FileManager.default.removeItem(at: path)
-                CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(self.action)\",\"error\":\"video write failed\"}")
-            }
-        }
+        picker.dismiss(animated: true)
+        defer { CrepusVideoCamera.shared.clear(delegate: self) }
+        guard let url = info[.mediaURL] as? URL else { CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"video unavailable\"}"); return }
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
+        do {
+            try FileManager.default.copyItem(at: url, to: path)
+            let bytes = (try FileManager.default.attributesOfItem(atPath: path.path)[.size] as? NSNumber)?.intValue ?? 0
+            let result: [String: Any] = ["ok": true, "action": action, "value": ["files": [["name": path.lastPathComponent, "mimeType": "video/\(path.pathExtension)", "bytes": bytes, "filePath": path.path, "importSource": "ios-video-camera", "mediaKind": "video"]]]]
+            if let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) { CrepusRustActions.emit(json) }
+        } catch { CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"video write failed\"}") }
     }
-    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        picker.dismiss(animated: true) {
-            CrepusRustActions.emit("{\"ok\":true,\"action\":\"\(self.action)\",\"value\":{\"files\":[]}}")
-            CrepusHostPicker.shared.clear(delegate: self)
-        }
-    }
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { picker.dismiss(animated: true); CrepusRustActions.emit("{\"ok\":true,\"action\":\"\(action)\",\"value\":{\"files\":[]}}"); CrepusVideoCamera.shared.clear(delegate: self) }
+}
+private final class CrepusVideoCamera {
+    static let shared = CrepusVideoCamera(); private var delegates: [VideoCameraDelegate] = []
+    func retain(delegate: VideoCameraDelegate) { delegates.append(delegate) }
+    func clear(delegate: VideoCameraDelegate) { delegates.removeAll { $0 === delegate } }
 }
 private func presentVideoCamera(action: String) {
     Task { @MainActor in
-        guard !CrepusHostPicker.shared.isActive else {
-            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "picker already active"))
-            return
-        }
-        guard UIImagePickerController.isSourceTypeAvailable(.camera),
-              UIImagePickerController.availableMediaTypes(for: .camera)?.contains(UTType.movie.identifier) == true,
-              let root = topViewController() else { CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"video camera unavailable\"}"); return }
-        let picker = UIImagePickerController(); picker.sourceType = .camera; picker.mediaTypes = [UTType.movie.identifier]; picker.cameraCaptureMode = .video
-        let delegate = VideoCameraDelegate(action: action); picker.delegate = delegate; CrepusHostPicker.shared.retain(delegate: delegate); root.present(picker, animated: true)
+        guard UIImagePickerController.isSourceTypeAvailable(.camera), let root = topViewController() else { CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"video camera unavailable\"}"); return }
+        let picker = UIImagePickerController(); picker.sourceType = .camera; picker.cameraCaptureMode = .video; picker.mediaTypes = [UTType.movie.identifier]
+        let delegate = VideoCameraDelegate(action: action); picker.delegate = delegate; CrepusVideoCamera.shared.retain(delegate: delegate); root.present(picker, animated: true)
     }
 }
 #elseif canImport(AppKit)

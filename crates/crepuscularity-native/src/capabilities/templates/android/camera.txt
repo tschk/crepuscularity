@@ -1,35 +1,22 @@
 
-    @Synchronized
     private fun cameraValue(method: String): JSONObject {
         if (method != "takePhoto") error("unsupported camera method: $method")
-        val capture = captureCameraPhoto ?: error("camera unavailable")
-        check(pendingCameraAction == null) { "capture already active" }
         pendingCameraAction = "camera.takePhoto"
-        try {
-            capture()
-        } catch (error: Exception) {
-            pendingCameraAction = null
-            throw error
-        }
+        captureCameraPhoto?.invoke() ?: emit(errorJson("camera.takePhoto", "camera unavailable"))
         return JSONObject().put("opening", true)
     }
 
     private fun cameraResultJson(action: String, bitmap: Bitmap): String {
         val file = File.createTempFile("crepus-camera-", ".jpg", appContext.cacheDir)
-        try {
-            file.outputStream().use { output -> check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "camera image encoding failed" } }
-            return JSONObject()
-                .put("ok", true)
-                .put("action", action)
-                .put("value", JSONObject().put("files", JSONArray(listOf(JSONObject()
-                    .put("name", file.name)
-                    .put("mimeType", "image/jpeg")
-                    .put("bytes", file.length())
-                    .put("filePath", file.absolutePath)
-                    .put("importSource", "android-camera")))))
-                .toString()
-        } catch (error: Exception) {
-            file.delete()
-            throw error
-        }
+        file.outputStream().use { output -> bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output) }
+        return JSONObject()
+            .put("ok", true)
+            .put("action", action)
+            .put("value", JSONObject().put("files", JSONArray(listOf(JSONObject()
+                .put("name", file.name)
+                .put("mimeType", "image/jpeg")
+                .put("bytes", file.length())
+                .put("filePath", file.absolutePath)
+                .put("importSource", "android-camera")))))
+            .toString()
     }

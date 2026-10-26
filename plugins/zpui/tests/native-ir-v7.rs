@@ -8,15 +8,6 @@ use serde::{Deserialize, Serialize};
 /// Bumped for the `id` field added to `ViewStyle`.
 pub const IR_VERSION: u32 = 7;
 
-/// Explicit label content; literal values are never evaluated again.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
-pub enum LabelPart {
-    Literal(String),
-    Expr(String),
-}
-
 /// Root document from parsing + lowering (see `crepuscularity_native::render_template_to_ir`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -41,42 +32,6 @@ pub struct ViewStyle {
     /// emit `id` and runtimes can bind to the element by selector.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-
-    /// Source HTML text tag, retained for semantic web output; native hosts ignore it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub html_tag: Option<String>,
-
-    /// Compiler-generated layout wrapper, transparent to web layout; native hosts ignore it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub html_display_contents: Option<bool>,
-
-    /// Label target, evaluated with the source ID at render time; native hosts ignore it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub html_for: Option<String>,
-
-    /// Explicit accessible name, evaluated at render time for web output.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aria_label: Option<String>,
-
-    /// Explicit web form name; absence retains the renderer's binding-name fallback.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form_name: Option<String>,
-    /// Initial unbound text value, or checkbox submission value, for web output.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form_value: Option<String>,
-    /// Text-compatible web input type; secure inputs always retain password masking.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_type: Option<String>,
-    /// Web input range and stepping constraints, interpreted by the host input type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form_min: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form_max: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form_step: Option<String>,
-    /// Web constraint-validation requirement, independent of native styling.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub required: Option<bool>,
 
     // ── Source classes ───────────────────────────────────────────────────
     /// Original class tokens from the template, preserved verbatim so web
@@ -262,65 +217,6 @@ pub struct ViewStyle {
     pub object_position: Option<String>,
 }
 
-pub(crate) const HTML_TEXT_TAGS: &[&str] = &[
-    "span", "p", "label", "caption", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i",
-    "u", "s", "small", "mark", "code", "q", "abbr", "cite", "sub", "sup", "kbd", "samp", "var",
-];
-
-pub(crate) const HTML_INPUT_TYPES: &[&str] = &[
-    "text",
-    "search",
-    "tel",
-    "url",
-    "email",
-    "password",
-    "number",
-    "date",
-    "datetime-local",
-    "month",
-    "time",
-    "week",
-    "color",
-    "hidden",
-];
-
-pub(crate) fn html_input_type(style: Option<&ViewStyle>, secure: bool) -> &str {
-    if secure {
-        "password"
-    } else {
-        style
-            .and_then(|style| style.input_type.as_deref())
-            .filter(|value| HTML_INPUT_TYPES.contains(value))
-            .unwrap_or("text")
-    }
-}
-
-/// Explicit names are emitted with element attributes, including an explicit empty name.
-pub(crate) fn implicit_form_name<'a>(
-    style: Option<&ViewStyle>,
-    fallback: Option<&'a String>,
-) -> Option<&'a String> {
-    fallback.filter(|_| style.is_none_or(|style| style.form_name.is_none()))
-}
-
-/// Explicit names are emitted with identity attributes; only emit a fallback when absent.
-pub(crate) fn implicit_aria_label<'a>(
-    style: Option<&ViewStyle>,
-    fallback: Option<&'a String>,
-) -> Option<&'a String> {
-    fallback.filter(|_| style.is_none_or(|style| style.aria_label.is_none()))
-}
-
-/// Only known text tags may influence generated markup from supplied IR.
-pub(crate) fn html_tag(style: Option<&ViewStyle>, fallback: &'static str) -> &'static str {
-    let tag = style.and_then(|style| style.html_tag.as_deref());
-    HTML_TEXT_TAGS
-        .iter()
-        .copied()
-        .find(|allowed| Some(*allowed) == tag)
-        .unwrap_or(fallback)
-}
-
 impl ViewStyle {
     /// Derived from `PartialEq` + `Default` so a newly added field cannot be
     /// forgotten here and silently change what gets serialized.
@@ -389,8 +285,6 @@ pub enum ViewNode {
     #[serde(rename = "button")]
     Button {
         label: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        label_parts: Vec<LabelPart>,
         #[serde(skip_serializing_if = "Option::is_none")]
         on_click: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -504,8 +398,6 @@ pub enum ViewNode {
     #[serde(rename = "image")]
     Image {
         src: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        src_bind: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         alt: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,8 +410,6 @@ pub enum ViewNode {
     #[serde(rename = "link")]
     Link {
         href: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        href_bind: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         target: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -537,8 +427,6 @@ pub enum ViewNode {
     #[serde(rename = "scroll")]
     Scroll {
         axis: StackAxis,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on_long_press: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         style: Option<ViewStyle>,
         children: Vec<ViewNode>,
@@ -569,15 +457,12 @@ pub enum ViewNode {
     #[serde(rename = "input")]
     Input {
         placeholder: String,
-        /// Model path for the bound string; empty means the input is unbound.
+        /// Context field name for the bound string (Swift codegen uses `context.<bind>`).
         bind: String,
         #[serde(default)]
         multiline: bool,
         #[serde(default)]
         secure: bool,
-        /// Live editing event; web `change` remains a separate committed event.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        on_input: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         on_change: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]

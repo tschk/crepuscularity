@@ -9,51 +9,44 @@ private final class MediaPickerDelegate: NSObject, PHPickerViewControllerDelegat
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true) {
-            guard !results.isEmpty else {
-                CrepusRustActions.emit(mediaResultJson(action: self.action, files: []))
-                CrepusHostPicker.shared.clear(delegate: self)
-                return
+        picker.dismiss(animated: true)
+        guard !results.isEmpty else {
+            CrepusRustActions.emit(mediaResultJson(action: action, files: []))
+            CrepusMediaPicker.shared.clear(delegate: self)
+            return
+        }
+        Task.detached {
+            var files: [[String: Any]] = []
+            for result in results {
+                if let file = await mediaPayload(result) {
+                    files.append(file)
+                }
             }
-            Task.detached {
-                var files: [[String: Any]] = []
-                var failedCount = 0
-                for result in results {
-                    if let file = await mediaPayload(result) {
-                        files.append(file)
-                    } else {
-                        failedCount += 1
-                    }
-                }
-                let response: String
-                if failedCount > 0 {
-                    response = CrepusRustActions.stringify([
-                        "ok": false,
-                        "action": self.action,
-                        "value": ["files": files],
-                        "error": "could not import selected files",
-                        "failedCount": failedCount,
-                    ])
-                } else {
-                    response = mediaResultJson(action: self.action, files: files)
-                }
-                await MainActor.run {
-                    CrepusRustActions.emit(response)
-                    CrepusHostPicker.shared.clear(delegate: self)
-                }
+            await MainActor.run {
+                CrepusRustActions.emit(mediaResultJson(action: self.action, files: files))
+                CrepusMediaPicker.shared.clear(delegate: self)
             }
         }
     }
 }
 
+private final class CrepusMediaPicker {
+    static let shared = CrepusMediaPicker()
+    private var delegates: [MediaPickerDelegate] = []
+
+    func retain(delegate: MediaPickerDelegate) {
+        delegates.append(delegate)
+    }
+
+    func clear(delegate: MediaPickerDelegate) {
+        delegates.removeAll { $0 === delegate }
+    }
+}
+
 private func presentMediaPicker(action: String) {
     Task { @MainActor in
-        guard !CrepusHostPicker.shared.isActive else {
-            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "picker already active"))
-            return
-        }
         guard let root = topViewController() else {
-            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "missing root view controller"))
+            CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"missing root view controller\"}")
             return
         }
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
@@ -62,7 +55,7 @@ private func presentMediaPicker(action: String) {
         let picker = PHPickerViewController(configuration: configuration)
         let delegate = MediaPickerDelegate(action: action)
         picker.delegate = delegate
-        CrepusHostPicker.shared.retain(delegate: delegate)
+        CrepusMediaPicker.shared.retain(delegate: delegate)
         root.present(picker, animated: true)
     }
 }

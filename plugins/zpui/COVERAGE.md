@@ -1,20 +1,9 @@
 # ZPUI completion goal
 
-Finish all **25 View IR v7 node kinds, 82 ViewStyle fields, and five event contracts**
+Finish all **25 View IR v7 node kinds, 71 ViewStyle fields, and five event contracts**
 with working behavior and acceptance evidence. `coverage.json` inventories the
 requirements and prevents a complete status while gaps remain. The checker verifies
 inventory agreement; it does not establish implementation correctness.
-
-## Current compiler inventory
-
-The synchronized compiler adds eleven style fields to the earlier checkpoint.
-`htmlDisplayContents` is boolean-validated and intentionally ignored: it makes a
-compiler-generated wrapper transparent in HTML only, while native hosts retain
-that content stack. Its inventory status is `validated_ignored`, not implemented.
-The other ten new metadata fields remain explicitly unsupported by the decoder;
-non-null values still fail closed. Their inventory entries do not claim native
-form, accessibility or HTML semantics. The earlier checkpoint counts below refer
-to its original 71 fields; overall completion remains in progress.
 
 ## Tested 0.2.0 checkpoint
 

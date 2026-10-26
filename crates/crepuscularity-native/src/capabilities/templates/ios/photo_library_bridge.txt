@@ -16,8 +16,7 @@ private func scanPhotoLibrary(action: String) {
             return
         }
         let options = PHFetchOptions()
-        options.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: action != "photoLibrary.getRecentMedia")]
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
         let assets = PHAsset.fetchAssets(with: options)
         for index in 0..<assets.count {
             if let file = await assetPayload(assets.object(at: index)) {
@@ -30,36 +29,28 @@ private func scanPhotoLibrary(action: String) {
 }
 
 private func assetPayload(_ asset: PHAsset) async -> [String: Any]? {
-    let mediaKind: String
-    switch asset.mediaType {
-    case .image: mediaKind = "photo"
-    case .video: mediaKind = "video"
-    default: return nil
-    }
     guard let resource = PHAssetResource.assetResources(for: asset).first else {
         return nil
     }
     let name = resource.originalFilename
     let ext = (name as NSString).pathExtension
-    let type = UTType(resource.uniformTypeIdentifier)
     let path = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
-        .appendingPathExtension(ext.isEmpty ? (type?.preferredFilenameExtension ?? "dat") : ext)
+        .appendingPathExtension(ext.isEmpty ? "jpg" : ext)
     do {
         try await writeResource(resource, to: path)
         let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
         return [
             "name": name,
-            "mimeType": type?.preferredMIMEType ?? "application/octet-stream",
+            "mimeType": mimeType(path.pathExtension),
             "bytes": (attributes[.size] as? NSNumber)?.intValue ?? 0,
             "filePath": path.path,
             "importSource": "ios-photo-library",
-            "mediaKind": mediaKind,
+            "mediaKind": asset.mediaType == .video ? "video" : "photo",
             "createdTime": asset.creationDate.map { ISO8601DateFormatter().string(from: $0) } ?? "",
             "localIdentifier": asset.localIdentifier,
         ]
     } catch {
-        try? FileManager.default.removeItem(at: path)
         return nil
     }
 }

@@ -41,18 +41,8 @@ pub fn resolve_rgba(css: &str) -> Option<[f32; 4]> {
 }
 
 fn parse_hex_rgba(s: &str) -> Option<[f32; 4]> {
-    let hex = s.strip_prefix('#')?;
-    if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
+    let hex = s.trim_start_matches('#');
     match hex.len() {
-        3 | 4 => {
-            let mut rgba = [1.0; 4];
-            for (channel, digit) in rgba.iter_mut().zip(hex.chars()) {
-                *channel = digit.to_digit(16)? as f32 / 15.0;
-            }
-            Some(rgba)
-        }
         6 => {
             let n = u32::from_str_radix(hex, 16).ok()?;
             Some([
@@ -78,25 +68,6 @@ fn parse_hex_rgba(s: &str) -> Option<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn short_hex_matches_expanded_hex() {
-        for (short, expanded) in [
-            ("#fff", "#ffffff"),
-            ("#000", "#000000"),
-            ("#aBc", "#aabbcc"),
-            ("#aBc8", "#aabbcc88"),
-        ] {
-            assert_eq!(resolve_rgba(short), resolve_rgba(expanded));
-        }
-        assert_eq!(
-            resolve_rgba(lookup_named_color("white").unwrap()),
-            Some([1.0; 4])
-        );
-        for invalid in ["##fff", "#+12345", "#界", "#12", "#12345"] {
-            assert_eq!(resolve_rgba(invalid), None);
-        }
-    }
 
     #[test]
     fn basic_named() {

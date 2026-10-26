@@ -1,11 +1,11 @@
 {
   "goal": "Complete View IR v7 coverage with tested behavior, without placeholder rendering or silent drops",
-  "sourceRevision": "9a2cd1684d9189503cc237cd3f8f5060b9e936a7",
+  "sourceRevision": "8485f22a03a86d3be5a9ad162bfb230f4762ac91",
   "upstreamRevision": "cca22983e7e8124bb8e650616e3803f217e52b95",
   "irVersion": 7,
   "completion": {
     "nodes": 25,
-    "styles": 82,
+    "styles": 71,
     "events": [
       "click",
       "change",
@@ -325,50 +325,6 @@
     "objectPosition": {
       "status": "implemented",
       "evidence": "coverage_native.zig: actual paint, hit testing, AX bounds and atlas UV cropping"
-    },
-    "ariaLabel": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "formMax": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "formMin": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "formName": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "formStep": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "formValue": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "htmlFor": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "htmlTag": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "inputType": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "required": {
-      "status": "unsupported",
-      "evidence": "Current decoder rejects non-null fields explicitly; no native behavior is claimed."
-    },
-    "htmlDisplayContents": {
-      "status": "validated_ignored",
-      "evidence": "style_ir.zig validates boolean metadata and preserves native stack layout; decoder.zig covers true/false/null and invalid types."
     }
   },
   "events": {
@@ -398,7 +354,6 @@
     "Fixed positioning, wait cursor",
     "Browser platform matrix and native OS/GPU acceptance beyond macOS",
     "Immutable final review and CI",
-    "Apply audited CLI version/lock proposal in coordinated source and pass full CLI validation before publication",
-    "New ViewStyle metadata: ten unsupported fields; htmlDisplayContents is validated and intentionally ignored for native layout."
+    "Apply audited CLI version/lock proposal in coordinated source and pass full CLI validation before publication"
   ]
 }

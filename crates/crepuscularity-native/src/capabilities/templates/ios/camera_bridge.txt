@@ -9,40 +9,47 @@ private final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, U
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        picker.dismiss(animated: true) {
-            defer { CrepusHostPicker.shared.clear(delegate: self) }
-            guard let image = info[.originalImage] as? UIImage,
-                  let data = image.jpegData(compressionQuality: 0.9)
-            else {
-                CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(self.action)\",\"error\":\"camera image unavailable\"}")
-                return
-            }
-            let path = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString)
-                .appendingPathExtension("jpg")
-            do {
-                try data.write(to: path, options: .atomic)
-                CrepusRustActions.emit(cameraResultJson(action: self.action, path: path, bytes: data.count))
-            } catch {
-                CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(self.action)\",\"error\":\"camera write failed\"}")
-            }
+        picker.dismiss(animated: true)
+        defer { CrepusCameraPicker.shared.clear(delegate: self) }
+        guard let image = info[.originalImage] as? UIImage,
+              let data = image.jpegData(compressionQuality: 0.9)
+        else {
+            CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"camera image unavailable\"}")
+            return
+        }
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("jpg")
+        do {
+            try data.write(to: path, options: .atomic)
+            CrepusRustActions.emit(cameraResultJson(action: action, path: path, bytes: data.count))
+        } catch {
+            CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"camera write failed\"}")
         }
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        picker.dismiss(animated: true) {
-            CrepusRustActions.emit(cameraResultJson(action: self.action, path: nil, bytes: 0))
-            CrepusHostPicker.shared.clear(delegate: self)
-        }
+        picker.dismiss(animated: true)
+        CrepusRustActions.emit(cameraResultJson(action: action, path: nil, bytes: 0))
+        CrepusCameraPicker.shared.clear(delegate: self)
+    }
+}
+
+private final class CrepusCameraPicker {
+    static let shared = CrepusCameraPicker()
+    private var delegates: [CameraDelegate] = []
+
+    func retain(delegate: CameraDelegate) {
+        delegates.append(delegate)
+    }
+
+    func clear(delegate: CameraDelegate) {
+        delegates.removeAll { $0 === delegate }
     }
 }
 
 private func presentCamera(action: String) {
     Task { @MainActor in
-        guard !CrepusHostPicker.shared.isActive else {
-            CrepusRustActions.emit(CrepusRustActions.errorJson(action: action, error: "picker already active"))
-            return
-        }
         guard UIImagePickerController.isSourceTypeAvailable(.camera), let root = topViewController() else {
             CrepusRustActions.emit("{\"ok\":false,\"action\":\"\(action)\",\"error\":\"camera unavailable\"}")
             return
@@ -51,7 +58,7 @@ private func presentCamera(action: String) {
         picker.sourceType = .camera
         let delegate = CameraDelegate(action: action)
         picker.delegate = delegate
-        CrepusHostPicker.shared.retain(delegate: delegate)
+        CrepusCameraPicker.shared.retain(delegate: delegate)
         root.present(picker, animated: true)
     }
 }

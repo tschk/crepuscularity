@@ -1,1 +1,0 @@
-<script lang="ts">import{getContext,onDestroy}from'svelte';let{label}:{label:string}=$props();const api=globalThis as any;api.orderTrace.push(['child-setup',label,getContext('label')]);onDestroy(()=>api.orderTrace.push(['child-destroy',label]));</script><i>{label}</i>

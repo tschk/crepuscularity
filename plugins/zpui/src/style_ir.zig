@@ -91,11 +91,6 @@ pub fn decode(a: std.mem.Allocator, value: std.json.Value) !Style {
         const key = field.key_ptr.*;
         const val = field.value_ptr.*;
         if (val == .null) continue;
-        // Web-only layout metadata does not change the native content stack.
-        if (std.mem.eql(u8, key, "htmlDisplayContents")) {
-            _ = try json.boolean(val);
-            continue;
-        }
         if (std.mem.eql(u8, key, "classes")) {
             if (val != .array) return error.InvalidClasses;
             const owned = try a.alloc([]const u8, val.array.items.len);

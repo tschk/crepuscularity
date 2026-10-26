@@ -94,7 +94,6 @@ dependencies = [
  "crepuscularity-core",
  "serde",
  "serde_json",
- "stacker",
  "toml",
 ]
 
