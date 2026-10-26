@@ -46,13 +46,13 @@
 //!   The [`TemplateContext`](crate::TemplateContext) (variables, `base_dir`,
 //!   virtual files) is preserved across reloads, so the app's state survives a
 //!   `.crepus` save.
-//! - Atomic-ish: on read or parse failure the previous source stays active and the
+//! - Atomic-ish: on read failure the previous source stays active and the
 //!   outcome is [`ReloadOutcome::Error`] — the next draw still renders.
 //! - Robust against atomic-save editors: we watch the *parent directory*
 //!   rather than the single file, so Vim/Helix/JetBrains/VS Code-style
 //!   "write to temp, rename over original" saves still trigger reload (a
 //!   plain file watch would leave the kernel inotify watch on a deleted
-//!   inode and never fire again). Sibling/descendant supported template files in the
+//!   inode and never fire again). Sibling/descendant `.crepus` files in the
 //!   same subtree also flip the change flag, so editing an `include`d
 //!   component reloads the entry too.
 
@@ -73,7 +73,7 @@ pub enum ReloadOutcome {
     Unchanged,
     /// File changed and the new source replaced the in-memory template.
     Reloaded,
-    /// File changed but reading or parsing failed; the previous source is still active.
+    /// File changed but reading it failed; the previous source is still active.
     Error(String),
 }
 
@@ -141,11 +141,7 @@ impl HotTemplate {
             return ReloadOutcome::Unchanged;
         }
         match self.template.reload() {
-            Ok(()) => {
-                // Included files may change while the entry source stays identical.
-                self.template.invalidate_render();
-                ReloadOutcome::Reloaded
-            }
+            Ok(()) => ReloadOutcome::Reloaded,
             Err(e) => ReloadOutcome::Error(e),
         }
     }
