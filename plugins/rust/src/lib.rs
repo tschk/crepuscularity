@@ -70,6 +70,8 @@ pub fn render_ir_with_context(
     let template = std::fs::read_to_string(path)?;
     let payload = serde_json::json!({
         "template": template,
+        "filename": path,
+        "baseDir": std::path::Path::new(path).parent(),
         "context": context,
     })
     .to_string();
@@ -79,12 +81,12 @@ pub fn render_ir_with_context(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or("crepus stdin unavailable")?
-        .write_all(payload.as_bytes())?;
-    let out = child.wait_with_output()?;
+    let mut stdin = child.stdin.take().ok_or("crepus stdin unavailable")?;
+    // Drain output while writing so early diagnostics cannot block a large request.
+    let writer = std::thread::spawn(move || stdin.write_all(payload.as_bytes()));
+    let out = child.wait_with_output();
+    let written = writer.join();
+    let out = out?;
     if !out.status.success() {
         return Err(format!(
             "crepus native ir failed: {}",
@@ -92,6 +94,7 @@ pub fn render_ir_with_context(
         )
         .into());
     }
+    written.map_err(|_| "crepus stdin writer panicked")??;
     Ok(serde_json::from_slice(&out.stdout)?)
 }
 
@@ -132,8 +135,9 @@ impl ViewSession {
             }
         }
         if let Some(mut callback) = self.handlers.remove(&event.handler) {
-            callback(&event, self)?;
+            let result = callback(&event, self);
             self.handlers.insert(event.handler.clone(), callback);
+            result?;
         }
         self.render_ir()
     }
@@ -143,21 +147,30 @@ fn render_node(node: &ViewNode) -> String {
     match node {
         ViewNode::Text { content } => escape_html(content),
         ViewNode::Stack { axis, children } | ViewNode::Scroll { axis, children } => {
+            let kind = if matches!(node, ViewNode::Scroll { .. }) {
+                "scroll"
+            } else {
+                "stack"
+            };
             format!(
-                "<div data-crepus-kind=\"stack\" data-axis=\"{}\">{}</div>",
-                escape_html(axis),
+                "<div data-crepus-kind=\"{kind}\" data-axis=\"{}\">{}</div>",
+                escape_attr(axis),
                 children.iter().map(render_node).collect::<String>()
             )
         }
         ViewNode::Button { label, on_click } => {
             let attr = on_click
                 .as_deref()
-                .map(|handler| format!(" data-onclick=\"{}\"", escape_html(handler)))
+                .map(|handler| format!(" data-onclick=\"{}\"", escape_attr(handler)))
                 .unwrap_or_default();
             format!("<button{}>{}</button>", attr, escape_html(label))
         }
         ViewNode::Other => String::new(),
     }
+}
+
+fn escape_attr(value: &str) -> String {
+    escape_html(value).replace('\r', "&#13;")
 }
 
 fn escape_html(value: &str) -> String {
@@ -170,6 +183,102 @@ fn escape_html(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stacks_and_scrolls_keep_distinct_html_markers() {
+        let stack = crate::ViewNode::Stack {
+            axis: "row".into(),
+            children: vec![crate::ViewNode::Scroll {
+                axis: "column".into(),
+                children: vec![crate::ViewNode::Text {
+                    content: "Child <&雪".into(),
+                }],
+            }],
+        };
+        assert_eq!(crate::render_node(&stack), "<div data-crepus-kind=\"stack\" data-axis=\"row\"><div data-crepus-kind=\"scroll\" data-axis=\"column\">Child &lt;&amp;雪</div></div>");
+        let scroll = crate::ViewNode::Scroll {
+            axis: "row".into(),
+            children: vec![],
+        };
+        assert_eq!(
+            crate::render_node(&scroll),
+            "<div data-crepus-kind=\"scroll\" data-axis=\"row\"></div>"
+        );
+    }
+
+    #[test]
+    fn attributes_preserve_carriage_returns_after_html_escaping() {
+        let value = "雪\rline\r\n&#13;\"&<>";
+        let escaped = "雪&#13;line&#13;\n&amp;#13;&quot;&amp;&lt;&gt;";
+        let button = crate::ViewNode::Button {
+            label: value.into(),
+            on_click: Some(value.into()),
+        };
+        assert_eq!(
+            crate::render_node(&button),
+            format!(
+                "<button data-onclick=\"{escaped}\">{}</button>",
+                crate::escape_html(value)
+            )
+        );
+        for node in [
+            crate::ViewNode::Stack {
+                axis: value.into(),
+                children: vec![],
+            },
+            crate::ViewNode::Scroll {
+                axis: value.into(),
+                children: vec![],
+            },
+        ] {
+            assert!(crate::render_node(&node).contains(&format!(" data-axis=\"{escaped}\"")));
+        }
+        assert!(crate::escape_html(value).contains('\r'));
+    }
+
+    #[test]
+    fn callback_errors_retain_registration_for_later_dispatches() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let calls = Rc::new(Cell::new(0));
+        let observed = Rc::clone(&calls);
+        let mut session = crate::ViewSession::new("unused.crepus", Default::default());
+        session.on("bind:count:2", move |_, session| {
+            observed.set(observed.get() + 1);
+            assert_eq!(
+                session.context["count"],
+                serde_json::Value::String("2".into())
+            );
+            Err("handler marker".into())
+        });
+        for expected in [1, 2] {
+            let error = session
+                .dispatch(crate::Event {
+                    handler: "bind:count:2".into(),
+                    payload: None,
+                })
+                .unwrap_err();
+            assert_eq!(error.to_string(), "handler marker");
+            assert_eq!(calls.get(), expected);
+        }
+    }
+
+    #[test]
+    fn context_render_resolves_relative_includes() {
+        let ir = crate::render_ir("../fixtures/relative-include/main.crepus").unwrap();
+        assert!(serde_json::to_string(&ir.root)
+            .unwrap()
+            .contains("Relative include content"));
+    }
+
+    #[test]
+    fn context_render_preserves_frontend_filename() {
+        let ir = crate::render_ir("../fixtures/frontend.svelte").unwrap();
+        let text = serde_json::to_string(&ir.root).unwrap();
+        assert!(text.contains("Frontend content"));
+        assert!(!text.contains("ignored"));
+    }
+
     #[test]
     fn renders_html() {
         let html = crate::render_html("../fixtures/hello.crepus").expect("render html");

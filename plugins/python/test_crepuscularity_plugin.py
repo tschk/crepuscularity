@@ -6,6 +6,7 @@ import tempfile
 
 import os
 from unittest.mock import patch
+import tempfile
 from crepuscularity_plugin import ViewSession, render_html, render_ir, _crepus_bin
 
 
@@ -21,7 +22,7 @@ class PathBoundaryTests(unittest.TestCase):
         self.outside = self.root / "outside.crepus"
         self.outside.write_text('span "outside"')
         self.reply = subprocess.CompletedProcess(
-            [], 0, stdout='{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=""
+            [], 0, stdout=b'{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=b""
         )
 
     def test_rejects_outside_paths_before_reading_or_launching(self):
@@ -100,6 +101,21 @@ class PathBoundaryTests(unittest.TestCase):
 
 
 class CrepuscularityPluginTests(unittest.TestCase):
+    def test_context_render_preserves_frontend_filename(self):
+        fixture = pathlib.Path(__file__).parents[1] / "fixtures" / "frontend.svelte"
+        ir = render_ir(fixture, {"name": "Ada"}, fixture.parent)
+        self.assertIn("Frontend content", str(ir.root))
+        self.assertNotIn("ignored", str(ir.root))
+
+    def test_secure_input_renders_as_password(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = pathlib.Path(directory) / "password.crepus"
+            fixture.write_text('input secure bind=password\n')
+            self.assertEqual(
+                render_html(fixture),
+                '<input type="password" data-bind="password" placeholder="">',
+            )
+
     def test_crepus_bin_validation(self):
         valid_paths = [
             "crepus",
@@ -144,6 +160,10 @@ class CrepuscularityPluginTests(unittest.TestCase):
         fixture = pathlib.Path(__file__).parents[1] / "fixtures" / "hello.crepus"
         # Provide a dummy allowed directory that does not contain the fixture
         dummy_dir = pathlib.Path(__file__).parent
+        with patch("crepuscularity_plugin.subprocess.run") as run:
+            with self.assertRaises(ValueError):
+                render_ir(fixture, allowed_dir=dummy_dir)
+            run.assert_not_called()
         with self.assertRaises(ValueError):
             render_ir(fixture, {"name": "Ada"}, dummy_dir)
 

@@ -5,6 +5,23 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
+  testWidgets('escaped backslashes survive rendering and action dispatch', (
+    tester,
+  ) async {
+    final actions = <String>[];
+    await tester.pumpWidget(
+      _host(
+        CrepusView.fromSource(
+          r'button "Open C:\\notes" onclick="C:\\notes"',
+          onAction: actions.add,
+        ),
+      ),
+    );
+    await tester.tap(find.text(r'Open C:\notes'));
+    expect(actions, [r'C:\notes']);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('renders text, button, badge, progress', (tester) async {
     await tester.pumpWidget(
       _host(

@@ -39,6 +39,8 @@ class CrepusLimits {
     this.maxSourceLength = 8000,
   });
 
+  /// Maximum decoded nodes (including button label parts) and runtime node visits per widget build.
+  /// Loop expansion stops when this budget is exhausted.
   final int maxNodes;
   final int maxDepth;
   final int maxSourceLength;
@@ -62,6 +64,16 @@ double? _asDouble(Object? value) {
   };
   if (parsed == null || !parsed.isFinite) return null;
   return parsed;
+}
+
+int? _lineCount(Object? value) {
+  final count = _asDouble(value);
+  return count != null &&
+          count > 0 &&
+          count <= 2147483647 &&
+          count == count.truncateToDouble()
+      ? count.toInt()
+      : null;
 }
 
 List<double> _doubleList(Object? value) {
@@ -102,9 +114,20 @@ class ViewStyle {
     this.paddingBottom,
     this.paddingLeft,
     this.paddingRight,
+    this.margin,
+    this.marginHorizontal,
+    this.marginVertical,
+    this.marginTop,
+    this.marginBottom,
+    this.marginLeft,
+    this.marginRight,
     this.fontSize,
     this.fontWeight,
+    this.letterSpacing,
+    this.lineHeight,
     this.textAlign,
+    this.lineClamp,
+    this.textOverflow,
     this.foregroundColor,
     this.backgroundColor,
     this.cornerRadius,
@@ -129,9 +152,20 @@ class ViewStyle {
   final double? paddingBottom;
   final double? paddingLeft;
   final double? paddingRight;
+  final double? margin;
+  final double? marginHorizontal;
+  final double? marginVertical;
+  final double? marginTop;
+  final double? marginBottom;
+  final double? marginLeft;
+  final double? marginRight;
   final double? fontSize;
   final int? fontWeight;
+  final double? letterSpacing;
+  final double? lineHeight;
   final String? textAlign;
+  final int? lineClamp;
+  final String? textOverflow;
   final String? foregroundColor;
   final String? backgroundColor;
   final double? cornerRadius;
@@ -152,9 +186,20 @@ class ViewStyle {
       paddingBottom == null &&
       paddingLeft == null &&
       paddingRight == null &&
+      margin == null &&
+      marginHorizontal == null &&
+      marginVertical == null &&
+      marginTop == null &&
+      marginBottom == null &&
+      marginLeft == null &&
+      marginRight == null &&
       fontSize == null &&
       fontWeight == null &&
+      letterSpacing == null &&
+      lineHeight == null &&
       textAlign == null &&
+      lineClamp == null &&
+      textOverflow == null &&
       foregroundColor == null &&
       backgroundColor == null &&
       cornerRadius == null &&
@@ -177,9 +222,20 @@ class ViewStyle {
       paddingBottom: _asDouble(value['paddingBottom']),
       paddingLeft: _asDouble(value['paddingLeft']),
       paddingRight: _asDouble(value['paddingRight']),
+      margin: _asDouble(value['margin']),
+      marginHorizontal: _asDouble(value['marginHorizontal']),
+      marginVertical: _asDouble(value['marginVertical']),
+      marginTop: _asDouble(value['marginTop']),
+      marginBottom: _asDouble(value['marginBottom']),
+      marginLeft: _asDouble(value['marginLeft']),
+      marginRight: _asDouble(value['marginRight']),
       fontSize: _asDouble(value['fontSize']),
       fontWeight: _asDouble(value['fontWeight'])?.round(),
+      letterSpacing: _asDouble(value['letterSpacing']),
+      lineHeight: _asDouble(value['lineHeight']),
       textAlign: _asString(value['textAlign']),
+      lineClamp: _lineCount(value['lineClamp']),
+      textOverflow: _asString(value['textOverflow']),
       foregroundColor: _asString(value['foregroundColor']),
       backgroundColor: _asString(value['backgroundColor']),
       cornerRadius: _asDouble(value['cornerRadius']),
@@ -212,9 +268,20 @@ class ViewStyle {
     put('paddingBottom', paddingBottom);
     put('paddingLeft', paddingLeft);
     put('paddingRight', paddingRight);
+    put('margin', margin);
+    put('marginHorizontal', marginHorizontal);
+    put('marginVertical', marginVertical);
+    put('marginTop', marginTop);
+    put('marginBottom', marginBottom);
+    put('marginLeft', marginLeft);
+    put('marginRight', marginRight);
     put('fontSize', fontSize);
     put('fontWeight', fontWeight);
+    put('letterSpacing', letterSpacing);
+    put('lineHeight', lineHeight);
     put('textAlign', textAlign);
+    put('lineClamp', lineClamp);
+    put('textOverflow', textOverflow);
     put('foregroundColor', foregroundColor);
     put('backgroundColor', backgroundColor);
     put('cornerRadius', cornerRadius);
@@ -237,7 +304,15 @@ sealed class ViewNode {
   /// Decode a single node from a JSON map. Unknown or disallowed `kind`s
   /// resolve to [UnsupportedNode] — never an exception. This is the model-layer
   /// half of the allowlist (the renderer enforces it a second time).
+  /// Applies the default node/depth limits; oversized trees are unsupported.
   static ViewNode fromJson(Object? raw) {
+    if (_rawExceedsLimits([raw], CrepusLimits.defaults)) {
+      return const UnsupportedNode('<limits-exceeded>');
+    }
+    return _decode(raw);
+  }
+
+  static ViewNode _decode(Object? raw) {
     if (raw is! Map) return const UnsupportedNode('<non-object>');
     final kind = raw['kind'];
     if (kind is! String || !kAllowedKinds.contains(kind)) {
@@ -266,10 +341,12 @@ sealed class ViewNode {
           axis: _axisFromString(raw['axis']),
           children: _childList(raw['children']),
           style: style,
+          onLongPress: _asString(raw['onLongPress']),
         );
       case 'button':
         return ButtonNode(
           label: _asString(raw['label']) ?? '',
+          labelParts: ButtonLabelPart.decode(raw['labelParts']),
           onClick: _asString(raw['onClick']),
           onLongPress: _asString(raw['onLongPress']),
           style: style,
@@ -334,6 +411,7 @@ sealed class ViewNode {
       case 'image':
         return ImageNode(
           src: _asString(raw['src']) ?? '',
+          srcBind: _asString(raw['srcBind']),
           alt: _asString(raw['alt']),
           onLongPress: _asString(raw['onLongPress']),
           style: style,
@@ -363,6 +441,7 @@ sealed class ViewNode {
       case 'link':
         return LinkNode(
           href: _asString(raw['href']) ?? '',
+          hrefBind: _asString(raw['hrefBind']),
           target: _asString(raw['target']),
           rel: _asString(raw['rel']),
           children: _childList(raw['children']),
@@ -381,7 +460,7 @@ sealed class ViewNode {
 
   static List<ViewNode> _childList(Object? raw) {
     if (raw is! List) return const [];
-    return raw.map(ViewNode.fromJson).toList(growable: false);
+    return raw.map(_decode).toList(growable: false);
   }
 }
 
@@ -410,19 +489,53 @@ class StackNode extends ViewNode {
 }
 
 class ScrollNode extends ViewNode {
-  const ScrollNode({required this.axis, required this.children, super.style});
+  const ScrollNode({
+    required this.axis,
+    required this.children,
+    this.onLongPress,
+    super.style,
+  });
   final StackAxis axis;
+  final String? onLongPress;
   final List<ViewNode> children;
+}
+
+/// A literal label fragment or a constrained scope lookup.
+class ButtonLabelPart {
+  const ButtonLabelPart({required this.kind, required this.value});
+  final String kind;
+  final String value;
+
+  static List<ButtonLabelPart> decode(Object? raw) {
+    if (raw is! List) return const [];
+    final parts = <ButtonLabelPart>[];
+    for (final part in raw) {
+      if (part is! Map ||
+          (part['kind'] != 'literal' && part['kind'] != 'expr') ||
+          part['value'] is! String) {
+        return const [];
+      }
+      parts.add(
+        ButtonLabelPart(
+          kind: part['kind'] as String,
+          value: part['value'] as String,
+        ),
+      );
+    }
+    return parts;
+  }
 }
 
 class ButtonNode extends ViewNode {
   const ButtonNode({
     required this.label,
+    this.labelParts = const [],
     this.onClick,
     this.onLongPress,
     super.style,
   });
   final String label;
+  final List<ButtonLabelPart> labelParts;
   final String? onClick;
   final String? onLongPress;
 }
@@ -537,8 +650,15 @@ class SpacerNode extends ViewNode {
 }
 
 class ImageNode extends ViewNode {
-  const ImageNode({required this.src, this.alt, this.onLongPress, super.style});
+  const ImageNode({
+    required this.src,
+    this.srcBind,
+    this.alt,
+    this.onLongPress,
+    super.style,
+  });
   final String src;
+  final String? srcBind;
   final String? alt;
   final String? onLongPress;
 }
@@ -591,12 +711,14 @@ class ListItemNode extends ViewNode {
 class LinkNode extends ViewNode {
   const LinkNode({
     required this.href,
+    this.hrefBind,
     this.target,
     this.rel,
     required this.children,
     super.style,
   });
   final String href;
+  final String? hrefBind;
   final String? target;
   final String? rel;
   final List<ViewNode> children;
@@ -623,14 +745,59 @@ class ViewIr {
   }) {
     final version = _asDouble(json['version'])?.round() ?? 0;
     final rawRoot = json['root'];
+    if (rawRoot is List && _rawExceedsLimits(rawRoot, limits)) {
+      return ViewIr(version: version, root: const []);
+    }
     final root = rawRoot is List
-        ? rawRoot.map(ViewNode.fromJson).toList(growable: false)
+        ? rawRoot.map(ViewNode._decode).toList(growable: false)
         : const <ViewNode>[];
     if (crepusExceedsLimits(root, limits)) {
       return ViewIr(version: version, root: const []);
     }
     return ViewIr(version: version, root: root);
   }
+}
+
+// Bound recursive decoding before constructing nodes. Only traverse fields that
+// the decoder actually consumes; unsupported nodes discard their children.
+bool _rawExceedsLimits(List<Object?> root, CrepusLimits limits) {
+  final pending = <(Object?, int)>[];
+  var count = 0;
+  bool enqueue(List<Object?> nodes, int depth) {
+    if (nodes.isEmpty) return false;
+    if (depth > limits.maxDepth || nodes.length > limits.maxNodes - count) {
+      return true;
+    }
+    count += nodes.length;
+    pending.addAll(nodes.map((node) => (node, depth)));
+    return false;
+  }
+
+  if (enqueue(root, 1)) return true;
+  while (pending.isNotEmpty) {
+    final (node, depth) = pending.removeLast();
+    if (node is! Map) continue;
+    final parts = node['kind'] == 'button' ? node['labelParts'] : null;
+    if (parts is List) {
+      count += parts.length;
+      if (count > limits.maxNodes) return true;
+    }
+    final fields = switch (node['kind']) {
+      'stack' ||
+      'scroll' ||
+      'list' ||
+      'listItem' ||
+      'link' => const ['children'],
+      'if' => const ['thenChildren', 'elseChildren'],
+      'forEach' => const ['itemBody'],
+      _ => const <String>[],
+    };
+    for (final field in fields) {
+      final children = node[field];
+      if (children is List && enqueue(children, depth + 1)) return true;
+    }
+  }
+  return false;
 }
 
 /// Whether a node list breaks the node-count or depth caps. Shared by the IR
@@ -640,7 +807,7 @@ bool crepusExceedsLimits(List<ViewNode> nodes, CrepusLimits limits) {
   bool walk(List<ViewNode> list, int depth) {
     if (depth > limits.maxDepth) return true;
     for (final node in list) {
-      count += 1;
+      count += 1 + (node is ButtonNode ? node.labelParts.length : 0);
       if (count > limits.maxNodes) return true;
       final children = childrenOf(node);
       if (children.isNotEmpty && walk(children, depth + 1)) return true;
@@ -682,5 +849,7 @@ Duration parseCrepusDuration(String? raw) {
     'h' => amount * 3600 * 1000000,
     _ => amount * 1000000,
   };
+  // double.round saturates beyond the signed 64-bit Duration range.
+  if (!micros.isFinite || micros >= 9223372036854775808.0) return Duration.zero;
   return Duration(microseconds: micros.round());
 }

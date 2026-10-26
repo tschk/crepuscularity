@@ -92,20 +92,26 @@ fn handle_event(event: Event, project_dir: &Path, tx: &Sender<WatchEvent>) {
     // because the underlying inode is gone.
     match event.kind {
         EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+            let mut scan = false;
             for path in event.paths {
                 let ext = path.extension().and_then(|e| e.to_str());
                 let file_name = path.file_name().and_then(|n| n.to_str());
 
-                if ext == Some("crepus") {
+                if path.is_dir() {
+                    // Moving a populated directory may report only its parent path.
+                    scan = true;
+                } else if ext == Some("crepus") {
                     let _ = tx.send(WatchEvent::FileChanged { path: path.clone() });
-
-                    if let Err(e) = check_capabilities(project_dir, tx) {
-                        let _ = tx.send(WatchEvent::Error {
-                            message: format!("Failed to check capabilities: {e}"),
-                        });
-                    }
+                    scan = true;
                 } else if file_name == Some("webext.toml") {
                     let _ = tx.send(WatchEvent::ManifestUpdated { path });
+                }
+            }
+            if scan {
+                if let Err(e) = check_capabilities(project_dir, tx) {
+                    let _ = tx.send(WatchEvent::Error {
+                        message: format!("Failed to check capabilities: {e}"),
+                    });
                 }
             }
         }
@@ -120,7 +126,7 @@ fn check_capabilities(project_dir: &Path, tx: &Sender<WatchEvent>) -> Result<(),
     let declared_caps = if manifest_path.exists() {
         ExtensionManifest::load(&manifest_path)
             .map(|m| m.to_capability_set())
-            .unwrap_or_default()
+            .map_err(|e| format!("Failed to load manifest: {e}"))?
     } else {
         CapabilitySet::new()
     };
@@ -257,5 +263,112 @@ mod tests {
         let missing = check_project_capabilities(dir.path()).unwrap();
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0], Capability::Storage);
+    }
+
+    #[test]
+    fn invalid_manifest_reports_an_error_without_missing_capability_advice() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("test.crepus");
+        fs::write(&source, "div on-click={browser.storage.local.get()}").unwrap();
+        fs::write(dir.path().join("webext.toml"), "name = [").unwrap();
+        let folder = dir.path().join("incoming");
+        fs::create_dir(&folder).unwrap();
+        for (kind, path) in [
+            (EventKind::Create(notify::event::CreateKind::File), source),
+            (EventKind::Create(notify::event::CreateKind::Folder), folder),
+        ] {
+            let (tx, rx) = channel();
+            handle_event(Event::new(kind).add_path(path), dir.path(), &tx);
+            let events: Vec<_> = rx.try_iter().collect();
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, WatchEvent::Error { message }
+            if message.contains("Failed to load manifest:"))),
+                "{events:?}"
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, WatchEvent::MissingCapabilities { .. })),
+                "{events:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn populated_directory_events_scan_nested_capabilities() {
+        for kind in [
+            EventKind::Create(notify::event::CreateKind::Folder),
+            EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::Both,
+            )),
+        ] {
+            let project = tempdir().unwrap();
+            let folder = project.path().join("incoming");
+            fs::create_dir_all(folder.join("nested")).unwrap();
+            fs::write(
+                folder.join("nested/api.crepus"),
+                "div on-click={browser.storage.local.get()}",
+            )
+            .unwrap();
+            let (tx, rx) = channel();
+            handle_event(Event::new(kind).add_path(folder), project.path(), &tx);
+            let events: Vec<_> = rx.try_iter().collect();
+            assert!(
+                events.iter().any(|event| matches!(event,
+                    WatchEvent::MissingCapabilities { capabilities, .. }
+                    if capabilities.contains(&Capability::Storage))),
+                "{kind:?}: {events:?}"
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, WatchEvent::FileChanged { .. })),
+                "directory events must not invent a changed source file: {events:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn watcher_detects_capabilities_in_moved_populated_directory() {
+        // Sibling directories ensure rename stays on the same filesystem.
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let incoming = root.path().join("incoming");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir_all(incoming.join("nested")).unwrap();
+        fs::write(
+            incoming.join("nested/api.crepus"),
+            "div on-click={browser.storage.local.get()}",
+        )
+        .unwrap();
+        let watcher = CapabilityWatcher::new(&project).unwrap();
+        fs::rename(&incoming, project.join("imported")).unwrap();
+        assert!(
+            wait_for_file_event(&watcher, &project, |event, _| matches!(event,
+                WatchEvent::MissingCapabilities { capabilities, .. }
+                if capabilities.contains(&Capability::Storage))),
+            "moving a populated directory did not report its nested Storage capability"
+        );
+    }
+
+    #[test]
+    fn unrelated_regular_file_events_do_not_scan_capabilities() {
+        let project = tempdir().unwrap();
+        fs::write(
+            project.path().join("api.crepus"),
+            "div on-click={browser.storage.local.get()}",
+        )
+        .unwrap();
+        let unrelated = project.path().join("notes.txt");
+        fs::write(&unrelated, "notes").unwrap();
+        let (tx, rx) = channel();
+        handle_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(unrelated),
+            project.path(),
+            &tx,
+        );
+        assert!(rx.try_iter().next().is_none());
     }
 }
