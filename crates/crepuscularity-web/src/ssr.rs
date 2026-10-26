@@ -398,4 +398,98 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("must be a string"));
     }
+
+    #[test]
+    fn test_render_bundle_with_ssr_happy_path() {
+        let bundle = r#"{
+            "entry": "main",
+            "files": {
+                "main": "<h1>Hello</h1>"
+            }
+        }"#;
+        let result = render_bundle_with_ssr(bundle, false).unwrap();
+        assert_eq!(result, "<h1>Hello</h1>");
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_invalid_json() {
+        let err = render_bundle_with_ssr("{invalid", false).unwrap_err();
+        assert!(err.to_string().contains("bundle JSON:"));
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_not_object() {
+        let err = render_bundle_with_ssr("\"string\"", false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: bundle must be a JSON object"
+        );
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_entry() {
+        let bundle = r#"{
+            "files": {
+                "main": "<h1>Hello</h1>"
+            }
+        }"#;
+        let err = render_bundle_with_ssr(bundle, false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: bundle missing string field \"entry\""
+        );
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_entry_not_string() {
+        let bundle = r#"{
+            "entry": 123,
+            "files": {}
+        }"#;
+        let err = render_bundle_with_ssr(bundle, false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: bundle missing string field \"entry\""
+        );
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_missing_files() {
+        let bundle = r#"{
+            "entry": "main"
+        }"#;
+        let err = render_bundle_with_ssr(bundle, false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: bundle missing \"files\" object"
+        );
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_files_not_object() {
+        let bundle = r#"{
+            "entry": "main",
+            "files": "not_an_object"
+        }"#;
+        let err = render_bundle_with_ssr(bundle, false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: \"files\" must be a JSON object"
+        );
+    }
+
+    #[test]
+    fn test_render_bundle_with_ssr_files_values_not_string() {
+        let bundle = r#"{
+            "entry": "main",
+            "files": {
+                "main": 123
+            }
+        }"#;
+        let err = render_bundle_with_ssr(bundle, false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "render error: files[\"main\"] must be a string"
+        );
+    }
 }
