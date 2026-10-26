@@ -96,7 +96,7 @@ mod tests {
         // Final drain after the producer thread is done
         all_drained.extend(queue.drain());
 
-        producer.join().expect("Producer thread panicked");
+        producer.join().unwrap();
 
         assert_eq!(all_drained.len(), 1000);
         for (i, cmd) in all_drained.into_iter().enumerate() {

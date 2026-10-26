@@ -8,7 +8,7 @@
 //! "#;
 //! let mut parser = tree_sitter::Parser::new();
 //! parser.set_language(&tree_sitter_crepusx::language()).expect("Error loading CrepusX grammar");
-//! let tree = parser.parse(code, None).expect("Error parsing code");
+//! let tree = parser.parse(code, None).unwrap();
 //! assert!(!tree.root_node().has_error());
 //! ```
 //!
@@ -69,7 +69,7 @@ mod tests {
                 r#"<View class="flex-1 p-4"><Text>Hello</Text></View>"#,
                 None,
             )
-            .expect("Error parsing nested JSX code");
+            .unwrap();
         assert!(!tree.root_node().has_error());
     }
 }

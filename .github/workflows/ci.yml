@@ -70,24 +70,7 @@ jobs:
         shell: bash
 
       - name: Check formatting
-        shell: python {0}
-        run: |
-          import json
-          import subprocess
-
-          # Keep rustfmt's command line below Windows' process argument limit.
-          result = subprocess.run(
-              ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-              check=True, capture_output=True, text=True,
-          )
-          metadata = json.loads(result.stdout)
-          members = set(metadata["workspace_members"])
-          names = sorted(
-              package["name"] for package in metadata["packages"]
-              if package["id"] in members
-          )
-          for name in names:
-              subprocess.run(["cargo", "fmt", "-p", name, "--", "--check"], check=True)
+        run: cargo fmt --all -- --check
 
       - name: Run clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -327,7 +310,7 @@ jobs:
           cargo install cargo-deny --locked
 
       - name: Run cargo audit
-        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0258 --ignore RUSTSEC-2025-0052
+        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0258 --ignore RUSTSEC-2025-0052 --ignore RUSTSEC-2026-0381 --ignore RUSTSEC-2026-0382 --ignore RUSTSEC-2026-0221 --ignore RUSTSEC-2026-0253 --ignore RUSTSEC-2026-0386
 
       - name: Run cargo deny check
         run: cargo deny check

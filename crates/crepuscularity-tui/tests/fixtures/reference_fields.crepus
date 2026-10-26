@@ -1,3 +1,0 @@
-div flex flex-col
-  span #template "{template}"
-  span #__crepus_template "{__crepus_template}"
