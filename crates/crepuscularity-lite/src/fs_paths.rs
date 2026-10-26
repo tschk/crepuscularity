@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn rejects_parent_dir() {
         let root = Path::new("/tmp/sandbox-test-root");
-        let err = resolve_under_sandbox(root, "../etc/passwd").unwrap_err();
+        let err = resolve_under_sandbox(root, "../etc/passwd").err().unwrap();
         assert_eq!(err.code, "path_escape");
     }
 
@@ -71,7 +71,7 @@ mod tests {
         let abs_path = "/etc/passwd";
         #[cfg(windows)]
         let abs_path = "C:\\etc\\passwd";
-        let err = resolve_under_sandbox(root, abs_path).unwrap_err();
+        let err = resolve_under_sandbox(root, abs_path).err().unwrap();
         assert_eq!(err.code, "path_not_relative");
     }
 
