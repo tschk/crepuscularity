@@ -100,8 +100,7 @@ mod tests {
     fn passes_javascript_through() {
         let source = "function run() { return 1; }";
         assert_eq!(
-            prepare_guest_source(Path::new("guest.js"), source)
-                .expect("expected JavaScript compilation to succeed"),
+            prepare_guest_source(Path::new("guest.js"), source).unwrap(),
             source
         );
     }
@@ -112,7 +111,7 @@ mod tests {
             Path::new("guest.ts"),
             "export function run(value: number): number { return value + 1; }",
         )
-        .expect("expected TypeScript to transpile correctly");
+        .unwrap();
         assert!(out.contains("function run(value)"));
         assert!(!out.contains("export"));
         assert!(!out.contains(": number"));

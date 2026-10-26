@@ -177,8 +177,7 @@ mod tests {
             Some("file_change".to_string()),
         );
 
-        let json =
-            serde_json::to_string(&event).expect("Failed to serialize CompilerEvent to JSON");
+        let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"compilation_started\""));
         assert!(json.contains("src/main.rs"));
     }
@@ -194,8 +193,7 @@ mod tests {
         }];
 
         let event = CompilerEvent::compilation_error(150, errors);
-        let json =
-            serde_json::to_string(&event).expect("Failed to serialize CompilerEvent to JSON");
+        let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"compilation_error\""));
         assert!(json.contains("cannot find value"));
     }
