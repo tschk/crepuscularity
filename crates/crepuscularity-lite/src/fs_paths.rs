@@ -78,14 +78,14 @@ mod tests {
     #[test]
     fn handles_current_dir() {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "./a/./b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "./a/./b/c.txt").expect("failed to handle current dir");
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
     }
 
     #[test]
     fn accepts_nested() {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "a/b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "a/b/c.txt").expect("failed to accept nested path");
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
     }
 
@@ -96,17 +96,19 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root).expect("failed to create root dir");
         let outside = std::env::temp_dir().join(format!(
             "crepus-lite-sandbox-outside-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&outside);
-        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&outside).expect("failed to create outside dir");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link"))
+            .expect("failed to create unix symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside, root.join("link")).unwrap();
+        std::os::windows::fs::symlink_dir(&outside, root.join("link"))
+            .expect("failed to create windows symlink");
         assert!(resolve_under_sandbox(&root, "link/file.txt").is_err());
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
