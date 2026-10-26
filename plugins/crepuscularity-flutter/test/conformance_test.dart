@@ -32,6 +32,38 @@ void main() {
           as Map<String, Object?>;
   final source = File('test/fixtures/main.crepus').readAsStringSync();
 
+  testWidgets('named font sizes match the Rust IR ramp', (tester) async {
+    final source = File('test/fixtures/font-sizes.crepus').readAsStringSync();
+    final ir =
+        jsonDecode(File('test/fixtures/font-sizes.json').readAsStringSync())
+            as Map<String, Object?>;
+    final expected = <String, double>{
+      'xs': 12,
+      'sm': 14,
+      'base': 16,
+      'lg': 18,
+      'xl': 20,
+      '2xl': 24,
+      '3xl': 30,
+      '4xl': 36,
+      '5xl': 48,
+      '6xl': 60,
+      '7xl': 72,
+      '8xl': 96,
+      '9xl': 128,
+    };
+    for (final view in [CrepusView.fromSource(source), CrepusView.fromIr(ir)]) {
+      await tester.pumpWidget(_host(SingleChildScrollView(child: view)));
+      for (final entry in expected.entries) {
+        expect(
+          tester.widget<Text>(find.text(entry.key)).style!.fontSize,
+          entry.value,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   test('fromSource and fromIr agree structurally on the golden fixture', () {
     final fromIr = ViewIr.fromJson(fixtureJson);
     final fromSource = viewIrFromSource(source);

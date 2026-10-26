@@ -67,22 +67,10 @@ public enum CrepusRustActions {
     }
 
     private static func encodeJsonValue(_ value: Any) -> String? {
-        switch value {
-        case let text as String:
-            guard let data = try? JSONSerialization.data(withJSONObject: [text]),
-                  let json = String(data: data, encoding: .utf8)
-            else { return nil }
-            return String(json.dropFirst().dropLast())
-        case let number as NSNumber:
-            return number.stringValue
-        case is NSNull:
-            return "null"
-        default:
-            guard JSONSerialization.isValidJSONObject(value),
-                  let data = try? JSONSerialization.data(withJSONObject: value),
-                  let json = String(data: data, encoding: .utf8)
-            else { return nil }
-            return json
-        }
+        if let number = value as? NSNumber, !number.doubleValue.isFinite { return nil }
+        guard JSONSerialization.isValidJSONObject([value]),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return json
     }
 }

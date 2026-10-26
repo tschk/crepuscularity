@@ -1878,6 +1878,7 @@ dependencies = [
  "toml 1.1.2+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "unicode-ident",
  "walkdir",
 ]
 
@@ -1914,6 +1915,7 @@ dependencies = [
 name = "crepuscularity-embedded"
 version = "0.1.23"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "crepuscularity_macros",
  "display-interface",
@@ -1961,6 +1963,7 @@ dependencies = [
  "crepuscularity-core",
  "crossterm 0.28.1",
  "dirs 6.0.0",
+ "futures-channel",
  "gpui-ce",
  "gpui_ce_platform",
  "icu_calendar",
@@ -1993,6 +1996,7 @@ version = "0.2.9"
 dependencies = [
  "crepuscularity-core",
  "tokio",
+ "tower 0.4.13",
  "tower-lsp",
 ]
 
@@ -2000,6 +2004,7 @@ dependencies = [
 name = "crepuscularity-lvgl"
 version = "0.1.11"
 dependencies = [
+ "crepuscularity-colors",
  "crepuscularity-core",
  "tempfile",
 ]
@@ -2086,6 +2091,7 @@ dependencies = [
 name = "crepuscularity-tauri-macros"
 version = "0.1.8"
 dependencies = [
+ "heck 0.5.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",

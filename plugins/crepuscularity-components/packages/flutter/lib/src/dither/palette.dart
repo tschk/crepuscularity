@@ -67,7 +67,7 @@ const _palette = <DitherColor, DitherSeed>{
 };
 
 DitherColor ditherColorFromName(String? name) {
-  return switch (name?.toLowerCase()) {
+  return switch (name?.trim().toLowerCase()) {
     'green' => DitherColor.green,
     'purple' => DitherColor.purple,
     'pink' => DitherColor.pink,

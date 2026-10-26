@@ -875,11 +875,11 @@ void main() {
         (50, 100, 0, 0.5),
         (200, 100, 0, 1),
         (-5, 100, 0, 0),
-        (1, 0, 0, 0),
+        (1, 0, 0, 1),
         (5, 10, 5, 0),
         (7.5, 10, 5, 0.5),
         (99, 10, 5, 1),
-        (5, 5, 5, 0),
+        (5, 5, 5, 1),
         (5, 1, 10, 0),
       ];
       for (final (value, max, min, expected) in cases) {
@@ -910,7 +910,7 @@ void main() {
                 find.byType(LinearProgressIndicator),
               )
               .value,
-          expected,
+          max > 0 ? expected : 0.0,
           reason: 'progress $value/$max',
         );
       }
@@ -993,8 +993,8 @@ void main() {
       tester,
     ) async {
       const cases = {
-        -100: FontWeight.w300,
-        0: FontWeight.w300,
+        -100: FontWeight.w100,
+        0: FontWeight.w100,
         399: FontWeight.w300,
         400: FontWeight.w400,
         499: FontWeight.w400,
@@ -1002,7 +1002,7 @@ void main() {
         650: FontWeight.w600,
         700: FontWeight.w700,
         850: FontWeight.w800,
-        100000: FontWeight.w800,
+        100000: FontWeight.w900,
       };
       for (final entry in cases.entries) {
         await tester.pumpWidget(
@@ -1067,13 +1067,13 @@ void main() {
       final text = tester.widget<Text>(find.text('Hi'));
       expect(text.style!.fontSize, 20);
       expect(text.style!.fontWeight, FontWeight.w700);
-      expect(text.style!.color, const Color(0xffef4444));
+      expect(text.style!.color, const Color(0xfffb2c36));
       expect(text.style!.fontStyle, FontStyle.italic);
       expect(text.textAlign, TextAlign.center);
       final decoration =
           tester.widget<DecoratedBox>(_under(DecoratedBox)).decoration
               as BoxDecoration;
-      expect(decoration.color, const Color(0xff1e3a8a));
+      expect(decoration.color, const Color(0xff1c398e));
       expect(decoration.borderRadius, BorderRadius.circular(12));
       final padding = tester.widget<Padding>(
         find

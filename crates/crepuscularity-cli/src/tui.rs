@@ -41,11 +41,12 @@ pub fn execute(cmd: TuiCommands) {
 }
 
 fn scaffold_tui_app(name: &str) {
+    scaffold::validate_project_name(name).unwrap_or_else(|e| ui::error(e));
     let dir = Path::new(name);
 
     // Create directory structure
-    scaffold::ensure_dir(dir)
-        .unwrap_or_else(|e| ui::error(&format!("failed to create directory: {e}")));
+    scaffold::create_project_dir(dir)
+        .unwrap_or_else(|e| ui::error(&format!("failed to create project directory: {e}")));
 
     let cargo_toml = format!(
         r#"[package]
@@ -57,8 +58,8 @@ edition = "2021"
 # Bump these as needed; the scaffold is pinned to the version of `crepus` you
 # scaffolded with.
 crepuscularity-tui = "{tui_version}"
-ratatui = {{ version = "0.29", default-features = false, features = ["crossterm"] }}
-crossterm = "0.28"
+ratatui = {{ version = "0.30", default-features = false, features = ["crossterm"] }}
+crossterm = "0.29"
 anyhow = "1.0"
 "#,
         name = name,
@@ -72,7 +73,7 @@ use std::time::Duration;
 
 use crepuscularity_tui::{HotTemplate, ReloadOutcome};
 use crossterm::event::{Event, KeyCode};
-use ratatui::prelude::*;
+use ratatui::DefaultTerminal;
 
 fn main() -> anyhow::Result<()> {
     let mut hot = HotTemplate::watch("app.crepus").map_err(|e| anyhow::anyhow!(e))?;
@@ -87,7 +88,7 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run(terminal: &mut Terminal<impl Backend>, hot: &mut HotTemplate) -> anyhow::Result<()> {
+fn run(terminal: &mut DefaultTerminal, hot: &mut HotTemplate) -> anyhow::Result<()> {
     loop {
         terminal.draw(|frame| {
             let _ = hot.poll_and_draw_full(frame);
@@ -186,7 +187,7 @@ fn delegate_to_cargo(mut cmd: Command, verb: &str) {
 /// Sets up crossterm raw mode via `ratatui::init`, watches the file for
 /// changes via [`crepuscularity_tui::HotTemplate`], and re-renders on each
 /// save. `q` or `Esc` exits cleanly; `r` forces a reload. A `context.toml`
-/// next to the template is loaded as initial variables.
+/// next to the template supplies variables initially and after successful reloads.
 #[cfg(feature = "tui")]
 fn preview_tui_template(path: &Path) {
     use crepuscularity_tui::{HotTemplate, ReloadOutcome};
@@ -202,12 +203,7 @@ fn preview_tui_template(path: &Path) {
         Err(e) => ui::error(&format!("could not load template: {e}")),
     };
 
-    if let Some(dir) = path.parent() {
-        let ctx_path = dir.join("context.toml");
-        if ctx_path.exists() {
-            load_tui_context_toml(&ctx_path, hot.template_mut().context_mut());
-        }
-    }
+    refresh_tui_preview_context(&mut hot);
 
     eprintln!(
         "{} previewing {} (q/Esc to quit, r to force reload)",
@@ -219,16 +215,14 @@ fn preview_tui_template(path: &Path) {
     let mut last_reload: Option<(Instant, ReloadOutcome)> = None;
 
     let result: Result<(), String> = loop {
-        let outcome_holder = std::cell::Cell::new(ReloadOutcome::Unchanged);
-        if let Err(e) = terminal.draw(|frame| match hot.poll_and_draw_full(frame) {
-            Ok(o) => outcome_holder.set(o),
-            Err(_) => outcome_holder.set(ReloadOutcome::Unchanged),
-        }) {
-            break Err(format!("terminal draw: {e}"));
-        }
-        match outcome_holder.into_inner() {
+        match reload_tui_preview(&mut hot, false) {
             ReloadOutcome::Unchanged => {}
             other => last_reload = Some((Instant::now(), other)),
+        }
+        if let Err(e) = terminal.draw(|frame| {
+            let _ = hot.draw_full(frame);
+        }) {
+            break Err(format!("terminal draw: {e}"));
         }
 
         if matches!(event::poll(Duration::from_millis(100)), Ok(true)) {
@@ -236,11 +230,7 @@ fn preview_tui_template(path: &Path) {
                 Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                     KeyCode::Char('r') => {
-                        if let Err(e) = hot.template_mut().reload() {
-                            last_reload = Some((Instant::now(), ReloadOutcome::Error(e)));
-                        } else {
-                            last_reload = Some((Instant::now(), ReloadOutcome::Reloaded));
-                        }
+                        last_reload = Some((Instant::now(), reload_tui_preview(&mut hot, true)));
                     }
                     _ => {}
                 },
@@ -265,9 +255,37 @@ fn preview_tui_template(path: &Path) {
     }
 }
 
-/// Minimal TOML loader (key=value, strings/bools/ints/floats) shared with
-/// `crepus preview`.  Lives here to avoid the `desktop` cfg-gate so non-GPUI
-/// builds still get TUI preview support.
+#[cfg(feature = "tui")]
+fn reload_tui_preview(
+    hot: &mut crepuscularity_tui::HotTemplate,
+    force: bool,
+) -> crepuscularity_tui::ReloadOutcome {
+    use crepuscularity_tui::ReloadOutcome;
+    let outcome = if force {
+        match hot.template_mut().reload() {
+            Ok(()) => ReloadOutcome::Reloaded,
+            Err(error) => ReloadOutcome::Error(error),
+        }
+    } else {
+        hot.poll_reload()
+    };
+    if outcome == ReloadOutcome::Reloaded {
+        refresh_tui_preview_context(hot);
+    }
+    outcome
+}
+
+#[cfg(feature = "tui")]
+fn refresh_tui_preview_context(hot: &mut crepuscularity_tui::HotTemplate) {
+    let mut fresh = crepuscularity_tui::TemplateContext::new();
+    if let Some(dir) = hot.template().path().parent() {
+        load_tui_context_toml(&dir.join("context.toml"), &mut fresh);
+    }
+    // The CLI preview owns file variables; preserve include paths, slots and VFS.
+    hot.template_mut().context_mut().vars = fresh.vars;
+}
+
+/// Minimal preview TOML loader (key=value, strings/bools/ints/floats).
 #[cfg(feature = "tui")]
 fn load_tui_context_toml(path: &Path, ctx: &mut crepuscularity_tui::TemplateContext) {
     use crepuscularity_tui::TemplateValue;
@@ -318,7 +336,129 @@ fn strip_one_outer_quote_pair(s: &str) -> &str {
 
 #[cfg(all(test, feature = "tui"))]
 mod tests {
-    use super::strip_one_outer_quote_pair;
+    use super::{refresh_tui_preview_context, reload_tui_preview, strip_one_outer_quote_pair};
+    use crepuscularity_tui::{HotTemplate, ReloadOutcome, TemplateContext, TemplateValue};
+
+    #[test]
+    fn preview_refreshes_file_variables_without_replacing_context_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("view.crepus");
+        let context = dir.path().join("context.toml");
+        std::fs::write(&entry, "span \"hello\"").unwrap();
+        std::fs::write(&context, "name = 'old'\nremoved = true").unwrap();
+        let mut hot = HotTemplate::watch(&entry).unwrap();
+        let parent = std::sync::Arc::new(TemplateContext::new());
+        hot.template_mut().context_mut().slot = Some((Vec::new(), parent.clone()));
+        let files = hot.template().context().virtual_files.clone();
+        let base_dir = hot.template().context().base_dir.clone();
+        refresh_tui_preview_context(&mut hot);
+        assert_eq!(hot.template().context().get_str("name"), "old");
+
+        std::fs::write(
+            &context,
+            "name = \"new\"\ncount = 2\nratio = 2.5\nenabled = false",
+        )
+        .unwrap();
+        assert_eq!(reload_tui_preview(&mut hot, true), ReloadOutcome::Reloaded);
+        let ctx = hot.template().context();
+        assert_eq!(ctx.get_str("name"), "new");
+        assert!(matches!(ctx.get("count"), Some(TemplateValue::Int(2))));
+        assert!(matches!(ctx.get("ratio"), Some(TemplateValue::Float(n)) if *n == 2.5));
+        assert!(matches!(
+            ctx.get("enabled"),
+            Some(TemplateValue::Bool(false))
+        ));
+        assert!(ctx.get("removed").is_none());
+        assert_eq!(ctx.base_dir, base_dir);
+        assert!(std::sync::Arc::ptr_eq(&ctx.virtual_files, &files));
+        assert!(std::sync::Arc::ptr_eq(
+            &ctx.slot.as_ref().unwrap().1,
+            &parent
+        ));
+
+        std::fs::remove_file(context).unwrap();
+        assert_eq!(reload_tui_preview(&mut hot, true), ReloadOutcome::Reloaded);
+        assert!(hot.template().context().vars.is_empty());
+    }
+
+    #[test]
+    fn preview_automatic_reload_refreshes_variables_before_draw() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("view.crepus");
+        let context = dir.path().join("context.toml");
+        std::fs::write(&entry, "span \"{name}\"").unwrap();
+        std::fs::write(&context, "name = 'old'").unwrap();
+        let mut hot = HotTemplate::watch(&entry).unwrap();
+        refresh_tui_preview_context(&mut hot);
+        let backend = ratatui::backend::TestBackend::new(30, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| hot.draw_full(frame).unwrap())
+            .unwrap();
+        let initial_text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(initial_text.contains("old"), "{initial_text}");
+        std::fs::write(&context, "name = 'new'").unwrap();
+        let started = std::time::Instant::now();
+        loop {
+            match reload_tui_preview(&mut hot, false) {
+                ReloadOutcome::Reloaded => break,
+                ReloadOutcome::Error(error) => panic!("reload failed: {error}"),
+                ReloadOutcome::Unchanged => {}
+            }
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(6),
+                "context edit was not observed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(hot.template().context().get_str("name"), "new");
+        terminal
+            .draw(|frame| hot.draw_full(frame).unwrap())
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("new"), "{text}");
+        assert!(!text.contains("old"), "{text}");
+    }
+
+    #[test]
+    fn preview_failed_reload_retains_source_and_file_variables() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("view.crepus");
+        let context = dir.path().join("context.toml");
+        let source = "span \"{name}\"";
+        std::fs::write(&entry, source).unwrap();
+        std::fs::write(&context, "name = 'old'").unwrap();
+        let mut hot = HotTemplate::watch(&entry).unwrap();
+        refresh_tui_preview_context(&mut hot);
+        std::fs::write(&context, "name = 'new'").unwrap();
+        std::fs::remove_file(&entry).unwrap();
+        assert!(matches!(
+            reload_tui_preview(&mut hot, true),
+            ReloadOutcome::Error(_)
+        ));
+        assert_eq!(hot.template().source(), source);
+        assert_eq!(hot.template().context().get_str("name"), "old");
+
+        std::fs::write(&entry, "<< invalid").unwrap();
+        assert!(matches!(
+            reload_tui_preview(&mut hot, true),
+            ReloadOutcome::Error(_)
+        ));
+        assert_eq!(hot.template().source(), source);
+        assert_eq!(hot.template().context().get_str("name"), "old");
+    }
 
     #[test]
     fn strips_single_outer_double_quotes() {
