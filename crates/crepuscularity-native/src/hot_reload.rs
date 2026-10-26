@@ -657,3 +657,226 @@ mod ast_shape_compatible_node_kind_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod ast_shape_compatible_variant_tests {
+    use super::*;
+    use crepuscularity_core::ast::{
+        Element, EmbedNode, ForBlock, IfBlock, IncludeNode, LetDecl, MatchArm, MatchBlock, TextPart,
+    };
+
+    fn empty_element(tag: &str) -> Element {
+        Element {
+            tag: tag.to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn test_different_lengths() {
+        let old = vec![Node::RawText("a".to_string())];
+        let new = vec![
+            Node::RawText("a".to_string()),
+            Node::RawText("b".to_string()),
+        ];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn test_elements() {
+        let old = vec![Node::Element(empty_element("div"))];
+        let new = vec![Node::Element(empty_element("div"))];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Element(empty_element("span"))];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_text_parts() {
+        let old = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Literal("world".to_string())])];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let old_expr = vec![Node::Text(vec![TextPart::Expr("a".to_string())])];
+        let new_expr = vec![Node::Text(vec![TextPart::Expr("b".to_string())])];
+        assert!(!ast_shape_compatible(&old_expr, &new_expr));
+    }
+
+    #[test]
+    fn test_if_block() {
+        let old = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        let new = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff_cond = vec![Node::If(IfBlock {
+            condition: "b".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_cond));
+
+        let new_diff_else = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: Some(vec![]),
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_else));
+    }
+
+    #[test]
+    fn test_for_block() {
+        let old = vec![Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        let new = vec![Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::For(ForBlock {
+            pattern: "x".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_match_block() {
+        let old = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        let new = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff_expr = vec![Node::Match(MatchBlock {
+            expr: "other".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_expr));
+
+        let new_diff_arm = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "2".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_arm));
+    }
+
+    #[test]
+    fn test_let_decl() {
+        let old = vec![Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        let new = vec![Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::LetDecl(LetDecl {
+            name: "y".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_include() {
+        let old = vec![Node::Include(IncludeNode {
+            path: "a.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        let new = vec![Node::Include(IncludeNode {
+            path: "a.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Include(IncludeNode {
+            path: "b.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_embed() {
+        let old = vec![Node::Embed(EmbedNode {
+            src: "src".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        let new = vec![Node::Embed(EmbedNode {
+            src: "src".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Embed(EmbedNode {
+            src: "other".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_raw() {
+        let old = vec![Node::RawText("t".to_string())];
+        let new = vec![Node::RawText("t".to_string())];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::RawText("x".to_string())];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+
+        let old_html = vec![Node::RawHtml("h".to_string())];
+        let new_html = vec![Node::RawHtml("h".to_string())];
+        assert!(ast_shape_compatible(&old_html, &new_html));
+
+        let new_diff_html = vec![Node::RawHtml("x".to_string())];
+        assert!(!ast_shape_compatible(&old_html, &new_diff_html));
+    }
+}
