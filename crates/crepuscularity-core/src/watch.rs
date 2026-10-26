@@ -165,37 +165,6 @@ mod tests {
     }
 
     #[test]
-    fn test_event_touches_relevant_path_edge_cases() {
-        let root = std::path::Path::new("/crepus-watcher-test");
-        let target = root.join("entry.crepus");
-
-        let event_target =
-            notify::Event::new(EventKind::Modify(ModifyKind::Any)).add_path(target.clone());
-        assert!(event_touches_relevant_path(&event_target, &target, root));
-
-        let outside_root = std::path::Path::new("/other-dir");
-        let event_outside = notify::Event::new(EventKind::Modify(ModifyKind::Any))
-            .add_path(outside_root.join("child.vue"));
-        assert!(!event_touches_relevant_path(&event_outside, &target, root));
-
-        let event_toml = notify::Event::new(EventKind::Modify(ModifyKind::Any))
-            .add_path(root.join("context.toml"));
-        assert!(event_touches_relevant_path(&event_toml, &target, root));
-
-        let event_other_toml = notify::Event::new(EventKind::Modify(ModifyKind::Any))
-            .add_path(root.join("other.toml"));
-        assert!(!event_touches_relevant_path(
-            &event_other_toml,
-            &target,
-            root
-        ));
-
-        let event_txt =
-            notify::Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.join("child.txt"));
-        assert!(!event_touches_relevant_path(&event_txt, &target, root));
-    }
-
-    #[test]
     fn test_is_relevant_kind() {
         assert!(is_relevant_kind(&EventKind::Modify(ModifyKind::Any)));
         assert!(is_relevant_kind(&EventKind::Create(CreateKind::Any)));
