@@ -15,6 +15,8 @@ pub use crossterm::event::{KeyEvent, MouseEvent};
 pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
+    /// Verbatim bracketed-paste contents; the host owns enabling terminal paste mode.
+    Paste(String),
     Resize(u16, u16),
     FocusGained,
     FocusLost,
@@ -28,7 +30,7 @@ impl From<crossterm::event::Event> for Event {
             crossterm::event::Event::Resize(w, h) => Event::Resize(w, h),
             crossterm::event::Event::FocusGained => Event::FocusGained,
             crossterm::event::Event::FocusLost => Event::FocusLost,
-            _ => Event::FocusLost,
+            crossterm::event::Event::Paste(text) => Event::Paste(text),
         }
     }
 }
