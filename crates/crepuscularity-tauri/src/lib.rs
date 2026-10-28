@@ -763,6 +763,38 @@ mod tests {
     }
 
     #[test]
+    fn reads_v1_windows_metadata() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"distDir":"../dist"},"tauri":{"windows":[{"title":"Legacy Window","width":800,"height":600}]}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        let windows = project.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].title, "Legacy Window");
+        assert_eq!(windows[0].width, Some(800));
+        assert_eq!(windows[0].height, Some(600));
+        assert_eq!(windows[0].label, "main");
+    }
+
+    #[test]
+    fn windows_fall_back_to_defaults() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"},"app":{}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        let windows = project.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].title, "Crepuscularity");
+        assert_eq!(windows[0].width, None);
+        assert_eq!(windows[0].height, None);
+        assert_eq!(windows[0].label, "main");
+    }
+
+    #[test]
     fn rejects_missing_config() {
         let root = tempfile::tempdir().unwrap();
         let err = TauriProject::open(root.path()).unwrap_err();
@@ -773,6 +805,82 @@ mod tests {
     fn rejects_malformed_config() {
         let root = project("tauri.conf.json", "{ malformed json", "dist");
         assert!(TauriProject::open(root.path()).is_err());
+    }
+
+    #[test]
+    fn rejects_nonexistent_project_root() {
+        let err = TauriProject::open("does_not_exist_ever").unwrap_err();
+        assert!(
+            err.contains("No such file or directory")
+                || err.contains("cannot find the file")
+                || err.contains("The system cannot find the file specified")
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_toml_config() {
+        let root = project("Tauri.toml", "malformed toml [ = = = ", "dist");
+        assert!(TauriProject::open(root.path()).is_err());
+    }
+
+    #[test]
+    fn config_resolution_precedence() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("src-tauri")).unwrap();
+
+        fs::write(
+            root.path().join("Tauri.toml"),
+            "[build]\ndistDir = '../dist-root-toml'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("tauri.conf.json"),
+            r#"{"build":{"distDir":"../dist-root-json"}}"#,
+        )
+        .unwrap();
+
+        fs::write(
+            root.path().join("src-tauri").join("Tauri.toml"),
+            "[build]\ndistDir = '../dist-src-toml'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("src-tauri").join("tauri.conf.json5"),
+            "{ build: { distDir: '../dist-src-json5' } }",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("src-tauri").join("tauri.conf.json"),
+            r#"{"build":{"distDir":"../dist-src-json"}}"#,
+        )
+        .unwrap();
+
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-json"));
+
+        fs::remove_file(root.path().join("src-tauri").join("tauri.conf.json")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-json5"));
+
+        fs::remove_file(root.path().join("src-tauri").join("tauri.conf.json5")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-src-toml"));
+
+        fs::remove_dir_all(root.path().join("src-tauri")).unwrap();
+        let p = TauriProject::open(root.path()).unwrap();
+        assert!(p
+            .frontend_dist()
+            .to_string_lossy()
+            .contains("dist-root-json"));
     }
 
     #[test]

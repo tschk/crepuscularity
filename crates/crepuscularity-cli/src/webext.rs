@@ -96,16 +96,24 @@ pub fn runtime_version() -> String {
 }
 
 #[wasm_bindgen]
-pub fn popup_main() { todo!("implement popup scaffolding") }
+pub fn popup_main() {
+    // TODO: implement popup scaffolding
+}
 
 #[wasm_bindgen]
-pub fn options_main() { todo!("implement options scaffolding") }
+pub fn options_main() {
+    // TODO: implement options scaffolding
+}
 
 #[wasm_bindgen]
-pub fn content_main() { todo!("implement content script scaffolding") }
+pub fn content_main() {
+    // TODO: implement content script scaffolding
+}
 
 #[wasm_bindgen]
-pub fn background_main() { todo!("implement background script scaffolding") }
+pub fn background_main() {
+    // TODO: implement background script scaffolding
+}
 
 #[wasm_bindgen]
 pub fn settings_seed() -> Result<(), JsValue> {
@@ -695,12 +703,15 @@ fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedEx
                     config: target.webext_config.clone(),
                 };
             }
-            [] if target_id.is_some() => ui::error(&format!(
-                "no webext target {:?} in {}",
-                target_id.unwrap(),
-                crepus_toml.display()
-            )),
-            [] => {}
+            [] => {
+                if let Some(id) = target_id {
+                    ui::error(&format!(
+                        "no webext target {:?} in {}",
+                        id,
+                        crepus_toml.display()
+                    ));
+                }
+            }
             many => ui::error(&format!(
                 "{} defines {} webext targets; pass --target ID",
                 crepus_toml.display(),
