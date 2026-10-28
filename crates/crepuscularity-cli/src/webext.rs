@@ -695,12 +695,15 @@ fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedEx
                     config: target.webext_config.clone(),
                 };
             }
-            [] if target_id.is_some() => ui::error(&format!(
-                "no webext target {:?} in {}",
-                target_id.unwrap(),
-                crepus_toml.display()
-            )),
-            [] => {}
+            [] => {
+                if let Some(id) = target_id {
+                    ui::error(&format!(
+                        "no webext target {:?} in {}",
+                        id,
+                        crepus_toml.display()
+                    ));
+                }
+            }
             many => ui::error(&format!(
                 "{} defines {} webext targets; pass --target ID",
                 crepus_toml.display(),
