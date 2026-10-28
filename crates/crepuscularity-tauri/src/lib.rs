@@ -795,6 +795,18 @@ mod tests {
     }
 
     #[test]
+    fn reads_v2_root_and_windows_metadata() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"},"app":{"windows":[{"title":"Test"}]}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        assert_eq!(project.root(), root.path().canonicalize().unwrap());
+        assert_eq!(project.windows()[0].title, "Test");
+    }
+
+    #[test]
     fn rejects_missing_config() {
         let root = tempfile::tempdir().unwrap();
         let err = TauriProject::open(root.path()).unwrap_err();
