@@ -2483,3 +2483,85 @@ mod nested_loop_scaling {
         );
     }
 }
+
+mod loop_overlay_regressions {
+    use super::*;
+
+    fn content(template: &str, ctx: &TemplateContext) -> Vec<String> {
+        render(100, 40, template, ctx)
+            .into_iter()
+            .map(|row| row.trim_end().to_string())
+            .filter(|row| !row.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn buffer_loops_restore_large_parent_lists_and_duplicate_alias_fields() {
+        let mut first = TemplateContext::new();
+        first
+            .set("title", "first")
+            .set("temporary", "first-only")
+            .set("items", "field");
+        let mut second = TemplateContext::new();
+        second.set("id", 2);
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "parent")
+            .set("items", vec![TemplateContext::new(); 2048])
+            .set("rows", vec![first, second]);
+        let template = "div flex-col\n  for items in rows\n    div \"{title}|{temporary}|{items.title}|{items.items}\"\n  div \"{title}|{temporary}|{items.length}\"";
+        assert_eq!(
+            content(template, &ctx),
+            ["first|first-only|first|field", "parent|||", "parent||2048",]
+        );
+        assert_eq!(ctx.get_list_ref("items").len(), 2048);
+        assert_eq!(ctx.get_str("title"), "parent");
+        assert!(ctx.get("temporary").is_none());
+    }
+
+    #[test]
+    fn buffer_nested_aliases_and_declarations_stay_within_their_scopes() {
+        let mut child = TemplateContext::new();
+        child.set("title", "inner");
+        let mut first = TemplateContext::new();
+        first
+            .set("title", "outer1")
+            .set("children", vec![child, TemplateContext::new()]);
+        let mut second = TemplateContext::new();
+        second.set("title", "outer2");
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "root")
+            .set("row", "parent-row")
+            .set("rows", vec![first, second]);
+        let template = "div flex-col\n  for row in rows\n    div \"{title}|{row.title}\"\n    for row in row.children\n      $: let title = \"local\"\n      div \"{title}|{row.title}\"\n    div \"{title}|{row.title}\"\n  div \"{title}|{row.title}\"";
+        assert_eq!(
+            content(template, &ctx),
+            [
+                "outer1|outer1",
+                "local|inner",
+                "local|",
+                "outer1|outer1",
+                "outer2|outer2",
+                "outer2|outer2",
+                "root|",
+            ]
+        );
+        assert_eq!(ctx.get_str("title"), "root");
+        assert_eq!(ctx.get_str("row"), "parent-row");
+        assert!(ctx.get("children").is_none());
+    }
+
+    #[test]
+    fn failed_iterator_evaluation_keeps_the_existing_empty_loop_behavior() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "parent");
+        assert_eq!(
+            content(
+                "div flex-col\n  for item in {1 / 0}\n    div \"unreachable\"\n  div \"{title}\"",
+                &ctx,
+            ),
+            ["parent"]
+        );
+        assert_eq!(ctx.get_str("title"), "parent");
+        assert!(ctx.get("item").is_none());
+    }
+}
