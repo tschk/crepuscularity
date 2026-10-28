@@ -189,10 +189,11 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_watcher_creation() {
-        let dir = tempdir().unwrap();
-        let watcher = CapabilityWatcher::new(dir.path()).unwrap();
+    fn test_watcher_creation() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let watcher = CapabilityWatcher::new(dir.path())?;
         assert!(watcher.recv_timeout(Duration::from_millis(10)).is_none());
+        Ok(())
     }
 
     fn event_targets_file(event_path: &Path, expected: &Path) -> bool {
@@ -215,12 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn test_watcher_file_changed() {
-        let dir = tempdir().unwrap();
-        let watcher = CapabilityWatcher::new(dir.path()).unwrap();
+    fn test_watcher_file_changed() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let watcher = CapabilityWatcher::new(dir.path())?;
 
         let file_path = dir.path().join("test.crepus");
-        fs::write(&file_path, "div").unwrap();
+        fs::write(&file_path, "div")?;
 
         let received = wait_for_file_event(&watcher, &file_path, |event, expected| {
             matches!(
@@ -229,15 +230,16 @@ mod tests {
             )
         });
         assert!(received, "Did not receive FileChanged event");
+        Ok(())
     }
 
     #[test]
-    fn test_watcher_manifest_updated() {
-        let dir = tempdir().unwrap();
-        let watcher = CapabilityWatcher::new(dir.path()).unwrap();
+    fn test_watcher_manifest_updated() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let watcher = CapabilityWatcher::new(dir.path())?;
 
         let file_path = dir.path().join("webext.toml");
-        fs::write(&file_path, "name = \"test\"").unwrap();
+        fs::write(&file_path, "name = \"test\"")?;
 
         let received = wait_for_file_event(&watcher, &file_path, |event, expected| {
             matches!(
@@ -246,16 +248,18 @@ mod tests {
             )
         });
         assert!(received, "Did not receive ManifestUpdated event");
+        Ok(())
     }
 
     #[test]
-    fn test_check_project_capabilities() {
-        let dir = tempdir().unwrap();
+    fn test_check_project_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
         let file_path = dir.path().join("test.crepus");
-        fs::write(&file_path, "div on-click={browser.storage.local.get()}").unwrap();
+        fs::write(&file_path, "div on-click={browser.storage.local.get()}")?;
 
-        let missing = check_project_capabilities(dir.path()).unwrap();
+        let missing = check_project_capabilities(dir.path())?;
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0], Capability::Storage);
+        Ok(())
     }
 }
