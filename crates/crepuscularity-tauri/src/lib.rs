@@ -795,6 +795,18 @@ mod tests {
     }
 
     #[test]
+    fn reads_v2_root_and_windows_metadata() {
+        let root = project(
+            "tauri.conf.json",
+            r#"{"build":{"frontendDist":"../dist"},"app":{"windows":[{"title":"Test"}]}}"#,
+            "dist",
+        );
+        let project = TauriProject::open(root.path()).unwrap();
+        assert_eq!(project.root(), root.path().canonicalize().unwrap());
+        assert_eq!(project.windows()[0].title, "Test");
+    }
+
+    #[test]
     fn rejects_missing_config() {
         let root = tempfile::tempdir().unwrap();
         let err = TauriProject::open(root.path()).unwrap_err();
@@ -928,37 +940,6 @@ mod tests {
             .native_ir()
             .unwrap();
         assert_eq!(ir.root.len(), 1);
-    }
-
-    #[test]
-    fn config_parsing_errors_on_missing_file() {
-        let root = tempfile::tempdir().unwrap();
-        let result = TauriProject::open(root.path());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no Tauri config under"));
-    }
-
-    #[test]
-    fn config_parsing_errors_on_invalid_json() {
-        let root = project("tauri.conf.json", "{ invalid }", "dist");
-        let result = TauriProject::open(root.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn config_parsing_reads_valid_config() {
-        let root = project(
-            "tauri.conf.json",
-            r#"{"build":{"frontendDist":"../dist"},"app":{"windows":[{"title":"Test"}]}}"#,
-            "dist",
-        );
-        let project = TauriProject::open(root.path()).unwrap();
-
-        // The root path should be canonicalized by TauriProject::open
-        assert_eq!(project.root(), root.path().canonicalize().unwrap());
-
-        let windows = project.windows();
-        assert_eq!(windows[0].title, "Test");
     }
 
     #[test]
