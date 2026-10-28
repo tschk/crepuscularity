@@ -424,6 +424,22 @@ type = "web"
     }
 
     #[test]
+    fn parse_manifest_optional_fields_default_to_none() {
+        let manifest = Manifest::parse(
+            r#"
+[[targets]]
+type = "web"
+template = "index.crepus"
+"#,
+        )
+        .expect("parse manifest");
+        let t = &manifest.targets[0];
+        assert_eq!(t.template.as_deref(), Some("index.crepus"));
+        assert_eq!(t.id, None);
+        assert_eq!(t.path, None);
+    }
+
+    #[test]
     fn parse_manifest_with_vars() {
         let manifest = Manifest::parse(
             r#"
