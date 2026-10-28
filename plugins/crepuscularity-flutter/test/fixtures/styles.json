@@ -1,0 +1,29 @@
+{
+  "version": 7,
+  "root": [
+    {
+      "kind": "text",
+      "content": "Styled",
+      "style": {
+        "classes": [
+          "p-1.5",
+          "text-[18.5px]",
+          "bg-[#1234]",
+          "border-[2.5px]",
+          "border-[#f008]",
+          "rounded-[6px]",
+          "opacity-25",
+          "tracking-wide"
+        ],
+        "padding": 6.0,
+        "fontSize": 18.5,
+        "letterSpacing": 0.4,
+        "backgroundColor": "#11223344",
+        "cornerRadius": 6.0,
+        "borderWidth": 2.5,
+        "borderColor": "#ff000088",
+        "opacity": 0.25
+      }
+    }
+  ]
+}

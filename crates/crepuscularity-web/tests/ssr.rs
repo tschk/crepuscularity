@@ -237,3 +237,32 @@ fn raw_html_sanitization_normal() {
     );
     assert!(html.contains("<b>safe</b>"), "Expected safe html: {}", html);
 }
+
+#[test]
+fn ssr_dynamic_classes_omit_empty_values_and_filter_each_target_token() {
+    use crepuscularity_core::TemplateValue;
+    let files = std::collections::HashMap::from([(
+        "Classes.astro".to_string(),
+        r#"<div class:list={['base', dynamic]} />"#.to_string(),
+    )]);
+    for (value, expected) in [
+        (TemplateValue::Bool(false), "base"),
+        (TemplateValue::Null, "base"),
+        (TemplateValue::Str(String::new()), "base"),
+        (
+            TemplateValue::Str("tui:hidden web:p-4 hover:text-red-500".into()),
+            "base p-4 hover:text-red-500",
+        ),
+    ] {
+        let mut ctx = TemplateContext::new();
+        ctx.set("dynamic", value);
+        for markers in [false, true] {
+            let html = render_from_files_with_ssr(&files, "Classes.astro", &ctx, markers).unwrap();
+            assert!(html.contains(&format!("class=\"{expected}\"")), "{html}");
+            assert!(!html.contains("tui:hidden"), "{html}");
+            if markers {
+                assert!(html.contains("data-crepus-id="), "{html}");
+            }
+        }
+    }
+}
