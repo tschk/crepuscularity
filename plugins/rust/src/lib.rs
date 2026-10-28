@@ -184,14 +184,17 @@ mod tests {
             serde_json::Value::String("1".to_string()),
         );
         let mut session = crate::ViewSession::new("../fixtures/interactive.crepus", context);
-        assert!(session.render_html().unwrap().contains("Count 1"));
+        assert!(session
+            .render_html()
+            .expect("failed to render HTML")
+            .contains("Count 1"));
         let ir = session
             .dispatch(crate::Event {
                 handler: "bind:count:2".to_string(),
                 payload: None,
             })
-            .unwrap();
-        let rendered = serde_json::to_string(&ir.root).unwrap();
+            .expect("dispatch event failed");
+        let rendered = serde_json::to_string(&ir.root).expect("failed to serialize IR root");
         assert!(rendered.contains("Count 2"));
     }
 }

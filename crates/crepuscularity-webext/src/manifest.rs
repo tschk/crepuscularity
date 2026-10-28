@@ -872,7 +872,7 @@ messaging = true
 host-permissions = ["https://example.com/*"]
 "#;
 
-        let manifest: ExtensionManifest = toml::from_str(toml).unwrap();
+        let manifest: ExtensionManifest = toml::from_str(toml).expect("Failed to parse manifest");
         assert_eq!(manifest.extension.name, "test-ext");
         assert!(manifest.capabilities.storage);
         assert!(manifest.capabilities.messaging);
@@ -1090,7 +1090,7 @@ version = "1.0.0"
 [chrome_url_overrides]
 newtab = "pages/new-tab.crepus"
 "#;
-        let manifest: ExtensionManifest = toml::from_str(toml).unwrap();
+        let manifest: ExtensionManifest = toml::from_str(toml).expect("Failed to parse manifest");
         let mv3 = manifest.to_manifest_v3();
         assert_eq!(
             mv3.chrome_url_overrides.get("newtab").map(String::as_str),
@@ -1115,7 +1115,7 @@ description = "Open popup"
 default = "Alt+Shift+W"
 mac = "Alt+Shift+W"
 "#;
-        let manifest: ExtensionManifest = toml::from_str(toml).unwrap();
+        let manifest: ExtensionManifest = toml::from_str(toml).expect("Failed to parse manifest");
         let json = manifest.to_manifest_v3_json();
         assert!(json.contains("\"commands\""));
         assert!(json.contains("_execute_action"));
@@ -1134,7 +1134,7 @@ storage = true
 native-messaging = true
 alarms = true
 "#;
-        let manifest: ExtensionManifest = toml::from_str(toml).unwrap();
+        let manifest: ExtensionManifest = toml::from_str(toml).expect("Failed to parse manifest");
         assert!(manifest.capabilities.native_messaging);
         let mv3 = manifest.to_manifest_v3();
         assert!(mv3.permissions.contains(&"nativeMessaging".to_string()));
@@ -1251,7 +1251,7 @@ resources = ["pages/vomnibar.html", "resources/tlds.txt"]
 matches = ["<all_urls>"]
 "#;
 
-        let manifest: ExtensionManifest = toml::from_str(toml).unwrap();
+        let manifest: ExtensionManifest = toml::from_str(toml).expect("Failed to parse manifest");
         let mv3 = manifest.to_manifest_v3();
 
         assert!(mv3.permissions.contains(&"sessions".to_string()));
