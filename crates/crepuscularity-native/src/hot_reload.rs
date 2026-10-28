@@ -434,6 +434,17 @@ mod ast_shape_compatible_node_kind_tests {
     }
 
     #[test]
+    fn nested_child_count_mismatch_is_incompatible() {
+        let mut parent = dummy_element("div");
+        parent
+            .children
+            .push(Node::Text(vec![TextPart::Literal("hi".to_string())]));
+        let n1 = vec![Node::Element(parent)];
+        let n2 = vec![Node::Element(dummy_element("div"))];
+        assert!(!ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
     fn different_tags_are_incompatible() {
         let n1 = vec![Node::Element(dummy_element("div"))];
         let n2 = vec![Node::Element(dummy_element("span"))];
