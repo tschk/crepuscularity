@@ -353,57 +353,86 @@ device = "STM32F411"
     }
 
     #[test]
-    fn parse_manifest_valid() -> Result<(), String> {
-        let src = r#"
+    fn parse_manifest_valid_target() {
+        let manifest = Manifest::parse(
+            r#"
 [[targets]]
 type = "web"
-id = "web-target"
-template = "index.crepus"
+id = "my-site"
+path = "src/site"
 out = "dist/index.html"
-"#;
-        let manifest = Manifest::parse(src)?;
+"#,
+        )
+        .expect("parse manifest");
         assert_eq!(manifest.targets.len(), 1);
-        assert_eq!(manifest.targets[0].target_type, "web");
-        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
-        assert_eq!(
-            manifest.targets[0].template.as_deref(),
-            Some("index.crepus")
-        );
-        Ok(())
+        let t = &manifest.targets[0];
+        assert_eq!(t.target_type, "web");
+        assert_eq!(t.id.as_deref(), Some("my-site"));
+        assert_eq!(t.path.as_deref(), Some("src/site"));
+        assert_eq!(t.out.as_deref(), Some("dist/index.html"));
+    }
+
+    #[test]
+    fn parse_manifest_empty() {
+        let manifest = Manifest::parse("").expect("parse empty manifest");
+        assert_eq!(manifest.targets.len(), 0);
+    }
+
+    #[test]
+    fn parse_manifest_missing_required_type() {
+        let err = Manifest::parse(
+            r#"
+[[targets]]
+id = "no-type"
+"#,
+        )
+        .expect_err("should fail");
+        assert!(err.contains("missing field `type`"));
     }
 
     #[test]
     fn parse_manifest_invalid_toml() {
-        let src = r#"
+        Manifest::parse(
+            r#"
 [[targets]
 type = "web"
-"#;
-        let res = Manifest::parse(src);
-        assert!(res.is_err());
+"#,
+        )
+        .expect_err("should fail");
     }
 
     #[test]
-    fn parse_manifest_missing_type() {
-        let src = r#"
-[[targets]]
-id = "web-target"
-"#;
-        let res = Manifest::parse(src);
-        assert!(res.is_err());
-    }
-
-    #[test]
-    fn parse_manifest_defaults() -> Result<(), String> {
-        let src = r#"
+    fn parse_manifest_optional_fields_default_to_none() {
+        let manifest = Manifest::parse(
+            r#"
 [[targets]]
 type = "web"
-"#;
-        let manifest = Manifest::parse(src)?;
+template = "index.crepus"
+"#,
+        )
+        .expect("parse manifest");
+        let t = &manifest.targets[0];
+        assert_eq!(t.template.as_deref(), Some("index.crepus"));
+        assert_eq!(t.id, None);
+        assert_eq!(t.path, None);
+    }
+
+    #[test]
+    fn parse_manifest_with_vars() {
+        let manifest = Manifest::parse(
+            r#"
+[[targets]]
+type = "native"
+[targets.vars]
+title = "Hello"
+count = 42
+"#,
+        )
+        .expect("parse manifest");
         assert_eq!(manifest.targets.len(), 1);
-        let target = &manifest.targets[0];
-        assert_eq!(target.target_type, "web");
-        assert_eq!(target.id, None);
-        assert_eq!(target.path, None);
-        Ok(())
+        let t = &manifest.targets[0];
+        assert_eq!(t.vars.len(), 2);
+        assert_eq!(t.vars.get("title").and_then(|v| v.as_str()), Some("Hello"));
+        assert_eq!(t.vars.get("count").and_then(|v| v.as_integer()), Some(42));
     }
 }
