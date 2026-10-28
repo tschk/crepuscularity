@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crepuscularity_core::ast::{Element, MatchArm, Node, TextPart};
 use crepuscularity_core::context::TemplateContext;
-use crepuscularity_core::parse_template;
+use crepuscularity_core::parse_template_with_path;
 
 use crate::ir::ViewIr;
 use crate::mutations::{diff_ir, IrMutation};
-use crate::render::render_template_to_ir;
+use crate::render::render_template_to_ir_with_path;
 
 /// Envelope suitable for transport (SSE, WebSocket, IPC).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,10 +74,20 @@ pub fn plan_hot_reload(
     new_template: &str,
     ctx: &TemplateContext,
 ) -> HotReloadMessage {
-    let old_nodes = match parse_template(old_template) {
+    plan_hot_reload_with_path(old_template, new_template, ctx, None)
+}
+
+/// Plan a reload using the selected file's parser frontend.
+pub fn plan_hot_reload_with_path(
+    old_template: &str,
+    new_template: &str,
+    ctx: &TemplateContext,
+    path: Option<&std::path::Path>,
+) -> HotReloadMessage {
+    let old_nodes = match parse_template_with_path(old_template, path) {
         Ok(nodes) => nodes,
         Err(_) => {
-            return match render_template_to_ir(new_template, ctx) {
+            return match render_template_to_ir_with_path(new_template, ctx, path) {
                 Ok(ir) => HotReloadMessage::FullReload {
                     ir,
                     reason: "previous template parse failed".to_string(),
@@ -89,7 +99,7 @@ pub fn plan_hot_reload(
         }
     };
 
-    let new_nodes = match parse_template(new_template) {
+    let new_nodes = match parse_template_with_path(new_template, path) {
         Ok(nodes) => nodes,
         Err(e) => {
             return HotReloadMessage::Error {
@@ -98,7 +108,7 @@ pub fn plan_hot_reload(
         }
     };
 
-    let new_ir = match render_template_to_ir(new_template, ctx) {
+    let new_ir = match render_template_to_ir_with_path(new_template, ctx, path) {
         Ok(ir) => ir,
         Err(e) => {
             return HotReloadMessage::Error {
@@ -114,7 +124,7 @@ pub fn plan_hot_reload(
         };
     }
 
-    let old_ir = match render_template_to_ir(old_template, ctx) {
+    let old_ir = match render_template_to_ir_with_path(old_template, ctx, path) {
         Ok(ir) => ir,
         Err(_) => {
             return HotReloadMessage::FullReload {
@@ -213,7 +223,12 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
         .event_handlers
         .iter()
         .zip(&new.event_handlers)
-        .any(|(a, b)| a.event != b.event || a.modifiers != b.modifiers || a.handler != b.handler)
+        .any(|(a, b)| {
+            a.event != b.event
+                || a.modifiers != b.modifiers
+                || a.handler != b.handler
+                || a.model_before_listener != b.model_before_listener
+        })
     {
         return false;
     }
@@ -249,11 +264,142 @@ fn element_compatible(old: &Element, new: &Element) -> bool {
 }
 
 #[cfg(test)]
-mod ast_shape_tests {
+mod path_tests {
     use super::*;
-    use crepuscularity_core::ast::{Element, Node, TextPart};
 
-    fn el(tag: &str) -> Element {
+    #[test]
+    fn svelte_reload_uses_the_selected_frontend() {
+        let path = Some(std::path::Path::new("View.svelte"));
+        let mut context = TemplateContext::new();
+        context.set("show", true);
+        let old = "{#if show}<p>Before</p>{/if}";
+        let new = "{#if show}<p>After</p>{/if}";
+        let HotReloadMessage::Patch { mutations } =
+            plan_hot_reload_with_path(old, new, &context, path)
+        else {
+            panic!("literal change should produce a patch")
+        };
+        let mut applied = render_template_to_ir_with_path(old, &context, path).unwrap();
+        crate::apply_mutations(&mut applied, &mutations).unwrap();
+        assert_eq!(
+            applied,
+            render_template_to_ir_with_path(new, &context, path).unwrap()
+        );
+        assert!(matches!(
+            plan_hot_reload_with_path(old, "{#if show}", &context, path),
+            HotReloadMessage::Error { .. }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod model_order_tests {
+    use super::*;
+    #[test]
+    fn changing_native_model_listener_order_requires_replacement() {
+        let old = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child v-model="value" @update:modelValue="observe"/></template>"#,
+        )
+        .unwrap();
+        let new = crepuscularity_core::parser::parse_vue_native_file(
+            r#"<template><Child @update:modelValue="observe" v-model="value"/></template>"#,
+        )
+        .unwrap();
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+}
+
+#[cfg(test)]
+mod ast_shape_compatible_tests {
+    use super::*;
+    use crepuscularity_core::ast::*;
+
+    fn dummy_element(tag: &str) -> Node {
+        Node::Element(Element {
+            tag: tag.to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        })
+    }
+
+    #[test]
+    fn different_lengths_are_incompatible() {
+        let old = vec![dummy_element("div"), dummy_element("span")];
+        let new = vec![dummy_element("div")];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn same_elements_are_compatible() {
+        let old = vec![dummy_element("div"), dummy_element("span")];
+        let new = vec![dummy_element("div"), dummy_element("span")];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn different_tags_are_incompatible() {
+        let old = vec![dummy_element("div")];
+        let new = vec![dummy_element("span")];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_different_kinds_are_incompatible() {
+        let old = vec![Node::Text(vec![TextPart::Literal("text".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_same_exprs_are_compatible() {
+        let old = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var".to_string())])];
+        assert!(ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn texts_with_different_exprs_are_incompatible() {
+        let old = vec![Node::Text(vec![TextPart::Expr("var1".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Expr("var2".to_string())])];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn if_blocks_with_different_conditions_are_incompatible() {
+        let old = vec![Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        let new = vec![Node::If(IfBlock {
+            condition: "false".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+
+    #[test]
+    fn compatible_different_node_types_are_incompatible() {
+        let old = vec![dummy_element("div")];
+        let new = vec![Node::RawText("div".to_string())];
+        assert!(!ast_shape_compatible(&old, &new));
+    }
+}
+
+#[cfg(test)]
+mod ast_shape_compatible_node_kind_tests {
+    use super::*;
+    use crepuscularity_core::ast::{
+        Element, ForBlock, IfBlock, IncludeNode, LetDecl, Node, TextPart,
+    };
+
+    fn dummy_element(tag: &str) -> Element {
         Element {
             tag: tag.to_string(),
             id: None,
@@ -267,48 +413,481 @@ mod ast_shape_tests {
     }
 
     #[test]
-    fn test_ast_shape_compatible_different_length() {
-        let old = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
-        let new = vec![];
+    fn identical_elements_are_compatible() {
+        let n1 = vec![Node::Element(dummy_element("div"))];
+        let n2 = vec![Node::Element(dummy_element("div"))];
+        assert!(ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn style_changes_are_compatible() {
+        let mut e1 = dummy_element("div");
+        e1.classes = vec!["text-red".to_string()];
+
+        let mut e2 = dummy_element("div");
+        e2.classes = vec!["text-blue".to_string(), "font-bold".to_string()];
+
+        let n1 = vec![Node::Element(e1)];
+        let n2 = vec![Node::Element(e2)];
+
+        assert!(ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn nested_child_count_mismatch_is_incompatible() {
+        let mut parent = dummy_element("div");
+        parent
+            .children
+            .push(Node::Text(vec![TextPart::Literal("hi".to_string())]));
+        let n1 = vec![Node::Element(parent)];
+        let n2 = vec![Node::Element(dummy_element("div"))];
+        assert!(!ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn different_tags_are_incompatible() {
+        let n1 = vec![Node::Element(dummy_element("div"))];
+        let n2 = vec![Node::Element(dummy_element("span"))];
+        assert!(!ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn text_literal_changes_are_compatible() {
+        let n1 = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let n2 = vec![Node::Text(vec![TextPart::Literal("world".to_string())])];
+        assert!(ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn text_expression_changes_are_incompatible() {
+        let n1 = vec![Node::Text(vec![TextPart::Expr("a".to_string())])];
+        let n2 = vec![Node::Text(vec![TextPart::Expr("b".to_string())])];
+        assert!(!ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn text_mixed_changes_incompatible() {
+        let n1 = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let n2 = vec![Node::Text(vec![TextPart::Expr("hello".to_string())])];
+        assert!(!ast_shape_compatible(&n1, &n2));
+    }
+
+    #[test]
+    fn structural_changes_are_incompatible() {
+        let n1 = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let n2 = vec![Node::Element(dummy_element("div"))];
+        assert!(!ast_shape_compatible(&n1, &n2));
+
+        let n3 = vec![
+            Node::Element(dummy_element("div")),
+            Node::Element(dummy_element("span")),
+        ];
+        let n4 = vec![Node::Element(dummy_element("div"))];
+        assert!(!ast_shape_compatible(&n3, &n4));
+    }
+
+    #[test]
+    fn if_block_compatibility() {
+        let if1 = Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![],
+            else_children: None,
+        });
+        let if2 = Node::If(IfBlock {
+            condition: "false".to_string(),
+            then_children: vec![],
+            else_children: None,
+        });
+
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if2]));
+
+        let if3 = Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![Node::Element(dummy_element("div"))],
+            else_children: None,
+        });
+
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if3]));
+
+        let if4 = Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![],
+            else_children: Some(vec![Node::Element(dummy_element("div"))]),
+        });
+
+        assert!(!ast_shape_compatible(std::slice::from_ref(&if1), &[if4]));
+
+        let if5 = Node::If(IfBlock {
+            condition: "true".to_string(),
+            then_children: vec![],
+            else_children: None,
+        });
+
+        assert!(ast_shape_compatible(std::slice::from_ref(&if1), &[if5]));
+    }
+
+    #[test]
+    fn for_block_compatibility() {
+        let for1 = Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        });
+        let for2 = Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "other_items".to_string(),
+            body: vec![],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for2]));
+
+        let for3 = Node::For(ForBlock {
+            pattern: "other_item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for3]));
+
+        let for4 = Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![Node::Element(dummy_element("div"))],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&for1), &[for4]));
+
+        let for5 = Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        });
+        assert!(ast_shape_compatible(std::slice::from_ref(&for1), &[for5]));
+    }
+
+    #[test]
+    fn let_decl_compatibility() {
+        let let1 = Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        });
+        let let2 = Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "2".to_string(),
+            is_default: false,
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let2]));
+
+        let let3 = Node::LetDecl(LetDecl {
+            name: "y".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let3]));
+
+        let let4 = Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: true,
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&let1), &[let4]));
+
+        let let5 = Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        });
+        assert!(ast_shape_compatible(std::slice::from_ref(&let1), &[let5]));
+    }
+
+    #[test]
+    fn include_compatibility() {
+        let inc1 = Node::Include(IncludeNode {
+            path: "button.crepus".to_string(),
+            props: vec![("label".to_string(), "Click".to_string())],
+            slot: vec![],
+        });
+        let inc2 = Node::Include(IncludeNode {
+            path: "other.crepus".to_string(),
+            props: vec![("label".to_string(), "Click".to_string())],
+            slot: vec![],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc2]));
+
+        let inc3 = Node::Include(IncludeNode {
+            path: "button.crepus".to_string(),
+            props: vec![("label".to_string(), "Other".to_string())],
+            slot: vec![],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc3]));
+
+        let inc4 = Node::Include(IncludeNode {
+            path: "button.crepus".to_string(),
+            props: vec![("label".to_string(), "Click".to_string())],
+            slot: vec![Node::Element(dummy_element("div"))],
+        });
+        assert!(!ast_shape_compatible(std::slice::from_ref(&inc1), &[inc4]));
+
+        let inc5 = Node::Include(IncludeNode {
+            path: "button.crepus".to_string(),
+            props: vec![("label".to_string(), "Click".to_string())],
+            slot: vec![],
+        });
+        assert!(ast_shape_compatible(std::slice::from_ref(&inc1), &[inc5]));
+    }
+
+    #[test]
+    fn raw_compatibility() {
+        let raw_text1 = vec![Node::RawText("hello".to_string())];
+        let raw_text2 = vec![Node::RawText("world".to_string())];
+        let raw_text3 = vec![Node::RawText("hello".to_string())];
+        assert!(!ast_shape_compatible(&raw_text1, &raw_text2));
+        assert!(ast_shape_compatible(&raw_text1, &raw_text3));
+
+        let raw_html1 = vec![Node::RawHtml("<div>".to_string())];
+        let raw_html2 = vec![Node::RawHtml("<span>".to_string())];
+        let raw_html3 = vec![Node::RawHtml("<div>".to_string())];
+        assert!(!ast_shape_compatible(&raw_html1, &raw_html2));
+        assert!(ast_shape_compatible(&raw_html1, &raw_html3));
+    }
+
+    #[test]
+    fn element_attributes_incompatible() {
+        let mut e1 = dummy_element("div");
+        e1.id = Some("main".to_string());
+        let mut e2 = dummy_element("div");
+        e2.id = Some("other".to_string());
+        assert!(!ast_shape_compatible(
+            &[Node::Element(e1.clone())],
+            &[Node::Element(e2)]
+        ));
+
+        let mut e3 = dummy_element("div");
+        e3.id = Some("main".to_string());
+        assert!(ast_shape_compatible(
+            &[Node::Element(e1)],
+            &[Node::Element(e3)]
+        ));
+    }
+}
+
+#[cfg(test)]
+mod ast_shape_compatible_variant_tests {
+    use super::*;
+    use crepuscularity_core::ast::{
+        Element, EmbedNode, ForBlock, IfBlock, IncludeNode, LetDecl, MatchArm, MatchBlock, TextPart,
+    };
+
+    fn empty_element(tag: &str) -> Element {
+        Element {
+            tag: tag.to_string(),
+            id: None,
+            classes: vec![],
+            conditional_classes: vec![],
+            event_handlers: vec![],
+            bindings: vec![],
+            animations: vec![],
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn test_different_lengths() {
+        let old = vec![Node::RawText("a".to_string())];
+        let new = vec![
+            Node::RawText("a".to_string()),
+            Node::RawText("b".to_string()),
+        ];
         assert!(!ast_shape_compatible(&old, &new));
     }
 
     #[test]
-    fn test_ast_shape_compatible_different_tags() {
-        let oe = el("div");
-        let ne = el("span");
-        assert!(!ast_shape_compatible(
-            &[Node::Element(oe)],
-            &[Node::Element(ne)]
-        ));
+    fn test_elements() {
+        let old = vec![Node::Element(empty_element("div"))];
+        let new = vec![Node::Element(empty_element("div"))];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Element(empty_element("span"))];
+        assert!(!ast_shape_compatible(&old, &new_diff));
     }
 
     #[test]
-    fn test_ast_shape_compatible_different_types() {
-        let oe = el("div");
-        let nt = Node::Text(vec![TextPart::Literal("hello".to_string())]);
-        assert!(!ast_shape_compatible(&[Node::Element(oe)], &[nt]));
+    fn test_text_parts() {
+        let old = vec![Node::Text(vec![TextPart::Literal("hello".to_string())])];
+        let new = vec![Node::Text(vec![TextPart::Literal("world".to_string())])];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let old_expr = vec![Node::Text(vec![TextPart::Expr("a".to_string())])];
+        let new_expr = vec![Node::Text(vec![TextPart::Expr("b".to_string())])];
+        assert!(!ast_shape_compatible(&old_expr, &new_expr));
     }
 
     #[test]
-    fn test_ast_shape_compatible_same_elements() {
-        let oe = el("div");
-        let ne = el("div");
-        assert!(ast_shape_compatible(
-            &[Node::Element(oe)],
-            &[Node::Element(ne)]
-        ));
+    fn test_if_block() {
+        let old = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        let new = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff_cond = vec![Node::If(IfBlock {
+            condition: "b".to_string(),
+            then_children: vec![],
+            else_children: None,
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_cond));
+
+        let new_diff_else = vec![Node::If(IfBlock {
+            condition: "a".to_string(),
+            then_children: vec![],
+            else_children: Some(vec![]),
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_else));
     }
 
     #[test]
-    fn test_ast_shape_compatible_nested_different_length() {
-        let mut oe = el("div");
-        oe.children
-            .push(Node::Text(vec![TextPart::Literal("hi".to_string())]));
-        let ne = el("div");
-        assert!(!ast_shape_compatible(
-            &[Node::Element(oe)],
-            &[Node::Element(ne)]
-        ));
+    fn test_for_block() {
+        let old = vec![Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        let new = vec![Node::For(ForBlock {
+            pattern: "item".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::For(ForBlock {
+            pattern: "x".to_string(),
+            iterator: "items".to_string(),
+            body: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_match_block() {
+        let old = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        let new = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff_expr = vec![Node::Match(MatchBlock {
+            expr: "other".to_string(),
+            arms: vec![MatchArm {
+                pattern: "1".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_expr));
+
+        let new_diff_arm = vec![Node::Match(MatchBlock {
+            expr: "val".to_string(),
+            arms: vec![MatchArm {
+                pattern: "2".to_string(),
+                body: vec![],
+            }],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff_arm));
+    }
+
+    #[test]
+    fn test_let_decl() {
+        let old = vec![Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        let new = vec![Node::LetDecl(LetDecl {
+            name: "x".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::LetDecl(LetDecl {
+            name: "y".to_string(),
+            expr: "1".to_string(),
+            is_default: false,
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_include() {
+        let old = vec![Node::Include(IncludeNode {
+            path: "a.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        let new = vec![Node::Include(IncludeNode {
+            path: "a.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Include(IncludeNode {
+            path: "b.crepus".to_string(),
+            props: vec![("p".to_string(), "1".to_string())],
+            slot: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_embed() {
+        let old = vec![Node::Embed(EmbedNode {
+            src: "src".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        let new = vec![Node::Embed(EmbedNode {
+            src: "src".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::Embed(EmbedNode {
+            src: "other".to_string(),
+            adapter: Some("adapter".to_string()),
+            props: vec![],
+        })];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+    }
+
+    #[test]
+    fn test_raw() {
+        let old = vec![Node::RawText("t".to_string())];
+        let new = vec![Node::RawText("t".to_string())];
+        assert!(ast_shape_compatible(&old, &new));
+
+        let new_diff = vec![Node::RawText("x".to_string())];
+        assert!(!ast_shape_compatible(&old, &new_diff));
+
+        let old_html = vec![Node::RawHtml("h".to_string())];
+        let new_html = vec![Node::RawHtml("h".to_string())];
+        assert!(ast_shape_compatible(&old_html, &new_html));
+
+        let new_diff_html = vec![Node::RawHtml("x".to_string())];
+        assert!(!ast_shape_compatible(&old_html, &new_diff_html));
     }
 }

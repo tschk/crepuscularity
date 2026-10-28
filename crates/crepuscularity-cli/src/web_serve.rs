@@ -750,6 +750,10 @@ fn handle_connection(mut stream: TcpStream, ctx: DevRequestContext) {
 
     let _span = tracing::info_span!("dev_request", %method, %path).entered();
 
+    route_request(stream, method, path, ctx);
+}
+
+fn route_request(mut stream: TcpStream, method: &str, path: &str, ctx: DevRequestContext) {
     match (method, path) {
         ("GET", "/dev-reload") => {
             long_poll_sse(stream, ctx.generation, ctx.last_sse_msg);

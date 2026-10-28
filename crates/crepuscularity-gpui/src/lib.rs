@@ -44,6 +44,16 @@ impl From<Anchor> for Corner {
 
 pub const GPUI_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+/// Convert a view into its type-erased representation.
+///
+/// GPUI CE exposes no public paint-cache wrapper here; this conversion does not cache paints.
+#[deprecated(
+    note = "gpui-ce no longer exposes a public `.cached()` API on AnyView; this is now an identity conversion and should be removed from callers"
+)]
+pub fn cached_view(view: impl Into<AnyView>) -> AnyView {
+    view.into()
+}
+
 pub fn gpui_window_options(
     app_id: impl Into<String>,
     title: impl Into<SharedString>,
@@ -167,15 +177,16 @@ mod tests {
     use crate::{WindowButton, WindowButtonLayout};
 
     #[test]
-    fn parses_linux_window_button_layout() {
-        let layout = WindowButtonLayout::parse(":minimize,maximize,close").unwrap();
+    fn parses_linux_window_button_layout() -> gpui::Result<()> {
+        let layout = WindowButtonLayout::parse(":minimize,maximize,close")?;
 
         assert_eq!(layout, WindowButtonLayout::linux_default());
+        Ok(())
     }
 
     #[test]
-    fn parses_left_and_right_window_button_layout() {
-        let layout = WindowButtonLayout::parse("close:minimize,maximize").unwrap();
+    fn parses_left_and_right_window_button_layout() -> gpui::Result<()> {
+        let layout = WindowButtonLayout::parse("close:minimize,maximize")?;
 
         assert_eq!(
             layout,
@@ -188,6 +199,7 @@ mod tests {
                 ],
             }
         );
+        Ok(())
     }
 
     #[test]

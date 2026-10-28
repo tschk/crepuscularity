@@ -15,7 +15,7 @@ private class BluetoothBridge(private val activity: ComponentActivity) {
 
     fun status(): JSONObject = JSONObject().put("available", adapter != null)
         .put("enabled", adapter?.isEnabled == true).put("scanning", scanning)
-        .put("devices", devices.values.toList())
+        .put("devices", JSONArray(devices.values.toList()))
 
     fun requestPermission(): JSONObject {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
