@@ -373,6 +373,28 @@ out = "dist/index.html"
     }
 
     #[test]
+    fn parse_manifest_multiple_targets_in_order() {
+        let manifest = Manifest::parse(
+            r#"
+[[targets]]
+type = "web"
+id = "web-target"
+template = "index.crepus"
+
+[[targets]]
+type = "lvgl"
+id = "dash"
+"#,
+        )
+        .expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 2);
+        assert_eq!(manifest.targets[0].target_type, "web");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
+        assert_eq!(manifest.targets[1].target_type, "lvgl");
+        assert_eq!(manifest.targets[1].id.as_deref(), Some("dash"));
+    }
+
+    #[test]
     fn parse_manifest_empty() {
         let manifest = Manifest::parse("").expect("parse empty manifest");
         assert_eq!(manifest.targets.len(), 0);
