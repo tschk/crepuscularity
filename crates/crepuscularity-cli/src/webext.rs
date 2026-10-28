@@ -191,6 +191,7 @@ fn scaffold_extension(name: &str) {
 }
 
 fn scaffold_crepus_toml(name: &str) -> String {
+    let name = toml::Value::String(name.to_owned());
     format!(
         r#"[[targets]]
 type = "webext"
@@ -199,7 +200,7 @@ app = "."
 browsers = ["chromium"]
 
 [targets.extension]
-name = "{name}"
+name = {name}
 version = "0.1.0"
 description = "A browser extension built with crepuscularity"
 
@@ -1478,6 +1479,33 @@ fn page_script_relative_path(entry: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scaffold_crepus_toml_preserves_special_characters_in_names() {
+        for name in [
+            "My \"Extension\"",
+            r"My\Extension",
+            "My\nExtension",
+            "Crépuscule 🌙",
+            "\"\nextra = true\n#",
+        ] {
+            let source = scaffold_crepus_toml(name);
+            let manifest: crate::crepus_toml::CrepusManifest =
+                toml::from_str(&source).expect("valid scaffold manifest");
+            assert_eq!(manifest.targets[0].extension.as_ref().unwrap().name, name);
+            let value: toml::Value = toml::from_str(&source).unwrap();
+            let extension = value["targets"][0]["extension"].as_table().unwrap();
+            assert_eq!(extension.len(), 3, "name must not add manifest keys");
+            assert_eq!(
+                manifest.targets[0]
+                    .capabilities
+                    .as_ref()
+                    .unwrap()
+                    .host_permissions,
+                vec!["https://example.com/*"]
+            );
+        }
+    }
 
     #[test]
     fn scaffold_crepus_toml_uses_narrow_content_scope() {
