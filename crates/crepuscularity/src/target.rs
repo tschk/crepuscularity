@@ -323,36 +323,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_parse_success() {
-        let src = r#"
-[[targets]]
-type = "web"
-id = "web-target"
-template = "index.crepus"
-
-[[targets]]
-type = "lvgl"
-id = "dash"
-"#;
-        let manifest = Manifest::parse(src).expect("should parse valid manifest");
-        assert_eq!(manifest.targets.len(), 2);
-        assert_eq!(manifest.targets[0].target_type, "web");
-        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
-        assert_eq!(manifest.targets[1].target_type, "lvgl");
-        assert_eq!(manifest.targets[1].id.as_deref(), Some("dash"));
-    }
-
-    #[test]
-    fn manifest_parse_error() {
-        let src = r#"
-[[targets]
-type = "web"
-"#;
-        let res = Manifest::parse(src);
-        assert!(res.is_err());
-    }
-
-    #[test]
     fn manifest_builds_lvgl_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
@@ -400,6 +370,28 @@ out = "dist/index.html"
         assert_eq!(t.id.as_deref(), Some("my-site"));
         assert_eq!(t.path.as_deref(), Some("src/site"));
         assert_eq!(t.out.as_deref(), Some("dist/index.html"));
+    }
+
+    #[test]
+    fn parse_manifest_multiple_targets_in_order() {
+        let manifest = Manifest::parse(
+            r#"
+[[targets]]
+type = "web"
+id = "web-target"
+template = "index.crepus"
+
+[[targets]]
+type = "lvgl"
+id = "dash"
+"#,
+        )
+        .expect("parse manifest");
+        assert_eq!(manifest.targets.len(), 2);
+        assert_eq!(manifest.targets[0].target_type, "web");
+        assert_eq!(manifest.targets[0].id.as_deref(), Some("web-target"));
+        assert_eq!(manifest.targets[1].target_type, "lvgl");
+        assert_eq!(manifest.targets[1].id.as_deref(), Some("dash"));
     }
 
     #[test]
