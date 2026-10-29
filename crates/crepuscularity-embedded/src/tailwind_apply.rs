@@ -4,7 +4,7 @@
 
 use crate::color::Color;
 use crate::document::{Align, EmbeddedStyle, FlexDir, Justify, SizeHint};
-use crepuscularity_core::tailwind::lookup_named_color;
+use crepuscularity_colors::lookup_named_color;
 
 #[cfg(feature = "std")]
 use crepuscularity_core::context::TemplateContext;
@@ -15,7 +15,7 @@ use crepuscularity_core::tailwind::parse::{
 
 #[cfg(not(feature = "std"))]
 mod tailwind_parse {
-    use crepuscularity_core::tailwind::lookup_named_color;
+    use crepuscularity_colors::lookup_color_u32;
 
     pub enum SizeToken {
         Full,
@@ -77,8 +77,9 @@ mod tailwind_parse {
         if let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             return parse_color_rgb(inner);
         }
-        if let Some(hex) = lookup_named_color(name) {
-            return parse_hex_rgb(hex);
+        // Numeric lookup expands 3-digit palette entries such as `white` (`#fff`), as std does.
+        if let Some(rgb) = lookup_color_u32(name) {
+            return Some([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);
         }
         if name.starts_with('#') {
             return parse_hex_rgb(name);
