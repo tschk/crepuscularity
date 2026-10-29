@@ -60,7 +60,10 @@ crepus inspect app.crepus --mode preview
 
 ### `crepus dev`
 
-Start the hot-reload development loop:
+Rebuild-and-relaunch loop: watches `src/`, `Cargo.toml`, and declared bin/lib/build files,
+then rebuilds with Cargo and restarts the app. It does not patch a running app; templates
+reload in place only when the app renders them through `HotReloadView` (see `docs/gpui.md`),
+or with `crepus preview`.
 
 ```bash
 crepus dev

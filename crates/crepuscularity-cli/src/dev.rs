@@ -1,4 +1,7 @@
-/// `crepus dev` — hot-reload dev loop.
+/// `crepus dev` — rebuild-and-relaunch dev loop (not in-process hot reload).
+///
+/// Rust/Cargo edits trigger `cargo build` and restart the child. Template hot reload
+/// happens inside apps that render through `crepuscularity_runtime::HotReloadView`.
 ///
 /// Thread layout:
 ///   main thread  → GPUI Application::run (owns DevHUD window, blocks until closed)

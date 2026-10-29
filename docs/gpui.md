@@ -288,13 +288,10 @@ impl Render for ImageView {
 
 ## Hot Reload
 
-During development, use `crepus dev` for hot-reloading of templates:
-
-```bash
-crepus dev
-```
-
-This watches `.crepus` files and recompiles them automatically when changed.
+`crepus dev` is a rebuild-and-relaunch loop: it watches `src/`, `Cargo.toml`, and
+declared build files, then runs `cargo build` and restarts the app. Templates compiled
+with `view!`/`view_file!` only change through that rebuild. For in-process template hot
+reload, render through `HotReloadView` (below) or use `crepus preview <file.crepus>`.
 
 ### Click handlers in hot-reloaded templates
 

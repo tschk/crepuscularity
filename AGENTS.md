@@ -166,7 +166,7 @@ extension in `parse_template_with_path`, all producing the same `ast::Node` tree
 |---------|---------|
 | `crepus new <name>` | Scaffold GPUI app |
 | `crepus init <kind> <name>` | Scaffold any target |
-| `crepus dev [--bin]` | Hot-reload dev loop |
+| `crepus dev [--bin]` | Rebuild + relaunch on Rust/Cargo changes |
 | `crepus build [--target]` | Build crepus.toml targets |
 | `crepus preview <file>` | Live-preview (GPUI) |
 | `crepus render <file>` | Render to HTML stdout |
