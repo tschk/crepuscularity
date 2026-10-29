@@ -256,6 +256,28 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  embedded-no-std:
+    name: Embedded no_std
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4 # v4.3.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: thumbv7em-none-eabihf
+
+      # The workspace jobs only build default (std) features, so the no_std
+      # configuration and its doctests are otherwise never compiled.
+      - name: Test crepuscularity-embedded without std
+        run: cargo test --locked -p crepuscularity-embedded --no-default-features
+
+      - name: Check firmware build (thumbv7em, macros + mipidsi)
+        run: >-
+          cargo check --locked -p crepuscularity-embedded --no-default-features
+          --features macros,mipidsi --target thumbv7em-none-eabihf
+
   parallel-web-build:
     name: Parallel WASM + Host Build
     runs-on: ubuntu-latest
