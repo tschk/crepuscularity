@@ -115,11 +115,14 @@ fn split_call(handler: &str) -> Result<(&str, Vec<&str>), String> {
         }
         None => (text, Vec::new()),
     };
+    // Hyphens match names the template parser keeps, such as `@click=save-item`.
     let valid = name
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if !valid {
         return Err(format!(
             "@click `{handler}` must be a handler name or `name(args)` call"
@@ -130,9 +133,11 @@ fn split_call(handler: &str) -> Result<(&str, Vec<&str>), String> {
 
 fn split_args(inner: &str) -> Vec<&str> {
     let mut args = Vec::new();
-    let (mut depth, mut quote, mut start) = (0usize, None, 0);
+    let (mut depth, mut quote, mut start, mut escaped) = (0usize, None, 0, false);
     for (i, c) in inner.char_indices() {
         match (quote, c) {
+            (Some(_), _) if escaped => escaped = false,
+            (Some(_), '\\') => escaped = true,
             (Some(q), c) if c == q => quote = None,
             (Some(_), _) => {}
             (None, '"' | '\'') => quote = Some(c),

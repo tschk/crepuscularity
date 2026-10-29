@@ -288,8 +288,8 @@ impl Render for ImageView {
 
 ## Hot Reload
 
-`crepus dev` is a rebuild-and-relaunch loop: it watches `src/`, `Cargo.toml`, and
-declared build files, then runs `cargo build` and restarts the app. Templates compiled
+`crepus dev` is a rebuild-and-relaunch loop: it watches `src/` and `Cargo.toml`, then
+runs `cargo build` and restarts the app. Templates compiled
 with `view!`/`view_file!` only change through that rebuild. For in-process template hot
 reload, render through `HotReloadView` (below) or use `crepus preview <file.crepus>`.
 

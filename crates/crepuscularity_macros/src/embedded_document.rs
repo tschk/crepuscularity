@@ -84,12 +84,20 @@ fn lower_element(el: &Element) -> Result<TokenStream2, String> {
         );
     }
     // Same handler string the std renderer stores on buttons.
-    let on_click = match el.event_handlers.iter().find(|e| e.event == "click") {
-        Some(handler) if el.tag == "button" => {
+    let on_click = match el.event_handlers.as_slice() {
+        [] => quote! { ::core::option::Option::None },
+        [handler]
+            if el.tag == "button" && handler.event == "click" && handler.modifiers.is_empty() =>
+        {
             let handler = &handler.handler;
             quote! { ::core::option::Option::Some(#handler) }
         }
-        _ => quote! { ::core::option::Option::None },
+        [handler, ..] => {
+            return Err(unsupported(&format!(
+                "`@{}` on <{}> (only one unmodified `@click` on <button>)",
+                handler.event, el.tag
+            )))
+        }
     };
     let children = lower_nodes(&el.children)?;
     Ok(quote! {
@@ -173,6 +181,9 @@ mod tests {
             "div class:hidden={a && b}",
             "div bg-{theme}",
             "div id={name}",
+            "button @keydown=save\n  \"S\"",
+            "div @click=save",
+            "button @click=save @hover=peek\n  \"S\"",
         ] {
             let error = super::expand(source, path).unwrap_err();
             assert!(error.contains("not supported"), "{source}: {error}");
