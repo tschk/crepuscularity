@@ -11,49 +11,37 @@ pub fn parse_opacity_percentage(value: &str) -> Option<f32> {
         .map(|value| value.clamp(0.0, 100.0) / 100.0)
 }
 
-/// Tailwind spacing scale: `1` → 4 px unless arbitrary `[Npx]`.
+/// Tailwind v4 spacing multiplier in px (1 unit = 4 px), or `None`.
+///
+/// Accepts exactly what Tailwind's `isValidSpacingMultiplier` accepts: a non-negative
+/// multiple of 0.25 written canonically (`0`, `13`, `0.25`, `3.5`, `4.75`), and rejects
+/// `-2`, `0.3`, `1.50`, `01`, `.5`, `+4`, and `1e1`. Values use the target's f32
+/// precision; non-finite results are rejected.
+///
+/// Every spacing parser derives from this, so `p-4.5` means 18 px on every target.
+fn parse_spacing_multiplier_px(rest: &str) -> Option<f32> {
+    let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+    let canonical_whole = whole == "0" || (!whole.starts_with('0') && !whole.is_empty());
+    if !canonical_whole || !whole.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let quarter = match (rest.contains('.'), fraction) {
+        (false, _) => 0,
+        (true, "25") => 1,
+        (true, "5") => 2,
+        (true, "75") => 3,
+        _ => return None,
+    };
+    let px = whole.parse::<f32>().ok()? * 4.0 + quarter as f32;
+    px.is_finite().then_some(px)
+}
+
+/// Spacing in whole px: the [`parse_spacing_pt`] value when it is a non-negative whole
+/// number that fits in `u16`.
 pub fn parse_spacing_px(rest: &str) -> Option<u16> {
-    if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let stripped = inner.strip_suffix("px").unwrap_or(inner);
-        return stripped.parse::<u16>().ok();
-    }
-    match rest {
-        "px" => Some(1),
-        "0" => Some(0),
-        "0.5" => Some(2),
-        "1" => Some(4),
-        "1.5" => Some(6),
-        "2" => Some(8),
-        "2.5" => Some(10),
-        "3" => Some(12),
-        "3.5" => Some(14),
-        "4" => Some(16),
-        "5" => Some(20),
-        "6" => Some(24),
-        "7" => Some(28),
-        "8" => Some(32),
-        "9" => Some(36),
-        "10" => Some(40),
-        "11" => Some(44),
-        "12" => Some(48),
-        "14" => Some(56),
-        "16" => Some(64),
-        "20" => Some(80),
-        "24" => Some(96),
-        "32" => Some(128),
-        "36" => Some(144),
-        "40" => Some(160),
-        "44" => Some(176),
-        "48" => Some(192),
-        "52" => Some(208),
-        "56" => Some(224),
-        "60" => Some(240),
-        "64" => Some(256),
-        "72" => Some(288),
-        "80" => Some(320),
-        "96" => Some(384),
-        _ => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
-    }
+    parse_spacing_pt(rest)
+        .filter(|value| *value >= 0.0 && value.fract() == 0.0 && *value <= f32::from(u16::MAX))
+        .map(|value| value as u16)
 }
 
 /// Width/height token after `w-` / `h-` prefix.
@@ -153,7 +141,8 @@ pub const SIZE_FIT: f32 = -2.0;
 
 /// Tailwind spacing scale in points: 1 unit = 4 pt.
 ///
-/// Accepts arbitrary `[N]` / `[Npx]` and any decimal step (`0.5` → 2.0).
+/// Accepts arbitrary `[N]` / `[Npx]`, `px`, and canonical non-negative quarter-step
+/// multipliers (`0.5` → 2.0, `4.75` → 19.0).
 pub fn parse_spacing_pt(rest: &str) -> Option<f32> {
     if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
         let stripped = inner.strip_suffix("px").unwrap_or(inner);
@@ -162,15 +151,10 @@ pub fn parse_spacing_pt(rest: &str) -> Option<f32> {
             .ok()
             .filter(|value| value.is_finite());
     }
-    match rest {
-        "px" => return Some(1.0),
-        "0" => return Some(0.0),
-        _ => {}
+    if rest == "px" {
+        return Some(1.0);
     }
-    rest.parse::<f32>()
-        .ok()
-        .map(|f| f * 4.0)
-        .filter(|value| value.is_finite())
+    parse_spacing_multiplier_px(rest)
 }
 
 /// Parse `"1/2"` → `Some(0.5)`, `"2/3"` → `Some(0.667)`.
@@ -330,6 +314,44 @@ mod tests {
     fn spacing_scale() {
         assert_eq!(parse_spacing_px("4"), Some(16));
         assert_eq!(parse_spacing_px("[20px]"), Some(20));
+    }
+
+    /// Tailwind v4 accepts any canonical non-negative multiple of 0.25
+    /// (`isValidSpacingMultiplier`); 1 unit is 4 px on every target.
+    #[test]
+    fn spacing_accepts_tailwind_v4_multipliers_and_nothing_else() {
+        for quarters in 0..=400u32 {
+            let token = match quarters % 4 {
+                0 => format!("{}", quarters / 4),
+                1 => format!("{}.25", quarters / 4),
+                2 => format!("{}.5", quarters / 4),
+                _ => format!("{}.75", quarters / 4),
+            };
+            assert_eq!(parse_spacing_pt(&token), Some(quarters as f32), "{token}");
+            assert_eq!(parse_spacing_px(&token), Some(quarters as u16), "{token}");
+            assert_eq!(
+                crate::tailwind::length::parse_length_token(&token),
+                Some(crate::tailwind::length::LengthToken::Rems(
+                    quarters as f32 / 16.0
+                )),
+                "{token}"
+            );
+        }
+        for token in [
+            "-2", "-0", "0.3", "0.125", "1.50", "1.0", "01", "00", ".5", "4.", "+4", "1e1", "",
+            "a", "1_0", "1/2", "full",
+        ] {
+            assert_eq!(parse_spacing_pt(token), None, "{token}");
+            assert_eq!(parse_spacing_px(token), None, "{token}");
+        }
+        // Arbitrary values keep their own rules; px needs a whole, non-negative u16.
+        assert_eq!(parse_spacing_pt("[20.5px]"), Some(20.5));
+        assert_eq!(parse_spacing_px("[20.5px]"), None);
+        assert_eq!(parse_spacing_px("[20.0px]"), Some(20));
+        assert_eq!(parse_spacing_px("[-2px]"), None);
+        assert_eq!(parse_spacing_px("[65535]"), Some(u16::MAX));
+        assert_eq!(parse_spacing_px("[65536]"), None);
+        assert_eq!(parse_spacing_px("16384"), None);
     }
 
     #[test]
@@ -639,7 +661,8 @@ mod finite_dimension_tests {
         for token in ["NaN/1", "1/inf", "inf/1", "1e38/1e-38", "1/0", "1/-0"] {
             assert_eq!(parse_fraction(token), None, "{token}");
         }
-        assert_eq!(parse_spacing_pt("-2"), Some(-8.0));
+        // Tailwind has no negative multiplier; negatives use a `-m-2` class prefix.
+        assert_eq!(parse_spacing_pt("-2"), None);
         assert_eq!(parse_spacing_pt("[-2px]"), Some(-2.0));
         assert_eq!(parse_size_pt("[-2px]"), Some(0.0));
         assert_eq!(parse_size_pt("full"), Some(SIZE_FILL));
