@@ -4,7 +4,7 @@
 
 use crate::color::Color;
 use crate::document::{Align, EmbeddedStyle, FlexDir, Justify, SizeHint};
-use crepuscularity_core::tailwind::lookup_named_color;
+use crepuscularity_colors::lookup_named_color;
 
 #[cfg(feature = "std")]
 use crepuscularity_core::context::TemplateContext;
@@ -15,7 +15,7 @@ use crepuscularity_core::tailwind::parse::{
 
 #[cfg(not(feature = "std"))]
 mod tailwind_parse {
-    use crepuscularity_core::tailwind::lookup_named_color;
+    use crepuscularity_colors::lookup_color_u32;
 
     pub enum SizeToken {
         Full,
@@ -30,20 +30,16 @@ mod tailwind_parse {
             let stripped = inner.strip_suffix("px").unwrap_or(inner);
             return stripped.parse::<u16>().ok();
         }
-        match rest {
-            "px" => Some(1),
-            "0" => Some(0),
-            "0.5" => Some(2),
-            "1" => Some(4),
-            "1.5" => Some(6),
-            "2" => Some(8),
-            "2.5" => Some(10),
-            "3" => Some(12),
-            "4" => Some(16),
-            "5" => Some(20),
-            "6" => Some(24),
-            "8" => Some(32),
-            _ => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
+        // Same scale as the std parser's table, as a rule so the two cannot drift:
+        // `n` → 4n px, plus the half steps `0.5`–`3.5`.
+        match rest.split_once('.') {
+            _ if rest == "px" => Some(1),
+            None => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
+            Some((whole, "5")) => match whole.parse::<u16>() {
+                Ok(n @ 0..=3) => Some(n * 4 + 2),
+                _ => None,
+            },
+            Some(_) => None,
         }
     }
 
@@ -77,8 +73,9 @@ mod tailwind_parse {
         if let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             return parse_color_rgb(inner);
         }
-        if let Some(hex) = lookup_named_color(name) {
-            return parse_hex_rgb(hex);
+        // Numeric lookup expands 3-digit palette entries such as `white` (`#fff`), as std does.
+        if let Some(rgb) = lookup_color_u32(name) {
+            return Some([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);
         }
         if name.starts_with('#') {
             return parse_hex_rgb(name);
@@ -425,6 +422,32 @@ fn color_from_name(name: &str) -> Option<Color> {
 mod tests {
     use super::*;
     use crate::document::{Align, EmbeddedStyle, FlexDir, SizeHint};
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    /// Both parsers must agree on every spacing step, so `no_std` firmware and the `std`
+    /// renderer lay out alike. Expected values follow the std scale: `n` → 4n px, and the
+    /// half steps the std table lists (`0.5`–`3.5`) → 4n px; other half steps are ignored.
+    #[test]
+    fn spacing_steps_match_the_std_scale_in_both_builds() {
+        for tenths in (0..=120u16).step_by(5) {
+            let (whole, half) = (tenths / 10, tenths % 10 == 5);
+            let token = if half {
+                format!("{whole}.5")
+            } else {
+                format!("{whole}")
+            };
+            let expected = match (half, whole) {
+                (false, _) => Some(whole * 4),
+                (true, 0..=3) => Some(whole * 4 + 2),
+                (true, _) => None,
+            };
+            assert_eq!(parse_spacing_px(&token), expected, "{token}");
+            let mut s = EmbeddedStyle::default();
+            apply_class(&format!("p-{token}"), &mut s, None);
+            assert_eq!(s.padding, expected.unwrap_or(0), "p-{token}");
+        }
+    }
 
     #[test]
     fn test_apply_class_spacing() {

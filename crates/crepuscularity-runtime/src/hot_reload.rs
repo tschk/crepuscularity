@@ -36,6 +36,7 @@ use gpui::{
 };
 use notify::Watcher;
 
+use crate::events::{with_event_handlers, EventHandlers};
 use crate::renderer::{
     prepare_includes, render_nodes_prepared, with_gpui_target_in_place, PreparedIncludes,
 };
@@ -53,6 +54,10 @@ pub struct HotReloadState {
     prepared: Option<PreparedSnapshot>,
     #[cfg(test)]
     preparation_gate: Option<Arc<PreparationGate>>,
+
+    /// `@click` targets; looked up by name on every render, so reloads keep them.
+    /// `None` keeps clicks inert, as in plain `render_nodes`.
+    event_handlers: Option<EventHandlers>,
 
     /// Owning watcher handle; dropping it signals background cleanup.
     _watcher: Option<Box<dyn Watcher + Send>>,
@@ -326,10 +331,17 @@ impl HotReloadState {
             prepared: None,
             #[cfg(test)]
             preparation_gate: None,
+            event_handlers: None,
             _watcher: None,
             watcher_path: None,
             cancel,
         }
+    }
+
+    /// Register the callbacks `@click` names resolve to.
+    pub fn with_event_handlers(mut self, handlers: EventHandlers) -> Self {
+        self.event_handlers = Some(handlers);
+        self
     }
 
     /// Queue a background reload, retaining the current snapshot until it completes.
@@ -371,7 +383,14 @@ impl HotReloadState {
         match &self.template {
             Ok(_) => match &self.prepared {
                 Some(snapshot) => {
-                    with_gpui_target_in_place(&mut self.context, |context| snapshot.render(context))
+                    let context = &mut self.context;
+                    let mut render = move || {
+                        with_gpui_target_in_place(context, |context| snapshot.render(context))
+                    };
+                    match &self.event_handlers {
+                        Some(handlers) => with_event_handlers(handlers, render),
+                        None => render(),
+                    }
                 }
                 None => div().into_any_element(),
             },
@@ -1131,5 +1150,118 @@ mod target_and_snapshot_tests {
             &state.template.as_ref().unwrap()[0],
             Node::Element(element) if element.tag == "nav"
         )));
+    }
+
+    #[gpui::test]
+    fn component_click_handlers_survive_hot_reload(cx: &mut gpui::TestAppContext) {
+        use crepuscularity_core::context::{value_to_str, TemplateValue};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.crepus");
+        let component = dir.path().join("counter_button.crepus");
+        let entry = |instances: &str| {
+            format!("div flex flex-col\n{instances}  button w-[100px] h-[40px] @click=reset\n    \"Reset\"")
+        };
+        std::fs::write(
+            &component,
+            "button w-[100px] h-[40px] @click=action\n  \"{label}\"",
+        )
+        .unwrap();
+        std::fs::write(
+            &path,
+            entry("  include counter_button.crepus label=\"Add\" action=\"increment\"\n"),
+        )
+        .unwrap();
+
+        let calls = Rc::new(RefCell::new(Vec::<String>::new()));
+        let record = |name: &'static str| {
+            let calls = Rc::clone(&calls);
+            move |args: &[TemplateValue], _: &mut Window, _: &mut gpui::App| {
+                let args: Vec<_> = args.iter().map(value_to_str).collect();
+                calls
+                    .borrow_mut()
+                    .push(format!("{name}({})", args.join(",")));
+            }
+        };
+        let handlers = crate::EventHandlers::new()
+            .on_click("increment", record("increment"))
+            .on_click("add", record("add"))
+            .on_click("save-item", record("save-item"))
+            .on_click("reset", record("reset"));
+        let state = cx.new(|cx| {
+            HotReloadState::new(path.clone(), TemplateContext::new(), cx)
+                .with_event_handlers(handlers)
+        });
+        let (_, cx) = cx.add_window_view(|_, _| HotReloadView::new(state.clone()));
+        cx.run_until_parked();
+        let click = |cx: &mut gpui::VisualTestContext, y: f32| {
+            cx.simulate_click(
+                gpui::point(gpui::px(10.0), gpui::px(y)),
+                gpui::Modifiers::default(),
+            );
+        };
+        click(cx, 10.0);
+        click(cx, 50.0);
+        assert_eq!(*calls.borrow(), ["increment()", "reset()"]);
+
+        // Edit both the component and the entry: a second instance passes a call with arguments.
+        std::fs::write(
+            &component,
+            "button w-[100px] h-[40px] bg-red-500 @click={action}\n  \"+ {label}\"",
+        )
+        .unwrap();
+        std::fs::write(
+            &path,
+            entry(concat!(
+                "  include counter_button.crepus label=\"Add\" action=\"increment\"\n",
+                "  include counter_button.crepus label=\"Add 5\" action=\"add(5, label)\"\n",
+                "  button w-[100px] h-[40px] @click={save-item('a\\',b', 2)}\n    \"Save\"\n",
+            )),
+        )
+        .unwrap();
+        state.update(cx, |state, _| state.reload());
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+        calls.borrow_mut().clear();
+        click(cx, 10.0);
+        click(cx, 50.0);
+        click(cx, 90.0);
+        click(cx, 130.0);
+        assert_eq!(
+            *calls.borrow(),
+            [
+                "increment()",
+                "add(5,Add 5)",
+                "save-item(a',b,2)",
+                "reset()"
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn clicks_are_inert_until_a_registry_is_installed(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("view.crepus");
+        std::fs::write(&path, "button #save @click=save\n  \"Save\"").unwrap();
+        let rendered_id = |state: &Entity<HotReloadState>, cx: &mut gpui::TestAppContext| {
+            state.update(cx, |state, _| {
+                let mut element = state.render();
+                element
+                    .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                    .and_then(|element| gpui::Element::id(element))
+            })
+        };
+        let plain = cx.new(|cx| HotReloadState::new(path.clone(), TemplateContext::new(), cx));
+        let registered = cx.new(|cx| {
+            HotReloadState::new(path, TemplateContext::new(), cx)
+                .with_event_handlers(crate::EventHandlers::new())
+        });
+        cx.run_until_parked();
+        // Without a registry the button renders; with one, an unknown name becomes an error.
+        assert_eq!(rendered_id(&plain, cx), named_id("save"));
+        assert_eq!(rendered_id(&registered, cx), None);
     }
 }

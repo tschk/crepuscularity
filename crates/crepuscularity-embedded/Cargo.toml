@@ -29,6 +29,7 @@ embassy-stm32 = [
 esp-idf = ["dep:esp-idf-sys"]
 
 [dependencies]
+crepuscularity-colors = { path = "../crepuscularity-colors", version = "0.1.0" }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", optional = true }
 crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12", optional = true }
 mipidsi = { version = "0.8.0", optional = true }
@@ -44,6 +45,7 @@ static_cell = { version = "2.1.0", optional = true }
 esp-idf-sys = { version = "0.36", optional = true, default-features = false }
 
 [dev-dependencies]
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
 crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
 tempfile = { workspace = true }
 sha2 = { workspace = true }

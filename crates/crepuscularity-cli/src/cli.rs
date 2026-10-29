@@ -39,6 +39,9 @@ pub enum Commands {
         kind: String,
         name: String,
     },
+    /// Rebuild and relaunch the app when Rust sources or Cargo.toml change.
+    ///
+    /// This is not in-process hot reload; use `crepus preview` or HotReloadView for templates.
     #[cfg(feature = "desktop")]
     Dev {
         /// Target kind or id from crepus.toml (e.g. "gpui", "tui", "ios").

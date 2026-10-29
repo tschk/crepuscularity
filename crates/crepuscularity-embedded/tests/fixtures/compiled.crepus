@@ -1,0 +1,18 @@
+div w-full h-full flex flex-col bg-zinc-900 p-2 gap-2
+  div flex-row w-full gap-2 items-center
+    span text-zinc-400
+      "CPU"
+    span flex-1 text-green-400 font-bold #cpu-value class:text-red-500={hot}
+      "{cpu}% {label}"
+  if alarm
+    div bg-red-600 p-1 #alarm
+      span text-white
+        "ALARM {cpu}"
+  else
+    div bg-zinc-800 p-1 #ok
+      "ok {crepus_target} {screen_width}x{screen_height}"
+  if !is_embedded
+    div bg-blue-500 h-[20px]
+  button bg-zinc-700 px-2 py-1 #reset @click=reset_alarm
+    span text-white
+      "Reset"
