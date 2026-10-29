@@ -7,7 +7,7 @@ use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue}
 use crepuscularity_core::eval::eval_expr;
 use crepuscularity_core::CrepusError;
 
-use crate::document::{EmbeddedDocument, EmbeddedNode, EmbeddedStyle};
+use crate::document::{container, text_node, EmbeddedDocument, EmbeddedNode, EmbeddedStyle};
 use crate::framebuffer::Framebuffer;
 use crate::layout::layout_document;
 use crate::paint::paint_document;
@@ -312,36 +312,6 @@ fn style(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedStyle, CrepusErr
         }
     }
     Ok(style_from_classes_with_context(&classes, Some(ctx)))
-}
-
-fn container(
-    tag: &str,
-    style: EmbeddedStyle,
-    children: Vec<EmbeddedNode>,
-    id: Option<String>,
-    on_click: Option<String>,
-) -> EmbeddedNode {
-    EmbeddedNode {
-        id,
-        tag: tag.into(),
-        text: None,
-        on_click,
-        style,
-        bounds: Default::default(),
-        children,
-    }
-}
-
-fn text_node(text: String) -> EmbeddedNode {
-    EmbeddedNode {
-        id: None,
-        tag: "text".into(),
-        text: Some(text),
-        on_click: None,
-        style: EmbeddedStyle::default(),
-        bounds: Default::default(),
-        children: vec![],
-    }
 }
 
 fn render_text_inline(parts: &[TextPart], ctx: &TemplateContext) -> Result<String, CrepusError> {

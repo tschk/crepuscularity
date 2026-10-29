@@ -89,7 +89,7 @@ Board walkthroughs: [`examples/advanced/embedded-stm32/`](../examples/advanced/e
 | Pico Display Pack | **RP2040** | ST7789 | SPI | 240×135 |
 | Discovery / HMI | STM32F746, H743 | RGB parallel | **LTDC** (+ SDRAM FB) | board resolution (e.g. 480×272) |
 
-**STM32 + ILI9341** — feature `embassy-stm32` or blit a host-built `frame.bin` ([`examples/advanced/embedded-stm32`](../examples/advanced/embedded-stm32/)).
+**STM32 + ILI9341** — features `embassy-stm32` + `macros`, rendering a compile-time template on-chip ([`examples/advanced/embedded-stm32`](../examples/advanced/embedded-stm32/)).
 
 **ESP32-S3 + ST7789** — feature `esp-idf` + [`examples/advanced/embedded-esp32`](../examples/advanced/embedded-esp32/).
 
@@ -102,7 +102,30 @@ ui.render_into(&mut view)?;
 
 **Touch:** read `(x, y)` from your controller driver → `ui.hit(x, y)` returns the deepest `#id` (e.g. `#btn-save` in `.crepus`).
 
-**On-device parsing today** needs the default **`std`** feature (heap). Works well on **ESP32** and larger **Cortex-M** parts; validate templates in CI with `crepus embedded check` and `build.rs` (`compile_crepus`).
+**Runtime parsing** needs the default **`std`** feature (heap). Works well on **ESP32** and larger **Cortex-M** parts; validate templates in CI with `crepus embedded check` and `build.rs` (`compile_crepus`).
+
+### `no_std` firmware: compile-time templates
+
+With `default-features = false, features = ["macros"]`, `embedded_document!` parses the
+`.crepus` file on the build host and expands to a `&'static CompiledTemplate`. The device
+only evaluates variables, lays out, and paints (`core` + `alloc`):
+
+```rust,ignore
+use crepuscularity_embedded::{embedded_document, compiled::{CompiledTemplate, Value}};
+
+static UI: &CompiledTemplate = embedded_document!("ui.crepus");
+
+let vars = [("cpu", Value::Int(cpu)), ("status", Value::Str("ok"))];
+let doc = UI.render(&vars, screen, &mut framebuffer); // doc.hit_test(x, y) for touch
+```
+
+Supported: elements, static and conditional classes, static `#id`s, text with `{name}`
+interpolation, button `@click` names (stored as `on_click`), and `if`/`else` on `name` or
+`!name`, plus the embedded target variables (`is_embedded`, `screen_width`, …). `for`,
+`match`, includes, `$: let`, bindings, interpolated classes, and compound expressions are
+compile errors. Output is pixel-identical to the `std` renderer for this subset
+(`tests/compiled_template.rs` runs with and without `std`). Boards without RAM for a full
+frame can paint one band at a time; see `examples/advanced/embedded-stm32/stm32f411-ili9341`.
 
 Step-by-step board notes: [`examples/embedded-dashboard/README.md`](../examples/embedded-dashboard/README.md).
 
@@ -162,7 +185,7 @@ Supported today: column/row flex, sizing (`w-full`, `h-full`, fractions, `w-[Npx
 
 Palette is generated from Tailwind v4.3 `theme.css` (`scripts/gen-tailwind-colors.mjs`). Regenerate with: `bun scripts/gen-tailwind-colors.mjs --theme /path/to/theme.css`.
 
-Not in v1: direct LVGL runtime adapter in the framebuffer path, animation, input events, responsive/dark variants, grid/shadows, `no_std` parsing on device. Use the separate [LVGL target](lvgl.md) when you want LVGL Pro XML output.
+Not in v1: direct LVGL runtime adapter in the framebuffer path, animation, input events, responsive/dark variants, grid/shadows, runtime parsing without `std` (use `embedded_document!`). Use the separate [LVGL target](lvgl.md) when you want LVGL Pro XML output.
 
 ## Lower-level API
 

@@ -2910,6 +2910,29 @@ pub fn embedded_template(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Compile a `.crepus` file into a `&'static crepuscularity_embedded::compiled::CompiledTemplate`.
+///
+/// Parsing happens here on the build host, so firmware renders with `no_std` + `alloc`.
+/// Constructs the compiled renderer cannot evaluate are compile errors.
+/// Paths resolve like [`embedded_template!`].
+#[proc_macro]
+pub fn embedded_document(input: TokenStream) -> TokenStream {
+    let path = parse_macro_input!(input as LitStr);
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
+    let full = std::path::Path::new(&manifest_dir).join(path.value());
+    let result = std::fs::read_to_string(&full)
+        .map_err(|e| format!("embedded_document!: could not read {}: {e}", full.display()))
+        .and_then(|source| embedded_document::expand(&source, &full));
+    match result {
+        Ok(tokens) => tokens.into(),
+        Err(message) => syn::Error::new(path.span(), message)
+            .to_compile_error()
+            .into(),
+    }
+}
+
+mod embedded_document;
+
 #[cfg(test)]
 mod bound_id_tests {
     use super::*;
