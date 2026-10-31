@@ -28,6 +28,7 @@ for (const source of document.querySelectorAll(
   switcher.append(toggle, list);
   source.after(switcher);
   source.classList.add("switcher-source");
+  source.parentElement.classList.add("switcher-header");
   const mobile = matchMedia("(max-width: 767px)");
   const search = source.querySelector(".doc-search");
   function moveSearch() {
@@ -92,6 +93,13 @@ for (const source of document.querySelectorAll(
   });
   function selectNearest() {
     const rect = list.getBoundingClientRect();
+    const searchRect = search?.getBoundingClientRect();
+    if (searchRect && touchY < searchRect.bottom) {
+      active?.classList.remove("gesture-active");
+      active = null;
+      if (touching) frame = requestAnimationFrame(selectNearest);
+      return;
+    }
     if (touchY >= rect.top) enteredList = true;
     if (!enteredList) {
       if (touching) frame = requestAnimationFrame(selectNearest);

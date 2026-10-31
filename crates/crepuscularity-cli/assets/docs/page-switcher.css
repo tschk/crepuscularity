@@ -2,6 +2,14 @@
   display: none;
 }
 @media (max-width: 767px) {
+  .doc-shell > aside:not(.switcher-header) {
+    flex-wrap: wrap;
+    position: relative;
+  }
+  aside > nav:not(.switcher-source) {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
   .doc-shell {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -112,11 +120,19 @@
   }
   .page-switcher-list > a[aria-current],
   .page-switcher-list > a.gesture-active {
-    background: var(--switcher-accent);
+    background: color-mix(
+      in srgb,
+      var(--switcher-accent) 20%,
+      var(--switcher-bg)
+    );
     color: var(--switcher-fg);
   }
-  .page-switcher-list > a:hover {
-    background: color-mix(in srgb, var(--switcher-accent) 30%, var(--switcher-bg));
+  .page-switcher-list > a:not([aria-current]):not(.gesture-active):hover {
+    background: color-mix(
+      in srgb,
+      var(--switcher-accent) 30%,
+      var(--switcher-bg)
+    );
     text-decoration: none;
   }
   .page-switcher-list .doc-search {
@@ -128,8 +144,11 @@
     position: static;
     max-height: none;
   }
+  .page-switcher-list .doc-search input {
+    font-size: 16px;
+  }
   .page-switcher :focus-visible {
-    outline: 2px solid var(--switcher-accent);
+    outline: 2px solid currentColor;
     outline-offset: -2px;
   }
 }
