@@ -24,6 +24,70 @@ fn wasm_build_prereqs_ok() -> bool {
 }
 
 #[test]
+fn tui_new_preserves_existing_project() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let project = tmp.path().join("existing");
+    std::fs::create_dir(&project).unwrap();
+    let sentinel = b"user-owned manifest\n";
+    std::fs::write(project.join("Cargo.toml"), sentinel).unwrap();
+    let output = crepus()
+        .current_dir(tmp.path())
+        .args(["tui", "new", "existing"])
+        .output()
+        .expect("spawn TUI scaffold");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
+    assert_eq!(std::fs::read(project.join("Cargo.toml")).unwrap(), sentinel);
+    assert_eq!(std::fs::read_dir(&project).unwrap().count(), 1);
+}
+
+#[test]
+fn tui_new_scaffolds_fresh_project() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let output = crepus()
+        .current_dir(tmp.path())
+        .args(["tui", "new", "fresh"])
+        .output()
+        .expect("spawn TUI scaffold");
+    assert!(output.status.success());
+    for file in ["Cargo.toml", "src/main.rs", "app.crepus"] {
+        assert!(tmp.path().join("fresh").join(file).is_file(), "{file}");
+    }
+}
+
+#[test]
+fn web_new_preserves_special_characters_in_display_names() {
+    for name in [
+        "My \"Site\"",
+        r"My\Site",
+        "My\nSite",
+        "Crépuscule 🌙",
+        "\"\nextra = true\n#",
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let output = crepus()
+            .current_dir(tmp.path())
+            .args(["web", "new", name])
+            .output()
+            .expect("spawn web scaffold");
+        assert!(output.status.success(), "{output:?}");
+        let site = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let source = std::fs::read_to_string(site.join("crepus.toml")).unwrap();
+        let manifest: toml::Value = toml::from_str(&source).expect("valid scaffold manifest");
+        let target = &manifest["targets"][0];
+        assert_eq!(target["name"].as_str(), Some(name));
+        assert_eq!(target["seo"]["title"].as_str(), Some(name));
+        assert_eq!(target.as_table().unwrap().len(), 8);
+        assert_eq!(target["seo"].as_table().unwrap().len(), 4);
+    }
+}
+
+#[test]
 #[cfg_attr(
     windows,
     ignore = "default desktop crepus.exe does not spawn reliably on Windows CI"
