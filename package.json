@@ -1,5 +1,11 @@
 {
+  "scripts": {
+    "test:navigation": "bun scripts/test-mobile-navigation.mjs"
+  },
   "dependencies": {
     "@happy-dom/global-registrator": "^20.11.2"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
   }
 }

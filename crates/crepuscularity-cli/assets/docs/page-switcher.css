@@ -53,6 +53,7 @@
     padding: 6px;
     border: 0;
     background: transparent;
+    color: inherit;
     cursor: pointer;
     touch-action: none;
   }
