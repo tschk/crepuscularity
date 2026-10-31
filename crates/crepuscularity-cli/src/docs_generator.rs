@@ -211,6 +211,8 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
     let t = esc(&theme.text);
     let m = esc(&theme.muted);
     let b = esc(&theme.border);
+    let switcher_css = include_str!("../assets/docs/page-switcher.css");
+    let switcher_js = include_str!("../assets/docs/page-switcher.js");
 
     format!(
         r##"<!DOCTYPE html>
@@ -273,6 +275,8 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
     aside{{position:static;height:auto;border-right:none;border-bottom:1px solid {b}}}
     .doc-search-results{{right:1rem}}
   }}
+  :root{{--switcher-bg:{s};--switcher-fg:{t};--switcher-muted:{m};--switcher-accent:{a};--switcher-border:{b}}}
+  {switcher_css}
 </style>
 </head>
 <body>
@@ -342,7 +346,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
       for(var i=0;i<scored.length;i++){{
         var item=scored[i].item;
         var path=String(item&&item.path?item.path:'');
-        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf('\')!==-1||path.indexOf('..')!==-1)continue;
+        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf('\\')!==-1||path.indexOf('..')!==-1)continue;
         var a=document.createElement('a');
         a.setAttribute('href',path);
         a.textContent=String(item.title||'');
@@ -368,6 +372,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
   }});
 }})();
 </script>
+<script>{switcher_js}</script>
 </body>
 </html>"##
     )
