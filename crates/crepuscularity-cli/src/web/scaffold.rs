@@ -12,11 +12,11 @@ id = "site"
 site = "."
 out = "dist"
 entry = "index.crepus"
-name = "{{name}}"
+name = {{name}}
 description = "Crepus static site (.crepus + WASM)"
 
 [targets.seo]
-title = "{{name}}"
+title = {{name}}
 description = "Crepus static site (.crepus + WASM)"
 robots = "index,follow"
 twitter_card = "summary"
@@ -80,7 +80,10 @@ pub(crate) fn scaffold_site(name: &str) {
     scaffold::write_template(
         &base.join("crepus.toml"),
         CREPUS_TOML_TEMPLATE,
-        &[("{{name}}", name)],
+        &[(
+            "{{name}}",
+            &toml::Value::String(name.to_owned()).to_string(),
+        )],
     )
     .unwrap_or_else(|e| ui::error(&format!("write crepus.toml: {e}")));
 

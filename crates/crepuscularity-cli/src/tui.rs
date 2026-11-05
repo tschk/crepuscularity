@@ -42,6 +42,9 @@ pub fn execute(cmd: TuiCommands) {
 
 fn scaffold_tui_app(name: &str) {
     let dir = Path::new(name);
+    if dir.exists() {
+        ui::error(&format!("directory already exists: {name}"));
+    }
 
     // Create directory structure
     scaffold::ensure_dir(dir)
