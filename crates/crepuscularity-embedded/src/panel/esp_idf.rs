@@ -56,21 +56,26 @@ impl Rgb565Display for EspIdfLcdPanel {
         h: u16,
         pixels: &[u8],
     ) -> Result<(), DisplayError> {
-        let expected = (w as usize) * (h as usize) * 2;
+        let expected = (w as usize)
+            .checked_mul(h as usize)
+            .and_then(|pixels| pixels.checked_mul(2))
+            .ok_or_else(|| {
+                DisplayError::Message("esp_lcd draw: dimensions exceed addressable memory".into())
+            })?;
         if pixels.len() != expected {
             return Err(DisplayError::Message(
                 "esp_lcd draw: pixel buffer length mismatch".to_string(),
             ));
         }
-        let x_end = x.saturating_add(w);
-        let y_end = y.saturating_add(h);
+        let x_end = i32::from(x) + i32::from(w);
+        let y_end = i32::from(y) + i32::from(h);
         let err = unsafe {
             esp_idf_sys::esp_lcd_panel_draw_bitmap(
                 self.handle,
                 x as i32,
                 y as i32,
-                x_end as i32,
-                y_end as i32,
+                x_end,
+                y_end,
                 pixels.as_ptr() as *const core::ffi::c_void,
             )
         };

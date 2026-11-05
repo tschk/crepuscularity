@@ -9,6 +9,7 @@ pub enum Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Rgb565(pub u16);
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb888 {
     pub r: u8,
@@ -108,9 +109,20 @@ pub const fn pack_rgb565(r: u8, g: u8, b: u8) -> u16 {
 }
 
 pub fn parse_hex(s: &str) -> Option<Color> {
-    let t = s.trim().trim_start_matches('#').trim_start_matches("0x");
-    if t.len() != 6 {
+    let trimmed = s.trim();
+    let t = trimmed
+        .strip_prefix('#')
+        .or_else(|| trimmed.strip_prefix("0x"))
+        .unwrap_or(trimmed);
+    if !matches!(t.len(), 3 | 6) || !t.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
+    }
+    if t.len() == 3 {
+        return Some(Color::rgb(
+            u8::from_str_radix(&t[0..1], 16).ok()? * 17,
+            u8::from_str_radix(&t[1..2], 16).ok()? * 17,
+            u8::from_str_radix(&t[2..3], 16).ok()? * 17,
+        ));
     }
     Some(Color::rgb(
         u8::from_str_radix(&t[0..2], 16).ok()?,
@@ -120,5 +132,56 @@ pub fn parse_hex(s: &str) -> Option<Color> {
 }
 
 pub fn lookup_named_color(name: &str) -> Option<Color> {
-    crepuscularity_core::tailwind::lookup_named_color(name).and_then(parse_hex)
+    crepuscularity_colors::lookup_named_color(name).and_then(parse_hex)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_rgb565_value_round_trips_through_rgb888() {
+        for raw in 0..=u16::MAX {
+            let packed = Rgb565(raw);
+            assert_eq!(packed.to_rgb888().to_rgb565(), packed, "{raw:#06x}");
+        }
+        for (raw, rgb) in [
+            (0xf800, Rgb888::new(255, 0, 0)),
+            (0x07e0, Rgb888::new(0, 255, 0)),
+            (0x001f, Rgb888::new(0, 0, 255)),
+            (0xffff, Rgb888::new(255, 255, 255)),
+            (0x0000, Rgb888::BLACK),
+        ] {
+            assert_eq!(Rgb565(raw).to_rgb888(), rgb);
+            assert_eq!(rgb.to_rgb565(), Rgb565(raw));
+        }
+    }
+
+    #[test]
+    fn shared_palette_and_short_hex_work_without_parser_features() {
+        assert_eq!(
+            lookup_named_color("white").map(Color::to_u32),
+            Some(0xffffff)
+        );
+        assert_eq!(lookup_named_color("black").map(Color::to_u32), Some(0));
+        assert_eq!(
+            lookup_named_color("blue-500").map(Color::to_u32),
+            Some(0x2b7fff)
+        );
+        assert_eq!(parse_hex("#aB1").map(Color::to_u32), Some(0xaabb11));
+    }
+
+    #[test]
+    fn malformed_unicode_hex_returns_none() {
+        for input in ["界abc", "a界bc", "ab界c", "abc界", "#a界bc", "0xab界c"] {
+            assert!(parse_hex(input).is_none(), "{input}");
+        }
+        assert_eq!(parse_hex("#aBcD12").map(Color::to_u32), Some(0xabcd12));
+        assert!(parse_hex("#gg0011").is_none());
+        for input in ["##ff0000", "0x0xff0000", "#0xff0000", "###abc"] {
+            assert!(parse_hex(input).is_none(), "{input}");
+        }
+        assert_eq!(parse_hex(" 0xabc ").map(Color::to_u32), Some(0xaabbcc));
+        assert_eq!(parse_hex("ff0000").map(Color::to_u32), Some(0xff0000));
+    }
 }

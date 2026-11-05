@@ -94,8 +94,11 @@ impl Ui {
         match self.panel.byte_order {
             Rgb565ByteOrder::Rgb => self.rgb565(),
             Rgb565ByteOrder::Bgr => {
-                let src = self.rgb565().to_vec();
-                crate::display::swap_rgb565_bytes_bgr(&src, &mut self.panel_scratch)
+                let src = self
+                    .buffer
+                    .as_rgb565_bytes()
+                    .expect("Rgb565Buffer always exposes bytes");
+                crate::display::swap_rgb565_bytes_bgr(src, &mut self.panel_scratch)
             }
         }
     }
