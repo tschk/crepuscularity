@@ -33,13 +33,24 @@ dispatches a click with values from its current scope.
 
 ## Spacing differs between targets
 
+For shared spacing utilities, the web target's shipped UnoCSS runtime is the
+reference for class spelling and default scale. Other targets should match its
+computed CSS pixels as logical points or device pixels where representable;
+integer framebuffers cannot represent fractional pixels. Web root font-size or
+theme customization can change CSS results and is not currently propagated to
+other targets. Platform-specific layout and terminal cell quantization remain
+explicit limitations, not evidence that every target is pixel-identical.
+
 The core point parser accepts decimal multipliers, while the integer pixel
 parser uses a smaller table. A class such as `p-0.25` can therefore be
 interpreted on one target and ignored on another. PR
 [#857](https://github.com/tschk/crepuscularity/pull/857) proposes a common
 Tailwind v4 quarter-step rule, with a separate copy for `no_std` builds and a
-parity test. The change also rejects numeric spellings accepted today, so its
-compatibility impact deserves review before merge.
+parity test. It is not compatible with the shipped web runtime: a Chromium
+check against the live site returned 1.2 px for `p-0.3`, 6 px for `p-1.50`,
+and 4 px for `p-01`, all rejected by the proposed parser. Avoid merging that
+restriction; define rounding, range, and supported arbitrary units before
+bringing the integer targets closer to the web reference.
 
 ## Portability diagnostics
 
