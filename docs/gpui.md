@@ -139,6 +139,11 @@ impl Render for MyComponent {
 }
 ```
 
+The runtime renderer used by `crepus preview` and `HotReloadView` does not
+attach template event handlers. It displays an error in place of an element
+that declares an event, rather than showing an inert control. Use `view!` when
+the template needs GPUI event handling.
+
 ## State Management
 
 GPUI uses reactive state management. Components can have fields that trigger re-renders:

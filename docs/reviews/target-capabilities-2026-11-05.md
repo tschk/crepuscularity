@@ -19,14 +19,16 @@ Hardware behavior still needs validation on a physical panel.
 
 ## GPUI events after template reload
 
-The runtime renderer applies styles and renders children, but its
-`finish_element` path does not attach template event handlers. The compile-time
-macro and the runtime preview therefore have different interaction contracts.
+The runtime renderer does not attach template event handlers. It displays an
+error in place of an element that declares an event instead of silently
+rendering an inert control. The compile-time macro and runtime preview have
+different interaction contracts.
 PR [#853](https://github.com/tschk/crepuscularity/pull/853) proposes a named
 click-handler registry for hot-reloaded templates. Its scope is click events,
-not general event parity. A useful acceptance case changes an included
-component on disk and then dispatches a click with values from its current
-scope.
+not general event parity. Without a registry, it leaves clicks inert. Any
+replacement must diagnose unsupported events as well as unknown handlers. A
+useful acceptance case changes an included component on disk and then
+dispatches a click with values from its current scope.
 
 ## Spacing differs between targets
 

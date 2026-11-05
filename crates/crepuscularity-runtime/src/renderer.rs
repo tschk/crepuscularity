@@ -412,6 +412,16 @@ fn render_element(
     slot: Option<&SlotFrame<'_>>,
     cache: &mut IncludeCache,
 ) -> AnyElement {
+    if let Some(event) = el.event_handlers.first() {
+        return div()
+            .text_color(rgb(0xff4444))
+            .child(SharedString::from(format!(
+                "@{} is not supported by the GPUI runtime renderer; use the view! macro for event handlers",
+                event.event
+            )))
+            .into_any_element();
+    }
+
     // Intercept the `slot` pseudo-tag: render slot content from parent, or fallback children.
     if el.tag == "slot" {
         return if let Some(frame) = slot {
@@ -1011,6 +1021,22 @@ fn render_named_component(
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+
+    #[test]
+    fn runtime_events_are_reported_instead_of_silently_discarded() {
+        let mut expected = div().text_color(rgb(0xff4444));
+        let expected_color = expected.style().text.color;
+        for source in [
+            "button @click=save\n  \"Save\"",
+            "div @keydown=save\n  \"Keyboard\"",
+            "slot @click=save\n  \"Fallback\"",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let mut rendered = render_node(&nodes[0], &TemplateContext::new());
+            let diagnostic = rendered.downcast_mut::<gpui::Div>().unwrap();
+            assert_eq!(diagnostic.style().text.color, expected_color, "{source}");
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
