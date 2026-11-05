@@ -7,9 +7,11 @@
 //! build a [`TemplateContext`], render a template into your surface, use the retained
 //! [`EmbeddedDocument`] for layout bounds and hit-testing.
 //!
-//! # Quick start (firmware / simulator)
+//! # Quick start (firmware / simulator; requires `std`)
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "std")]
+//! # {
 //! use crepuscularity_embedded::Ui;
 //!
 //! const UI: &str = "div w-full h-full\n  span #temp\n    \"{temp}\"";
@@ -17,6 +19,7 @@
 //! ui.render().unwrap();
 //! let _bytes = ui.rgb565();
 //! let _ = ui.hit(10, 10);
+//! # }
 //! ```
 //!
 //! Or with initial variables: `ui!(UI, 240, 320, "cpu" => 42, "status" => "ok")`.
@@ -28,12 +31,16 @@
 //! # Display RAM you already own
 //!
 //! ```rust,no_run
-//! # use crepuscularity_embedded::{Rgb565View, ScreenSize, Template, DEFAULT_BG};
+//! # use crepuscularity_embedded::{Rgb565View, ScreenSize};
 //! # let screen = ScreenSize::new(128, 64);
 //! # let mut ram = [0u16; 128 * 64];
 //! let mut fb = Rgb565View::new(screen, &mut ram).unwrap();
-//! # let mut ui = Template::from_source("div w-full h-full\n  \"Hi\"", screen);
+//! // `Template` parses at runtime, so it needs `std`.
+//! # #[cfg(feature = "std")]
+//! # {
+//! # let mut ui = crepuscularity_embedded::Template::from_source("div w-full h-full\n  \"Hi\"", screen);
 //! ui.draw(&mut fb).unwrap();
+//! # }
 //! // `ram` is ready for DMA
 //! ```
 //!
