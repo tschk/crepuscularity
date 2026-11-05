@@ -41,7 +41,8 @@ pub fn parse_length_token(value: &str) -> Option<LengthToken> {
             .is_finite()
             .then_some(LengthToken::Fraction(fraction));
     }
-    parse_finite(value).map(|n| LengthToken::Rems(n * 0.25))
+    // Same multipliers as every other target; 4 px = 0.25 rem at the 16 px root.
+    super::parse::parse_spacing_pt(value).map(|px| LengthToken::Rems(px / 16.0))
 }
 
 /// Parse the inside of an arbitrary `[...]` value: `12px`, `1.5rem`, `50%`, `12`.
@@ -83,7 +84,7 @@ mod tests {
             assert_eq!(parse_arbitrary_length_token(value), None, "{value}");
             assert_eq!(parse_length_token(&format!("[{value}]")), None);
         }
-        assert_eq!(parse_length_token("-2"), Some(LengthToken::Rems(-0.5)));
+        assert_eq!(parse_length_token("-2"), None);
         assert_eq!(
             parse_arbitrary_length_token("-12px"),
             Some(LengthToken::Px(-12.0))
@@ -106,6 +107,11 @@ mod tests {
         assert_eq!(parse_length_token("4"), Some(LengthToken::Rems(1.0)));
         assert_eq!(parse_length_token("0"), Some(LengthToken::Rems(0.0)));
         assert_eq!(parse_length_token("0.5"), Some(LengthToken::Rems(0.125)));
+        assert_eq!(parse_length_token("4.5"), Some(LengthToken::Rems(1.125)));
+        assert_eq!(parse_length_token("0.25"), Some(LengthToken::Rems(0.0625)));
+        for value in ["0.3", "1.50", "01", "1e1"] {
+            assert_eq!(parse_length_token(value), None, "{value}");
+        }
     }
 
     #[test]

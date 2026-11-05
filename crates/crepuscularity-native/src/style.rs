@@ -1022,6 +1022,13 @@ mod tests {
         assert_eq!(layout("p-0").padding, Some(0.0));
         assert_eq!(layout("p-0.5").padding, Some(2.0));
         assert_eq!(layout("p-1.5").padding, Some(6.0));
+        assert_eq!(layout("p-0.25").padding, Some(1.0));
+        assert_eq!(layout("p-4.5").padding, Some(18.0));
+        assert_eq!(layout("w-4.75").width, Some(19.0));
+        assert_eq!(layout("-m-4.5").margin, Some(-18.0));
+        for class in ["p-0.3", "p-01", "p-1.50", "p--2"] {
+            assert_eq!(layout(class).padding, None, "{class}");
+        }
         assert_eq!(layout("p-px").padding, Some(1.0));
         assert_eq!(layout("p-[20px]").padding, Some(20.0));
         assert_eq!(layout("p-[20]").padding, Some(20.0));
