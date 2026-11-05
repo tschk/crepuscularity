@@ -2,6 +2,27 @@
 
 Release notes for Crepuscularity crates, the `crepus` CLI, and the documentation site. GitHub Releases (`v*`) ship CLI binaries only; libraries go to [crates.io](https://crates.io/crates/crepuscularity).
 
+## `crepuscularity` facade: Google Fonts migration
+
+The public functions `crepuscularity::google_font` and
+`crepuscularity::google_fonts` were removed as unused facade helpers. They are
+present in the published 0.4.10 crate and absent in 0.4.12 and 0.5.0. Code that
+calls either function must change before upgrading from a version that provides it.
+
+The functions returned `.crepus` pragma text; they did not load fonts themselves.
+Put the equivalent pragma at the start of the template instead:
+
+```text
+google-font "Inter"
+google-fonts "Inter" "JetBrains Mono"
+```
+
+For generated templates, write the pragma into the source string and escape
+backslashes and double quotes in each family name. The web build still processes
+these pragmas. See [Pragmas](dsl.md#pragmas) for the template syntax. This is
+different from `crepuscularity::core::google_fonts_head_markup`, which returns HTML
+for a site head rather than a `.crepus` pragma.
+
 ## 2026-09-16
 
 ### Security
