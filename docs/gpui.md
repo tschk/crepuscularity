@@ -288,13 +288,36 @@ impl Render for ImageView {
 
 ## Hot Reload
 
-During development, use `crepus dev` for hot-reloading of templates:
+`crepus dev` is a rebuild-and-relaunch loop: it watches `src/` and `Cargo.toml`, then
+runs `cargo build` and restarts the app. Templates compiled
+with `view!`/`view_file!` only change through that rebuild. For in-process template hot
+reload, render through `HotReloadView` (below) or use `crepus preview <file.crepus>`.
 
-```bash
-crepus dev
+### Click handlers in hot-reloaded templates
+
+Runtime-rendered templates name `@click` handlers; the host registers callbacks under
+those names. Handlers are looked up on every render, so they keep working after the
+template or its components reload:
+
+```rust
+use crepuscularity_runtime::{EventHandlers, HotReloadState, HotReloadView};
+
+let handlers = EventHandlers::new()
+    .on_click("increment", |_args, _window, _cx| { /* update app state */ })
+    .on_click("add", |args, _window, _cx| { /* args[0] is the evaluated first argument */ });
+let state = cx.new(|cx| HotReloadState::new(path, context, cx).with_event_handlers(handlers));
+let view = HotReloadView::new(state);
 ```
 
-This watches `.crepus` files and recompiles them automatically when changed.
+- `@click=increment` calls `increment` with no arguments.
+- `@click={add(5, item.id)}` evaluates each argument in the element's scope (loop items, component props).
+- Components take handlers as string props: `include button.crepus action="increment"` with
+  `button @click=action` inside resolves to `increment`, or `action="add(5)"` to `add` with `5`.
+- Without a registry (plain `render_nodes`, `crepus preview`) clicks are intentionally
+  inert, so previews render templates whose handlers live in the host app. With a registry
+  installed, an unregistered name renders an in-window error instead of being dropped.
+- Only `@click` runs in the runtime path. Other events (`@keydown`, `@keyup`, `@hover`,
+  `@mousedown`, …) are still ignored there and need the compile-time `view!` macro.
 
 ## Performance
 

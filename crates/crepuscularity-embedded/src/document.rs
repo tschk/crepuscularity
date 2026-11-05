@@ -173,6 +173,36 @@ pub struct EmbeddedNode {
     pub children: Vec<EmbeddedNode>,
 }
 
+pub(crate) fn container(
+    tag: &str,
+    style: EmbeddedStyle,
+    children: Vec<EmbeddedNode>,
+    id: Option<String>,
+    on_click: Option<String>,
+) -> EmbeddedNode {
+    EmbeddedNode {
+        id,
+        tag: tag.into(),
+        text: None,
+        on_click,
+        style,
+        bounds: Default::default(),
+        children,
+    }
+}
+
+pub(crate) fn text_node(text: String) -> EmbeddedNode {
+    EmbeddedNode {
+        id: None,
+        tag: "text".into(),
+        text: Some(text),
+        on_click: None,
+        style: EmbeddedStyle::default(),
+        bounds: Default::default(),
+        children: Vec::new(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EmbeddedDocument {
     pub root: Vec<EmbeddedNode>,

@@ -163,7 +163,7 @@ From JavaScript, `parseTemplate(source, filename)` in
 ```bash
 crepus init <kind> <name>            # Scaffold web, webext, tui, mobile, native, ios, or gpui apps
 crepus new <name>                    # Alias for crepus init gpui <name>
-crepus dev [--emit-events]           # Hot-reload dev loop
+crepus dev [--emit-events]           # Rebuild + relaunch on Rust/Cargo changes
 crepus build [type-or-id] [--target ID]  # Build crepus.toml targets, selected type/id, or cargo fallback
 crepus preview <file.crepus>         # Live preview
 

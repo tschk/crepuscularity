@@ -531,7 +531,20 @@ fn finish_element(mut d: gpui::Div, el: &Element, ctx: &TemplateContext, path: &
         style.overflow.x == Some(gpui::Overflow::Scroll)
             || style.overflow.y == Some(gpui::Overflow::Scroll)
     });
-    let needs_id = scrolling || focusable || active != gpui::StyleRefinement::default();
+    let click = match el.event_handlers.iter().find(|h| h.event == "click") {
+        Some(handler) => match crate::events::resolve_click(&handler.handler, ctx) {
+            Ok(click) => click,
+            Err(error) => {
+                return div()
+                    .text_color(rgb(0xff4444))
+                    .child(SharedString::from(error))
+                    .into_any_element()
+            }
+        },
+        None => None,
+    };
+    let needs_id =
+        scrolling || focusable || click.is_some() || active != gpui::StyleRefinement::default();
     let d = d.hover(|_| hover).focus(|_| focus);
     let id = element_id(el, ctx)
         .or_else(|| needs_id.then(|| SharedString::from(format!("crepus-node-{path}"))));
@@ -539,6 +552,9 @@ fn finish_element(mut d: gpui::Div, el: &Element, ctx: &TemplateContext, path: &
         let mut d = d.id(id.clone()).active(|_| active);
         if focusable {
             d = d.focusable().tab_index(0);
+        }
+        if let Some((callback, args)) = click {
+            d = d.on_click(move |_, window, cx| callback(&args, window, cx));
         }
         if !el.animations.is_empty() {
             render_with_animations(d, &el.animations, path, Some(id))

@@ -120,5 +120,5 @@ pub fn parse_hex(s: &str) -> Option<Color> {
 }
 
 pub fn lookup_named_color(name: &str) -> Option<Color> {
-    crepuscularity_core::tailwind::lookup_named_color(name).and_then(parse_hex)
+    crepuscularity_colors::lookup_named_color(name).and_then(parse_hex)
 }

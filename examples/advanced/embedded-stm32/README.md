@@ -1,13 +1,13 @@
 # STM32 + ILI9341 (240×320 SPI)
 
-> **UNSTABLE** — embedded UI is in active development. On STM32F411 (no `std`), **parse `.crepus` on-chip is not supported yet**; use the host → panel workflow below.
+> **UNSTABLE** — embedded UI is in active development. The STM32F411 firmware (no `std`) renders `ui.crepus` on-chip from a compile-time template (`embedded_document!`); no parser runs on the device.
 
 ## Two crates
 
 | Crate | Runs on | Purpose |
 | --- | --- | --- |
-| [`host-sim`](host-sim/) | Your Mac / Linux | `Ui` + `embedded_template!` → RGB565 bytes (same API you will use when on-device parse lands) |
-| [`stm32f411-ili9341`](stm32f411-ili9341/) | STM32F411 (`thumbv7em`) | `crepuscularity-embedded` feature `embassy-stm32` + blit `frame.bin` |
+| [`host-sim`](host-sim/) | Your Mac / Linux | `Ui` + `embedded_template!` → RGB565 bytes via the `std` runtime parser |
+| [`stm32f411-ili9341`](stm32f411-ili9341/) | STM32F411 (`thumbv7em`) | `no_std` + features `embassy-stm32`, `macros`: `embedded_document!("../ui.crepus")`, live `cpu`/`status` values, painted in 32-row bands |
 
 ## 1. Validate templates on the host
 
@@ -20,13 +20,11 @@ Uses [`crepuscularity-embedded`](../../../crates/crepuscularity-embedded/) with:
 - `embedded_template!("../ui.crepus")` — compile-time parse check  
 - `Ui::flush()` — render + `Rgb565Display` (mock panel RAM)
 
-## 2. Export a frame for the board
+## 2. Frame size on the F411
 
-```bash
-WRITE_FRAME=stm32f411-ili9341/frame.bin cargo run -p embedded-stm32-host-sim
-```
-
-Writes **153 600 bytes** (240×320 RGB565) for `include_bytes!` in firmware.
+A full 240×320 RGB565 frame is 150 KiB and the F411 has 128 KiB of RAM, so the firmware lays
+out the document once per update and paints it into a 240×32 band buffer ten times, blitting
+each band with `flush_rgb565_rect`.
 
 ## 3. Flash the STM32
 
@@ -52,18 +50,15 @@ You should see the dashboard from `ui.crepus` on the panel. Default pins are in 
 
 ### Panel byte order
 
-If colors look wrong, regenerate `frame.bin` after changing byte order on the host:
-
-```rust
-Ui::new(240, 320, template).panel(PanelConfig::st7789_240x320()) // BGR
-```
+Bands are native little-endian RGB565, which the mipidsi blit decodes before encoding the SPI
+transfer. If red and blue are reversed on a physical module, check the controller's RGB/BGR
+channel-order configuration.
 
 ## Roadmap (STM32)
 
-1. **Now:** host render → `frame.bin` → SPI blit (this example)  
-2. **Next:** parse cache + `embedded_template!` (done on host)  
-3. **Later:** compile-time bake → on-device layout/paint without `std` parser  
-4. **Later:** live `Ui::render()` loop on STM32 when core is `alloc`-only
+1. **Done:** compile-time bake (`embedded_document!`) → on-device evaluate/layout/paint without the `std` parser (this example)  
+2. **Later:** `for`/`match`/includes in compiled templates  
+3. **Later:** live `Ui::render()` runtime parsing on STM32 when core is `alloc`-only
 
 ## Related docs
 
