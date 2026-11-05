@@ -6,16 +6,17 @@ utilities. It is not a complete audit of the repository.
 ## Embedded templates without an on-device parser
 
 The embedded renderer supports layout and painting without `std`, but the
-template renderer and parser require `std`. The board example validates a
-template on the build host and uses a pre-rendered frame. Firmware cannot use
-that frame to update template variables.
+runtime parser requires `std`. A compile-time template path can instead let
+firmware update variables, lay out, and paint without an on-device parser.
 
 PR [#856](https://github.com/tschk/crepuscularity/pull/856) restores the
 `no_std` build and adds a Thumb firmware check to CI. PR
 [#853](https://github.com/tschk/crepuscularity/pull/853) proposes compiling a
-bounded template into data that firmware can render with `alloc`. Its embedded
-tests compare pixel output and hit targets with the existing `std` renderer.
-Hardware behavior still needs validation on a physical panel.
+bounded template into data that firmware can render with `alloc`. The embedded
+implementation rejects animations and unsupported events, which its original
+compiler silently ignored. Tests compare representative pixels and hit targets with
+the existing `std` renderer, but utility class parity is incomplete. Hardware
+behavior still needs validation on a physical panel.
 
 ## GPUI events after template reload
 
