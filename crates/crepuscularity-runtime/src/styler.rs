@@ -2074,11 +2074,12 @@ mod definite_length_tests {
     #[test]
     fn definite_lengths_reuse_finite_validation_and_reject_relative_units() {
         for value in [
-            "NaN", "inf", "1e100", "[NaNpx]", "auto", "full", "1/2", "[50%]",
+            "NaN", "inf", "1e100", "[NaNpx]", "auto", "full", "1/2", "[50%]", "-2", "0.3", "01",
+            "1.50",
         ] {
             assert!(parse_definite_length(value).is_none(), "{value}");
         }
-        for value in ["px", "4", "-2", "[12px]", "[1.5rem]"] {
+        for value in ["px", "4", "4.5", "0.25", "[-8px]", "[12px]", "[1.5rem]"] {
             assert!(parse_definite_length(value).is_some(), "{value}");
         }
     }

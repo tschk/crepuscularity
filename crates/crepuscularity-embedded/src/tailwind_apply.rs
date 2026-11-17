@@ -13,7 +13,10 @@ use crepuscularity_core::tailwind::parse::{
     parse_color_rgb, parse_size_width_height, parse_spacing_px, SizeToken,
 };
 
-#[cfg(not(feature = "std"))]
+// The std build uses crepuscularity-core's parsers. This copy serves no_std and is also
+// compiled into std tests, which check it against core.
+#[cfg(any(not(feature = "std"), test))]
+#[cfg_attr(feature = "std", allow(dead_code))]
 mod tailwind_parse {
     use crepuscularity_colors::lookup_color_u32;
 
@@ -25,26 +28,40 @@ mod tailwind_parse {
         Spacing(u16),
     }
 
+    /// Mirrors `crepuscularity_core::tailwind::parse::parse_spacing_multiplier_px`:
+    /// canonical non-negative multiples of 0.25 (Tailwind v4), 1 unit = 4 px.
+    fn parse_spacing_multiplier_px(rest: &str) -> Option<f32> {
+        let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+        let canonical_whole = whole == "0" || (!whole.starts_with('0') && !whole.is_empty());
+        if !canonical_whole || !whole.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let quarter = match (rest.contains('.'), fraction) {
+            (false, _) => 0,
+            (true, "25") => 1,
+            (true, "5") => 2,
+            (true, "75") => 3,
+            _ => return None,
+        };
+        let px = whole.parse::<f32>().ok()? * 4.0 + quarter as f32;
+        px.is_finite().then_some(px)
+    }
+
+    /// Mirrors core's `parse_spacing_px`: whole, non-negative px that fit in `u16`.
     pub fn parse_spacing_px(rest: &str) -> Option<u16> {
-        if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            let stripped = inner.strip_suffix("px").unwrap_or(inner);
-            return stripped.parse::<u16>().ok();
-        }
-        match rest {
-            "px" => Some(1),
-            "0" => Some(0),
-            "0.5" => Some(2),
-            "1" => Some(4),
-            "1.5" => Some(6),
-            "2" => Some(8),
-            "2.5" => Some(10),
-            "3" => Some(12),
-            "4" => Some(16),
-            "5" => Some(20),
-            "6" => Some(24),
-            "8" => Some(32),
-            _ => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
-        }
+        let px = if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            inner
+                .strip_suffix("px")
+                .unwrap_or(inner)
+                .parse::<f32>()
+                .ok()?
+        } else if rest == "px" {
+            1.0
+        } else {
+            parse_spacing_multiplier_px(rest)?
+        };
+        // `f32::fract` needs std; a round trip through u16 checks whole and in range.
+        (px >= 0.0 && px <= f32::from(u16::MAX) && f32::from(px as u16) == px).then_some(px as u16)
     }
 
     pub fn parse_size_width_height(rest: &str) -> Option<SizeToken> {
@@ -426,6 +443,56 @@ fn color_from_name(name: &str) -> Option<Color> {
 mod tests {
     use super::*;
     use crate::document::{Align, EmbeddedStyle, FlexDir, SizeHint};
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    /// Every canonical multiple of 0.25 (Tailwind v4) is 4 px per unit in both builds;
+    /// anything else leaves the padding unset.
+    #[test]
+    fn spacing_accepts_tailwind_v4_multipliers_in_both_builds() {
+        for quarters in 0..=400u16 {
+            let token = match quarters % 4 {
+                0 => format!("{}", quarters / 4),
+                1 => format!("{}.25", quarters / 4),
+                2 => format!("{}.5", quarters / 4),
+                _ => format!("{}.75", quarters / 4),
+            };
+            assert_eq!(parse_spacing_px(&token), Some(quarters), "{token}");
+            let mut s = EmbeddedStyle::default();
+            apply_class(&format!("p-{token}"), &mut s, None);
+            assert_eq!(s.padding, quarters, "p-{token}");
+        }
+        for token in ["-2", "0.3", "1.50", "01", ".5", "+4", "1e1", "16384"] {
+            assert_eq!(parse_spacing_px(token), None, "{token}");
+            let mut s = EmbeddedStyle::default();
+            apply_class(&format!("p-{token}"), &mut s, None);
+            assert_eq!(s.padding, 0, "p-{token}");
+        }
+    }
+
+    /// The no_std copy must agree with core, which the std build uses.
+    #[cfg(feature = "std")]
+    #[test]
+    fn no_std_spacing_parser_matches_core() {
+        let mut tokens: Vec<String> = (0..=2000u32)
+            .flat_map(|n| [format!("{}", n / 4), format!("{}.{}", n / 4, n % 10)])
+            .collect();
+        tokens.extend(
+            [
+                "px", "0.25", "4.75", "-2", "01", ".5", "+4", "1e1", "16384", "16383.75", "[20px]",
+                "[20]", "[20.5px]", "[20.0px]", "[-2px]", "[65535]", "[65536]", "[1e1px]", "[inf]",
+                "[NaN]", "[]", "full", "",
+            ]
+            .map(String::from),
+        );
+        for token in &tokens {
+            assert_eq!(
+                super::tailwind_parse::parse_spacing_px(token),
+                crepuscularity_core::tailwind::parse::parse_spacing_px(token),
+                "{token}"
+            );
+        }
+    }
 
     #[test]
     fn test_apply_class_spacing() {
