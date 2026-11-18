@@ -32,7 +32,7 @@ pub struct Ili9341Spi240x320 {
     config: PanelConfig,
 }
 
-/// ST7789 240×320 over SPI (RGB565, BGR byte order on wire).
+/// ST7789 240×320 over SPI (RGB565 with controller BGR channel order).
 pub struct St7789Spi240x320 {
     display: mipidsi::Display<Interface, ST7789, Output<'static>>,
     size: ScreenSize,
@@ -134,6 +134,10 @@ impl Rgb565Display for Ili9341Spi240x320 {
         self.size
     }
 
+    fn uses_native_rgb565_bytes(&self) -> bool {
+        true
+    }
+
     fn flush_rgb565_rect(
         &mut self,
         x: u16,
@@ -149,6 +153,10 @@ impl Rgb565Display for Ili9341Spi240x320 {
 impl Rgb565Display for St7789Spi240x320 {
     fn screen_size(&self) -> ScreenSize {
         self.size
+    }
+
+    fn uses_native_rgb565_bytes(&self) -> bool {
+        true
     }
 
     fn flush_rgb565_rect(

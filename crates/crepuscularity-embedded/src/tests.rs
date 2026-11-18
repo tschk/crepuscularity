@@ -173,7 +173,7 @@ fn framebuffer_snapshot_hash() {
     let digest = Sha256::digest(bytes);
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
-        hex, "21b6396dd30a6ccd8a9ab6f3c2caf8d76f8986deb177caedab2772e658362bb3",
+        hex, "9bc07418fa8b520aeb3692011d06354d75128b0ce5c1f4b5790adce3cf7c28a4",
         "update hash if render output intentionally changed"
     );
 }

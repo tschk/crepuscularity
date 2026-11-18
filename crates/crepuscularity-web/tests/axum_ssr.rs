@@ -315,6 +315,120 @@ fn ssr_loop_rendering() {
 }
 
 #[tokio::test]
+async fn streaming_document_matches_buffered_shell() {
+    let nodes = crepuscularity_core::ast_cache::parse_content(r#"div "ok {name}""#).unwrap();
+    let doc = SsrDocument {
+        title: "A < B & C",
+        lang: r#"en" data-extra="x"#,
+        body_class: Some("dark"),
+        head_extra: "<strong>extra</strong><script>alert(1)</script>",
+    };
+    let mut ctx = TemplateContext::new();
+    ctx.set("name", "World");
+    let expected = render_ssr_document_with_nodes(
+        &nodes,
+        &Cell::new(0),
+        &mut crepuscularity_web::BindMap::new(),
+        &ctx,
+        &doc,
+        true,
+    )
+    .unwrap();
+    let response = crepuscularity_web::stream_ssr_response_with_nodes(nodes, ctx, doc).await;
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert_eq!(html, expected);
+    assert!(html.contains("__crepus_hydration__"));
+    assert!(html.contains("ok World"));
+    assert!(html.contains(r#"<body class="dark">"#));
+    assert!(html.contains(r#"lang="en&quot; data-extra=&quot;x""#));
+    assert!(html.contains("<strong>extra</strong>"));
+    assert!(!html.contains("<script>"));
+}
+
+#[tokio::test]
+async fn streaming_render_errors_escape_expression_text() {
+    let nodes = std::sync::Arc::new(vec![crepuscularity_core::ast::Node::RawText(
+        "1 2 <script>alert(1)</script>".into(),
+    )]);
+    let response = crepuscularity_web::stream_ssr_response_with_nodes(
+        nodes,
+        TemplateContext::new(),
+        SsrDocument::default(),
+    )
+    .await;
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(html.contains("Render error:"));
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(!html.contains("<script>"));
+}
+
+#[tokio::test]
+async fn streaming_parse_errors_are_plain_text() {
+    let response = crepuscularity_web::stream_ssr_response(
+        "</orphan><script>alert(1)</script>".into(),
+        TemplateContext::new(),
+        SsrDocument::default(),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; charset=utf-8"
+    );
+}
+
+#[test]
+fn streaming_template_parsing_waits_for_blocking_lane() {
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+    use std::time::Duration;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let (started, started_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let blocker = runtime.spawn_blocking(move || {
+        started.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    runtime.block_on(async {
+        let mut response = Box::pin(crepuscularity_web::stream_ssr_response(
+            "</orphan>".into(),
+            TemplateContext::new(),
+            SsrDocument::default(),
+        ));
+        let first_poll = poll_fn(|cx| Poll::Ready(response.as_mut().poll(cx))).await;
+        // Release before assertions so the occupied pool cannot hang runtime shutdown.
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert!(
+            first_poll.is_pending(),
+            "parsing ran inline on the async worker"
+        );
+        let response = response.await;
+        assert_eq!(response.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(body.starts_with(b"Template parse error: "));
+    });
+}
+
+#[tokio::test]
 async fn test_handler_error_hides_details() {
     use axum::extract::State;
     use crepuscularity_web::{SsrHandler, SsrOptions};

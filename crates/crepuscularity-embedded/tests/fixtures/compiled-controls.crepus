@@ -1,0 +1,13 @@
+div w-full h-full gap-[3px] bg-[#000000]
+  if show
+    span class="hidden"
+      "hidden"
+  button #action @click=activate text-[#00ff00]
+    span class="hidden"
+      "wrong"
+    if show
+      span
+        "Shown"
+    else
+      span
+        "Fallback"

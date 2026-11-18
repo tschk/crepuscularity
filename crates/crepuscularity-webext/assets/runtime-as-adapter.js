@@ -7,34 +7,49 @@
 // Requirements:
 //   asc assembly/index.ts --outFile vendor/runtime_bg.wasm --exportRuntime
 //
-// The --exportRuntime flag causes AS to export __getString / __newString so
-// we can transfer strings across the WASM boundary without a separate library.
+// The --exportRuntime flag exposes allocation/GC helpers. This adapter moves
+// UTF-16 strings through exported memory without a separate loader library.
 
 let wasm = null;
 
-export default async function init(wasmUrl) {
-  const response = await fetch(wasmUrl);
-  const { instance } = await WebAssembly.instantiateStreaming(response, {
+export default async function init(input) {
+  const source = input?.module_or_path ?? input;
+  const imports = {
     env: {
       abort(msgPtr, filePtr, line, col) {
         const msg = wasm ? __getString(msgPtr) : "(no msg)";
         throw new Error(`AssemblyScript abort: ${msg} at ${line}:${col}`);
       },
     },
-  });
+  };
+  const { instance } = source instanceof ArrayBuffer || ArrayBuffer.isView(source)
+    ? await WebAssembly.instantiate(source, imports)
+    : await WebAssembly.instantiateStreaming(await fetch(source), imports);
   wasm = instance.exports;
 }
 
-// Reads a UTF-16 string from AS linear memory using the exported __getString.
+// AS managed strings store their byte length immediately before the payload.
 function __getString(ptr) {
-  if (!wasm || !wasm.__getString) throw new Error("AS runtime not exported; compile with --exportRuntime");
-  return wasm.__getString(ptr);
+  ptr >>>= 0;
+  if (!ptr) return null;
+  if (!wasm.memory) throw new Error("AS memory is not exported");
+  const length = new DataView(wasm.memory.buffer).getUint32(ptr - 4, true) >>> 1;
+  const units = new Uint16Array(wasm.memory.buffer, ptr, length);
+  let text = "";
+  for (let i = 0; i < length; i += 1024) {
+    text += String.fromCharCode(...units.subarray(i, i + 1024));
+  }
+  return text;
 }
 
-// Allocates a UTF-16 string in AS linear memory using the exported __newString.
 function __newString(str) {
-  if (!wasm || !wasm.__newString) throw new Error("AS runtime not exported; compile with --exportRuntime");
-  return wasm.__newString(str);
+  if (!wasm.__new || !wasm.__pin || !wasm.__unpin || !wasm.memory) {
+    throw new Error("AS runtime not exported; compile with --exportRuntime");
+  }
+  const ptr = wasm.__new(str.length * 2, 2) >>> 0;
+  const units = new Uint16Array(wasm.memory.buffer, ptr, str.length);
+  for (let i = 0; i < str.length; i++) units[i] = str.charCodeAt(i);
+  return ptr;
 }
 
 // Parses a JSON string returned by an AS export.
@@ -84,5 +99,11 @@ export function render_popup(state) {
 
 export function handle_popup_action(action, data) {
   if (!wasm.handle_popup_action) return { noop: true };
-  return jsonOut(wasm.handle_popup_action(__newString(action), jsonIn(data)));
+  // Keep the first argument alive while allocating the second outside the WASM stack.
+  const actionPtr = wasm.__pin(__newString(action));
+  try {
+    return jsonOut(wasm.handle_popup_action(actionPtr, jsonIn(data)));
+  } finally {
+    wasm.__unpin(actionPtr);
+  }
 }

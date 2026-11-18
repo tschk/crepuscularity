@@ -1,7 +1,10 @@
 //! Blit row-major RGB565 bytes into a **mipidsi** display (ILI9341, ST7789, …).
 
+#[cfg(not(feature = "std"))]
 use alloc::format;
 use core::convert::Infallible;
+#[cfg(feature = "std")]
+use std::format;
 
 use crate::DisplayError;
 use display_interface::WriteOnlyDataCommand;
@@ -23,7 +26,12 @@ where
     M: Model<ColorFormat = Rgb565>,
     RST: embedded_hal::digital::OutputPin<Error = Infallible>,
 {
-    let expected = (width as usize) * (height as usize) * 2;
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(2))
+        .ok_or_else(|| {
+            DisplayError::Message("blit_full: dimensions exceed addressable memory".into())
+        })?;
     if bytes.len() != expected {
         return Err(DisplayError::Message(format!(
             "blit_full: expected {expected} bytes, got {}",
@@ -47,7 +55,12 @@ where
     M: Model<ColorFormat = Rgb565>,
     RST: embedded_hal::digital::OutputPin<Error = Infallible>,
 {
-    let expected = (w as usize) * (h as usize) * 2;
+    let expected = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|pixels| pixels.checked_mul(2))
+        .ok_or_else(|| {
+            DisplayError::Message("blit_rect: dimensions exceed addressable memory".into())
+        })?;
     if pixels.len() != expected {
         return Err(DisplayError::Message(format!(
             "blit_rect: expected {expected} bytes, got {}",
@@ -59,4 +72,44 @@ where
         .draw(display)
         .map_err(|e| DisplayError::Message(format!("mipidsi draw: {e:?}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Interface;
+    impl WriteOnlyDataCommand for Interface {
+        fn send_commands(
+            &mut self,
+            _: display_interface::DataFormat<'_>,
+        ) -> Result<(), display_interface::DisplayError> {
+            Ok(())
+        }
+        fn send_data(
+            &mut self,
+            _: display_interface::DataFormat<'_>,
+        ) -> Result<(), display_interface::DisplayError> {
+            Ok(())
+        }
+    }
+    struct Delay;
+    impl embedded_hal::delay::DelayNs for Delay {
+        fn delay_ns(&mut self, _: u32) {}
+    }
+
+    #[test]
+    fn blits_reject_invalid_lengths_and_large_dimensions() {
+        let mut display = mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, Interface)
+            .init(&mut Delay)
+            .unwrap();
+        for (w, h, bytes) in [
+            (2, 1, &[][..]),
+            (1, 1, &[0][..]),
+            (u16::MAX, u16::MAX, &[][..]),
+        ] {
+            assert!(blit_full(&mut display, w, h, bytes).is_err());
+            assert!(blit_rect(&mut display, 0, 0, w, h, bytes).is_err());
+        }
+    }
 }

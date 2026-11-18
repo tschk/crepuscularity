@@ -13,9 +13,11 @@ use crepuscularity_core::tailwind::parse::{
     parse_color_rgb, parse_size_width_height, parse_spacing_px, SizeToken,
 };
 
-#[cfg(not(feature = "std"))]
+// Compile the no_std copy in std tests as well so its contract stays checked against core.
+#[cfg(any(not(feature = "std"), test))]
+#[cfg_attr(feature = "std", allow(dead_code))]
 mod tailwind_parse {
-    use crepuscularity_colors::lookup_color_u32;
+    use crepuscularity_colors::lookup_named_color;
 
     pub enum SizeToken {
         Full,
@@ -25,26 +27,37 @@ mod tailwind_parse {
         Spacing(u16),
     }
 
+    /// Mirrors core: canonical nonnegative quarter steps, one unit = four pixels.
+    fn parse_spacing_multiplier_px(rest: &str) -> Option<f32> {
+        let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+        let canonical_whole = whole == "0" || (!whole.starts_with('0') && !whole.is_empty());
+        if !canonical_whole || !whole.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let quarter = match (rest.contains('.'), fraction) {
+            (false, _) => 0,
+            (true, "25") => 1,
+            (true, "5") => 2,
+            (true, "75") => 3,
+            _ => return None,
+        };
+        let px = whole.parse::<f32>().ok()? * 4.0 + quarter as f32;
+        px.is_finite().then_some(px)
+    }
+
     pub fn parse_spacing_px(rest: &str) -> Option<u16> {
-        if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            let stripped = inner.strip_suffix("px").unwrap_or(inner);
-            return stripped.parse::<u16>().ok();
-        }
-        match rest {
-            "px" => Some(1),
-            "0" => Some(0),
-            "0.5" => Some(2),
-            "1" => Some(4),
-            "1.5" => Some(6),
-            "2" => Some(8),
-            "2.5" => Some(10),
-            "3" => Some(12),
-            "4" => Some(16),
-            "5" => Some(20),
-            "6" => Some(24),
-            "8" => Some(32),
-            _ => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
-        }
+        let px = if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            inner
+                .strip_suffix("px")
+                .unwrap_or(inner)
+                .parse::<f32>()
+                .ok()?
+        } else if rest == "px" {
+            1.0
+        } else {
+            parse_spacing_multiplier_px(rest)?
+        };
+        (px >= 0.0 && px <= f32::from(u16::MAX) && f32::from(px as u16) == px).then_some(px as u16)
     }
 
     pub fn parse_size_width_height(rest: &str) -> Option<SizeToken> {
@@ -70,16 +83,12 @@ mod tailwind_parse {
     }
 
     pub fn parse_color_rgb(name: &str) -> Option<[u8; 3]> {
-        let name = name.trim();
-        if let Some((color_part, _)) = name.split_once('/') {
-            return parse_color_rgb(color_part);
+        let mut name = name.split_once('/').map_or(name, |(color, _)| color).trim();
+        while let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            name = inner.trim();
         }
-        if let Some(inner) = name.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            return parse_color_rgb(inner);
-        }
-        // Numeric lookup expands 3-digit palette entries such as `white` (`#fff`), as std does.
-        if let Some(rgb) = lookup_color_u32(name) {
-            return Some([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);
+        if let Some(hex) = lookup_named_color(name) {
+            return parse_hex_rgb(hex);
         }
         if name.starts_with('#') {
             return parse_hex_rgb(name);
@@ -88,38 +97,89 @@ mod tailwind_parse {
     }
 
     fn parse_hex_rgb(s: &str) -> Option<[u8; 3]> {
-        let t = s.trim().trim_start_matches('#');
-        if t.len() < 6 {
-            return None;
+        let color = crate::color::parse_hex(s)?.to_rgb888();
+        Some([color.r, color.g, color.b])
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn deeply_wrapped_colors_are_parsed_without_recursion() {
+            let mut bytes = [b'['; 40_007];
+            bytes[20_000..20_007].copy_from_slice(b"#123456");
+            bytes[20_007..].fill(b']');
+            let wrapped = core::str::from_utf8(&bytes).unwrap();
+            assert_eq!(parse_color_rgb(wrapped), parse_color_rgb("#123456"));
+            assert_eq!(parse_color_rgb("#aé1234"), None);
         }
-        let t = &t[..6];
-        Some([
-            u8::from_str_radix(&t[0..2], 16).ok()?,
-            u8::from_str_radix(&t[2..4], 16).ok()?,
-            u8::from_str_radix(&t[4..6], 16).ok()?,
-        ])
     }
 }
 
 #[cfg(not(feature = "std"))]
 use tailwind_parse::{parse_color_rgb, parse_size_width_height, parse_spacing_px, SizeToken};
 
-#[cfg(feature = "std")]
-pub fn apply_classes(
-    classes: &[impl AsRef<str>],
-    s: &mut EmbeddedStyle,
-    ctx: Option<&TemplateContext>,
-) {
+pub fn apply_classes(classes: &[impl AsRef<str>], s: &mut EmbeddedStyle, ctx: Ctx<'_>) {
+    let mut explicit = [false; 6];
     for c in classes {
-        apply_class(c.as_ref(), s, ctx);
+        let class = c.as_ref();
+        apply_class(class, s, ctx);
+        if class.contains(':') {
+            continue;
+        }
+        let Some((prefix, value)) = class.split_once('-') else {
+            continue;
+        };
+        let index = match prefix {
+            "px" => 0,
+            "py" => 1,
+            "pt" => 2,
+            "pb" => 3,
+            "pl" => 4,
+            "pr" => 5,
+            _ => continue,
+        };
+        if parse_spacing_px(value).is_some() {
+            explicit[index] = true;
+        }
     }
-}
-
-#[cfg(not(feature = "std"))]
-pub fn apply_classes(classes: &[impl AsRef<str>], s: &mut EmbeddedStyle, ctx: Option<&()>) {
-    for c in classes {
-        apply_class(c.as_ref(), s, ctx);
+    let values = [
+        s.padding_x,
+        s.padding_y,
+        s.padding_t,
+        s.padding_b,
+        s.padding_l,
+        s.padding_r,
+    ];
+    if !explicit
+        .iter()
+        .zip(values)
+        .any(|(set, value)| *set && value == 0)
+    {
+        return;
     }
+    // Public fields use zero for unset; resolve explicit zeros before discarding fallbacks.
+    let edge = |specific, axis, specific_set, axis_set| {
+        if specific_set || specific > 0 {
+            specific
+        } else if axis_set || axis > 0 {
+            axis
+        } else {
+            s.padding
+        }
+    };
+    let [x, y, t, b, l, r] = explicit;
+    let left = edge(s.padding_l, s.padding_x, l, x);
+    let right = edge(s.padding_r, s.padding_x, r, x);
+    let top = edge(s.padding_t, s.padding_y, t, y);
+    let bottom = edge(s.padding_b, s.padding_y, b, y);
+    s.padding = 0;
+    s.padding_x = 0;
+    s.padding_y = 0;
+    s.padding_l = left;
+    s.padding_r = right;
+    s.padding_t = top;
+    s.padding_b = bottom;
 }
 
 #[cfg(feature = "std")]
@@ -282,7 +342,13 @@ fn apply_flex_and_align(class: &str, s: &mut EmbeddedStyle) -> bool {
             s.height = SizeHint::Flex1;
         }
         "flex-auto" | "grow" => s.width = SizeHint::Flex1,
-        "flex-none" | "grow-0" => {}
+        "flex-none" | "grow-0" => {
+            for size in [&mut s.width, &mut s.height] {
+                if *size == SizeHint::Flex1 {
+                    *size = SizeHint::Auto;
+                }
+            }
+        }
         "items-start" => s.align = Align::Start,
         "items-end" => s.align = Align::End,
         "items-center" => s.align = Align::Center,
@@ -303,7 +369,8 @@ fn apply_flex_and_align(class: &str, s: &mut EmbeddedStyle) -> bool {
 fn apply_visibility(class: &str, s: &mut EmbeddedStyle) -> bool {
     match class {
         "hidden" => s.hidden = true,
-        "invisible" => s.opacity_percent = Some(0),
+        "invisible" => s.invisible = true,
+        "visible" => s.invisible = false,
         _ => {
             if let Some(rest) = class.strip_prefix("opacity-") {
                 if let Ok(n) = rest.parse::<u8>() {
@@ -340,9 +407,6 @@ fn apply_border(class: &str, s: &mut EmbeddedStyle, ctx: Ctx<'_>) -> bool {
     if let Some(rest) = class.strip_prefix("border-") {
         if let Some(c) = resolve_color_token(rest, ctx) {
             s.border_color = Some(c);
-            if s.border_width == 0 {
-                s.border_width = 1;
-            }
             return true;
         }
     }
@@ -426,6 +490,84 @@ fn color_from_name(name: &str) -> Option<Color> {
 mod tests {
     use super::*;
     use crate::document::{Align, EmbeddedStyle, FlexDir, SizeHint};
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    #[test]
+    fn quarter_step_spacing_matches_core_and_fits_integer_pixels() {
+        for quarters in 0..=400u16 {
+            let token = match quarters % 4 {
+                0 => format!("{}", quarters / 4),
+                1 => format!("{}.25", quarters / 4),
+                2 => format!("{}.5", quarters / 4),
+                _ => format!("{}.75", quarters / 4),
+            };
+            let mut style = EmbeddedStyle::default();
+            apply_class(&format!("p-{token}"), &mut style, None);
+            assert_eq!(style.padding, quarters, "{token}");
+            assert_eq!(
+                super::tailwind_parse::parse_spacing_px(&token),
+                Some(quarters)
+            );
+            assert_eq!(
+                crepuscularity_core::tailwind::parse::parse_spacing_px(&token),
+                Some(quarters)
+            );
+        }
+        for (token, expected) in [
+            ("-2", None),
+            ("0.3", None),
+            ("1.50", None),
+            ("01", None),
+            (".5", None),
+            ("+4", None),
+            ("1e1", None),
+            ("16384", None),
+            ("16383.75", Some(65535)),
+            ("[20.5px]", None),
+            ("[20.0px]", Some(20)),
+            ("[1e1px]", Some(10)),
+            ("[-2px]", None),
+            ("[65536]", None),
+            ("[inf]", None),
+            ("[NaN]", None),
+        ] {
+            assert_eq!(
+                super::tailwind_parse::parse_spacing_px(token),
+                expected,
+                "{token}"
+            );
+            assert_eq!(
+                crepuscularity_core::tailwind::parse::parse_spacing_px(token),
+                expected,
+                "{token}"
+            );
+        }
+    }
+
+    #[test]
+    fn visibility_and_opacity_are_independent() {
+        let mut style = EmbeddedStyle::default();
+        apply_class("invisible", &mut style, None);
+        assert!(style.invisible);
+        assert_eq!(style.opacity_percent, None);
+        apply_class("opacity-0", &mut style, None);
+        apply_class("visible", &mut style, None);
+        assert!(!style.invisible);
+        assert_eq!(style.opacity_percent, Some(0));
+    }
+
+    #[test]
+    fn fractional_spacing_is_consistent_across_host_and_firmware() {
+        let mut style = EmbeddedStyle::default();
+        for token in ["0.5", "1.5", "2.5", "3.5", "7", "[13px]"] {
+            let expected = crepuscularity_core::tailwind::parse::parse_spacing_px(token).unwrap();
+            apply_class(&format!("p-{token}"), &mut style, None);
+            assert_eq!(style.padding, expected, "{token}");
+            apply_class(&format!("w-{token}"), &mut style, None);
+            assert_eq!(style.width, SizeHint::Fixed(expected), "{token}");
+        }
+    }
 
     #[test]
     fn test_apply_class_spacing() {

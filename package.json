@@ -1,11 +1,14 @@
 {
   "scripts": {
-    "test:navigation": "bun scripts/test-mobile-navigation.mjs"
+    "test:navigation": "bun scripts/test-mobile-navigation.mjs",
+    "test:tooling": "bun test editors/vscode/tests scripts/gen-tailwind-colors.test.ts",
+    "test:webext": "bun test crates/crepuscularity-webext/tests"
   },
   "dependencies": {
     "@happy-dom/global-registrator": "^20.11.2"
   },
   "devDependencies": {
+    "culori": "4.0.2",
     "playwright": "1.64.1"
   }
 }

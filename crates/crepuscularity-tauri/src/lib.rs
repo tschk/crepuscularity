@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use std::any::{Any, TypeId};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::marker::PhantomData;
 use std::path::{Component, Path, PathBuf};
@@ -94,6 +94,14 @@ impl TauriProject {
     }
 
     pub fn metadata(&self) -> TauriMetadata {
+        let (product_path, version_path, identifier_path) = match self.version {
+            TauriVersion::V1 => (
+                "/package/productName",
+                "/package/version",
+                "/tauri/bundle/identifier",
+            ),
+            TauriVersion::V2 => ("/productName", "/version", "/identifier"),
+        };
         let windows = self
             .config_value
             .pointer("/app/windows")
@@ -102,17 +110,17 @@ impl TauriProject {
         TauriMetadata {
             product_name: self
                 .config_value
-                .get("productName")
+                .pointer(product_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             version: self
                 .config_value
-                .get("version")
+                .pointer(version_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             identifier: self
                 .config_value
-                .get("identifier")
+                .pointer(identifier_path)
                 .and_then(Value::as_str)
                 .map(str::to_string),
             window_title: windows
@@ -380,10 +388,27 @@ impl Builder {
 }
 
 impl App {
+    /// Invoke a command on the calling thread, blocking until it returns.
+    /// Use [`Self::invoke_async`] inside async tasks to keep their runtime progressing.
     pub fn invoke(&self, command: &str, payload: Value) -> Result<Value, String> {
         self.commands
             .get(command)
             .ok_or_else(|| format!("unknown command {command:?}"))?(self, payload)
+    }
+
+    /// Run sync or async handlers on a blocking worker without host-thread affinity.
+    /// Dropping this future after dispatch does not cancel the handler.
+    pub async fn invoke_async(&self, command: &str, payload: Value) -> Result<Value, String> {
+        let handler = self
+            .commands
+            .get(command)
+            .ok_or_else(|| format!("unknown command {command:?}"))?
+            .clone();
+        let app = self.clone();
+        runtime()
+            .spawn_blocking(move || handler(&app, payload))
+            .await
+            .map_err(|error| format!("command {command:?} task failed: {error}"))?
     }
 
     pub fn state<T: Send + Sync + 'static>(&self) -> Result<State<'static, T>, String> {
@@ -500,16 +525,26 @@ impl Manager for Window {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let mut events = self
-            .events
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(listeners) = events.listeners.get_mut(&self.name) {
-            listeners.remove(&self.id);
-            if listeners.is_empty() {
+        let removed = {
+            let mut events = self
+                .events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let removed = events
+                .listeners
+                .get_mut(&self.name)
+                .and_then(|listeners| listeners.remove(&self.id));
+            if events
+                .listeners
+                .get(&self.name)
+                .is_some_and(BTreeMap::is_empty)
+            {
                 events.listeners.remove(&self.name);
             }
-        }
+            removed
+        };
+        // Captured resources may reenter event registration during destruction.
+        drop(removed);
     }
 }
 
@@ -577,7 +612,11 @@ fn read_config(path: &Path) -> Result<Value, String> {
 }
 
 fn validate_bundle(bundle: &Bundle) -> Result<(), String> {
-    if !bundle.files.contains_key(&bundle.entry) {
+    let entry_path = bundle
+        .entry
+        .split_once('#')
+        .map_or(bundle.entry.as_str(), |(path, _)| path);
+    if !bundle.files.contains_key(entry_path) {
         return Err(format!("bundle entry {:?} is missing", bundle.entry));
     }
     for path in bundle.files.keys() {
@@ -625,8 +664,15 @@ fn config_uses(config: &Value, config_path: &Path) -> Vec<ApiUse> {
 
 fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
     let mut files_to_read = Vec::new();
+    let mut visited = HashSet::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
+        let Ok(identity) = dir.canonicalize() else {
+            continue;
+        };
+        if !visited.insert(identity) {
+            continue;
+        }
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -656,7 +702,7 @@ fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
             match extension {
                 "rs" => {
                     if let Ok(text) = fs::read_to_string(&path) {
-                        if text.contains("#[tauri::command]") || text.contains("#[command]") {
+                        if contains_command_attribute(&text) {
                             file_uses.push(api_use(&source, "command", Coverage::Backend));
                         }
                         if text.contains(".emit(") || text.contains(".listen(") {
@@ -692,6 +738,28 @@ fn collect_project_uses(root: &Path, uses: &mut Vec<ApiUse>) {
         .collect();
 
     uses.extend(local_uses);
+}
+
+// This audit is a source scanner, not a Rust parser. Match complete attribute names.
+fn contains_command_attribute(text: &str) -> bool {
+    text.match_indices('#').any(|(offset, _)| {
+        let Some(attribute) = text[offset + 1..].trim_start().strip_prefix('[') else {
+            return false;
+        };
+        let attribute = attribute.trim_start();
+        let attribute = if let Some(rest) = attribute.strip_prefix("tauri") {
+            let Some(rest) = rest.trim_start().strip_prefix("::") else {
+                return false;
+            };
+            rest.trim_start()
+        } else {
+            attribute
+        };
+        let Some(rest) = attribute.strip_prefix("command") else {
+            return false;
+        };
+        matches!(rest.trim_start().chars().next(), Some('(' | ']'))
+    })
 }
 
 fn frontend_apis(text: &str) -> Vec<&'static str> {

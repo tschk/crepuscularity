@@ -155,23 +155,41 @@ pub fn run_wasm_bindgen(wasm_path: &Path, out_dir: &Path, out_name: &str) -> Res
     let stderr = String::from_utf8_lossy(&out.stderr);
     // version mismatch: "rust Wasm file schema version: 0.2.123"
     if let Some(ver) = parse_wasm_bindgen_needed_version(&stderr) {
-        let spinner = crate::ui::spinner(&format!("installing wasm-bindgen-cli {ver}"));
-        let install = Command::new("cargo")
-            .args(["install", "wasm-bindgen-cli", "--version", &ver, "--locked"])
-            .output()
-            .map_err(|e| format!("cargo install wasm-bindgen-cli {ver}: {e}"))?;
-        if !install.status.success() {
-            crate::ui::spinner_err(
-                &spinner,
-                &format!(
-                    "could not install wasm-bindgen-cli {ver}: {}",
-                    String::from_utf8_lossy(&install.stderr)
-                ),
-            );
+        let cargo_home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .or_else(|| std::env::var_os("USERPROFILE"))
+                    .map(|home| PathBuf::from(home).join(".cargo"))
+            })
+            .ok_or("cannot locate Cargo home for versioned wasm-bindgen tools")?;
+        let install_root = cargo_home
+            .join("crepuscularity")
+            .join(format!("wasm-bindgen-{ver}"));
+        let tool = install_root
+            .join("bin")
+            .join(format!("wasm-bindgen{}", std::env::consts::EXE_SUFFIX));
+        if !tool.is_file() {
+            let spinner = crate::ui::spinner(&format!("installing wasm-bindgen-cli {ver}"));
+            let install = Command::new(cargo_executable())
+                .args(["install", "wasm-bindgen-cli", "--version", &ver, "--locked"])
+                .arg("--root")
+                .arg(&install_root)
+                .output()
+                .map_err(|e| format!("cargo install wasm-bindgen-cli {ver}: {e}"))?;
+            if !install.status.success() {
+                crate::ui::spinner_err(
+                    &spinner,
+                    &format!(
+                        "could not install wasm-bindgen-cli {ver}: {}",
+                        String::from_utf8_lossy(&install.stderr)
+                    ),
+                );
+            }
+            crate::ui::spinner_ok(&spinner, &format!("wasm-bindgen-cli {ver} installed"));
         }
-        crate::ui::spinner_ok(&spinner, &format!("wasm-bindgen-cli {ver} installed"));
-        // retry
-        let mut cmd2 = Command::new("wasm-bindgen");
+        // Use the matching tool without replacing the user's PATH-installed version.
+        let mut cmd2 = Command::new(tool);
         prepend_rustup_bin_to_path(&mut cmd2);
         let out2 = cmd2
             .args([

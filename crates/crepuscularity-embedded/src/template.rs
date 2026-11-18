@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crepuscularity_core::ast::Node;
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
-use crepuscularity_core::parser::{parse_component_file, parse_template};
+use crepuscularity_core::parser::{parse_component_file, parse_template_with_path};
 
 use crate::document::EmbeddedDocument;
 use crate::framebuffer::Framebuffer;
@@ -131,6 +131,10 @@ impl Template {
         self
     }
 
+    /// Reload source from disk; parsing is deferred until the next [`Self::draw`].
+    ///
+    /// Read failures preserve the current source and document. A successful read
+    /// invalidates both parsed nodes and the retained document.
     pub fn reload(&mut self) -> Result<(), String> {
         if self.path.as_os_str().is_empty() {
             return Err("template has no path; reload requires `from_path`".to_string());
@@ -153,9 +157,21 @@ impl Template {
                     .components
                     .get(name)
                     .ok_or_else(|| format!("component not found: {name}"))?;
-                component.nodes.clone()
+                let mut nodes = component.nodes.clone();
+                for (name, expression) in &component.meta.defaults {
+                    nodes.insert(
+                        0,
+                        Node::LetDecl(crepuscularity_core::ast::LetDecl {
+                            name: name.clone(),
+                            expr: expression.clone(),
+                            is_default: true,
+                        }),
+                    );
+                }
+                nodes
             } else {
-                parse_template(&self.source).map_err(|e| e.to_string())?
+                parse_template_with_path(&self.source, Some(&self.path))
+                    .map_err(|e| e.to_string())?
             };
             self.parse_cache = Some(nodes);
             self.cache_generation = self.source_generation;

@@ -5,14 +5,24 @@
 //! [`Diagnostic`] / [`CompletionItem`] / [`Hover`] without spinning up a full
 //! `tower-lsp` runtime.
 
-use crepuscularity_core::{diagnose_crepus_source, strip_indent_decorators, CrepusDiagnostic};
+use crepuscularity_core::diagnostics::source_lines;
+use crepuscularity_core::{
+    diagnose_crepus_source_with_path, strip_indent_decorators, CrepusDiagnostic,
+};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, Documentation, Hover,
     HoverContents, MarkupContent, MarkupKind, Position, Range,
 };
 
 pub fn crepus_diagnostics_to_lsp(source: &str) -> Vec<Diagnostic> {
-    diagnose_crepus_source(source)
+    crepus_diagnostics_to_lsp_with_path(source, None)
+}
+
+pub fn crepus_diagnostics_to_lsp_with_path(
+    source: &str,
+    path: Option<&std::path::Path>,
+) -> Vec<Diagnostic> {
+    diagnose_crepus_source_with_path(source, path)
         .into_iter()
         .map(crepus_diagnostic_to_lsp)
         .collect()
@@ -177,34 +187,71 @@ enum CompletionCtx {
     Expression,
     /// Cursor is inside a quoted string with no enclosing `{` — no completion.
     QuotedString,
+    /// Literal content after a closed markup tag.
+    MarkupText,
 }
 
 /// Compute completion items for `(source, position)`.
 ///
-/// The matcher is intentionally lightweight: it only inspects the line under
-/// the cursor for context, so it's cheap to invoke per-keystroke.
+/// JSX documents retain preceding tag, quote, and expression context.
+/// Indentation syntax uses the current line's context.
 pub fn completion_items(source: &str, position: Position) -> Vec<CompletionItem> {
-    let line = nth_line(source, position.line as usize).unwrap_or("");
-    let prefix = line_prefix_up_to(line, position.character as usize);
-    let ctx = detect_completion_context(prefix);
+    completion_items_with_path(source, position, None)
+}
+
+/// Complete with an optional JSX filename hint, using the parser's detection rules.
+pub fn completion_items_with_path(
+    source: &str,
+    position: Position,
+    path: Option<&std::path::Path>,
+) -> Vec<CompletionItem> {
+    let Some((prefix, markup)) = context_prefix_at(source, position, path) else {
+        return Vec::new();
+    };
+    let ctx = detect_completion_context_in(prefix, markup);
 
     match ctx {
         CompletionCtx::JsxTag | CompletionCtx::IndentTag => tag_completions(),
         CompletionCtx::Classes => class_completions(source),
         CompletionCtx::Expression => expression_completions(source),
-        CompletionCtx::QuotedString => Vec::new(),
+        CompletionCtx::QuotedString | CompletionCtx::MarkupText => Vec::new(),
     }
 }
 
-fn detect_completion_context(prefix: &str) -> CompletionCtx {
+fn detect_completion_context_in(prefix: &str, markup_line: bool) -> CompletionCtx {
     // Walk the prefix tracking brace + quote state.
     let mut in_string: Option<char> = None;
     let mut brace_depth: i32 = 0;
-    for ch in prefix.chars() {
+    let mut escaped = false;
+    let mut markup_tag_start = None;
+    let mut comment_end = 0;
+    for (byte, ch) in prefix.char_indices() {
+        if byte < comment_end {
+            continue;
+        }
+        if markup_line
+            && in_string.is_none()
+            && brace_depth == 0
+            && prefix[byte..].starts_with("<!--")
+        {
+            comment_end = prefix[byte + 4..]
+                .find("-->")
+                .map_or(prefix.len(), |end| byte + 4 + end + 3);
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match (in_string, ch) {
+            (Some(_), '\\') => escaped = true,
             (Some(q), c) if c == q => in_string = None,
             (Some(_), _) => {}
-            (None, '"' | '\'') => in_string = Some(ch),
+            (None, '"' | '\'') if !markup_line || markup_tag_start.is_some() || brace_depth > 0 => {
+                in_string = Some(ch)
+            }
+            (None, '<') if brace_depth == 0 => markup_tag_start = Some(byte + 1),
+            (None, '>') if brace_depth == 0 => markup_tag_start = None,
             (None, '{') => brace_depth += 1,
             (None, '}') => brace_depth = (brace_depth - 1).max(0),
             _ => {}
@@ -215,25 +262,25 @@ fn detect_completion_context(prefix: &str) -> CompletionCtx {
         return CompletionCtx::Expression;
     }
     if in_string.is_some() {
-        if jsx_class_attribute_string(prefix) {
+        if markup_tag_start.is_some_and(|start| jsx_class_attribute_string(&prefix[start - 1..])) {
             return CompletionCtx::Classes;
         }
         return CompletionCtx::QuotedString;
     }
 
-    let trimmed_start = prefix.trim_start();
+    let trimmed_start = prefix.trim_start_matches('\u{feff}').trim_start();
     if trimmed_start.is_empty() {
         return CompletionCtx::IndentTag;
     }
-    if trimmed_start.starts_with('<') {
-        // Inside a JSX tag if no `>` has closed it on this line yet.
-        if !trimmed_start.contains('>') {
-            // Inside an attribute area only after the first space.
-            if trimmed_start.contains(char::is_whitespace) {
-                return CompletionCtx::Classes;
-            }
-            return CompletionCtx::JsxTag;
-        }
+    if markup_line {
+        let Some(start) = markup_tag_start else {
+            return CompletionCtx::MarkupText;
+        };
+        return if prefix[start..].contains(char::is_whitespace) {
+            CompletionCtx::Classes
+        } else {
+            CompletionCtx::JsxTag
+        };
     }
 
     // Indent syntax: the first whitespace after the tag name kicks off the
@@ -246,14 +293,20 @@ fn detect_completion_context(prefix: &str) -> CompletionCtx {
 
 fn jsx_class_attribute_string(prefix: &str) -> bool {
     let trimmed = prefix.trim_start();
-    if !trimmed.starts_with('<') || trimmed.contains('>') {
+    if !trimmed.starts_with('<') {
         return false;
     }
 
     let mut in_string: Option<char> = None;
     let mut quote_at: Option<usize> = None;
+    let mut escaped = false;
     for (i, ch) in prefix.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match (in_string, ch) {
+            (Some(_), '\\') => escaped = true,
             (Some(q), c) if c == q => {
                 in_string = None;
                 quote_at = None;
@@ -274,6 +327,7 @@ fn jsx_class_attribute_string(prefix: &str) -> bool {
         return false;
     };
     let name = name
+        .trim_end()
         .rsplit(|c: char| c.is_whitespace() || c == '<' || c == '/')
         .next()
         .unwrap_or("");
@@ -353,14 +407,33 @@ fn expression_completions(source: &str) -> Vec<CompletionItem> {
 // Hover
 // ────────────────────────────────────────────────────────────────────────────
 
-/// If the cursor is over a class-alias token (`.name` reference inside a class
-/// list), return a hover popup showing what it expands to. Returns `None` for
-/// plain tokens, tags, and other contexts so the editor falls through to its
-/// default behaviour.
+/// Show alias expansions in class lists and documentation for built-in DSL tags.
+/// Quoted literals, expressions, and markup body text do not receive these hovers.
 pub fn hover_for(source: &str, position: Position) -> Option<Hover> {
+    hover_for_with_path(source, position, None)
+}
+
+/// Hover with an optional JSX filename hint, using the parser's detection rules.
+pub fn hover_for_with_path(
+    source: &str,
+    position: Position,
+    path: Option<&std::path::Path>,
+) -> Option<Hover> {
     let line = nth_line(source, position.line as usize)?;
+    let (prefix, markup) = context_prefix_at(source, position, path)?;
+    let context = detect_completion_context_in(prefix, markup);
+    if matches!(
+        context,
+        CompletionCtx::Expression | CompletionCtx::QuotedString | CompletionCtx::MarkupText
+    ) {
+        return None;
+    }
     let token = token_at(line, position.character as usize)?;
-    let aliases = document_class_aliases(source);
+    let aliases = if context == CompletionCtx::Classes {
+        document_class_aliases(source)
+    } else {
+        Vec::new()
+    };
 
     if let Some(expansion) = aliases.iter().find(|(n, _)| n == token).map(|(_, v)| v) {
         return Some(Hover {
@@ -373,7 +446,9 @@ pub fn hover_for(source: &str, position: Position) -> Option<Hover> {
     }
 
     // Hover over a built-in tag: surface its DSL doc.
-    if let Some((_, doc)) = CREPUS_TAGS.iter().find(|(n, _)| *n == token) {
+    if let Some((_, doc)) = CREPUS_TAGS.iter().find(|(n, _)| {
+        matches!(context, CompletionCtx::IndentTag | CompletionCtx::JsxTag) && *n == token
+    }) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -394,7 +469,8 @@ fn document_class_aliases(source: &str) -> Vec<(String, String)> {
     // `strip_indent_decorators` already does the hard work of identifying the
     // alias block; we just materialize it as a stable-ordered Vec for UI
     // surfaces (HashMap doesn't iterate deterministically).
-    let decorators = strip_indent_decorators(source);
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    let decorators = strip_indent_decorators(&normalized);
     let mut aliases: Vec<(String, String)> = decorators.class_aliases.into_iter().collect();
     aliases.sort_by(|a, b| a.0.cmp(&b.0));
     aliases
@@ -405,14 +481,16 @@ fn document_class_aliases(source: &str) -> Vec<(String, String)> {
 /// doesn't poison the whole list.
 fn document_let_bindings(source: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for raw in source.lines() {
+    for (_, raw) in source_lines(source) {
         let trimmed = raw.trim_start();
         if let Some(rest) = trimmed.strip_prefix("$:") {
             let rest = rest.trim_start();
-            let rest = rest
-                .strip_prefix("let")
-                .or_else(|| rest.strip_prefix("default"))
-                .unwrap_or(rest);
+            let Some(rest) = rest
+                .strip_prefix("let ")
+                .or_else(|| rest.strip_prefix("default "))
+            else {
+                continue;
+            };
             let rest = rest.trim_start();
             if let Some(eq) = rest.find('=') {
                 let name = rest[..eq].trim();
@@ -420,12 +498,11 @@ fn document_let_bindings(source: &str) -> Vec<String> {
                     out.push(name.to_string());
                 }
             }
-        } else if let Some(rest) = trimmed.strip_prefix("<let") {
-            // `<let name="x" value={…} />` — pull out the name attr.
-            if let Some(name) = parse_let_name_attr(rest) {
-                out.push(name);
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("<let-default") {
+        } else if let Some(rest) = trimmed
+            .strip_prefix("<let-default")
+            .or_else(|| trimmed.strip_prefix("<let"))
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+        {
             if let Some(name) = parse_let_name_attr(rest) {
                 out.push(name);
             }
@@ -437,8 +514,35 @@ fn document_let_bindings(source: &str) -> Vec<String> {
 }
 
 fn parse_let_name_attr(after_tag: &str) -> Option<String> {
-    let idx = after_tag.find("name=")?;
-    let after_eq = &after_tag[idx + "name=".len()..];
+    let mut quote = None;
+    let mut escaped = false;
+    let after_eq = after_tag.char_indices().find_map(|(idx, ch)| {
+        if escaped {
+            escaped = false;
+            return None;
+        }
+        if let Some(delimiter) = quote {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+            return None;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            return None;
+        }
+        let next = idx + ch.len_utf8();
+        if !ch.is_whitespace() {
+            return None;
+        }
+        after_tag[next..]
+            .strip_prefix("name")?
+            .trim_start()
+            .strip_prefix('=')
+            .map(str::trim_start)
+    })?;
     let bytes = after_eq.as_bytes();
     let quote = match bytes.first()? {
         b'"' => b'"',
@@ -460,33 +564,71 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+fn context_prefix_at<'a>(
+    source: &'a str,
+    position: Position,
+    path: Option<&std::path::Path>,
+) -> Option<(&'a str, bool)> {
+    let source_without_bom = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let markup = crepuscularity_core::parser::is_jsx_mode(source_without_bom, path);
+    for (number, (offset, line)) in source_lines(source).enumerate() {
+        if number == position.line as usize {
+            let prefix = line_prefix_up_to(line, position.character as usize);
+            if !markup {
+                if prefix
+                    .trim_start_matches('\u{feff}')
+                    .trim_start()
+                    .starts_with('#')
+                {
+                    return None;
+                }
+                return Some((prefix, false));
+            }
+            let full = &source[..offset + prefix.len()];
+            let full = full.strip_prefix('\u{feff}').unwrap_or(full);
+            let body = crepuscularity_core::parser::skip_jsx_preamble(full);
+            return if !body.is_empty() {
+                Some((body, true))
+            } else if prefix
+                .trim_start_matches('\u{feff}')
+                .trim_start()
+                .starts_with('#')
+            {
+                None
+            } else {
+                Some((prefix, false))
+            };
+        }
+    }
+    None
+}
+
 fn nth_line(source: &str, line: usize) -> Option<&str> {
-    source.lines().nth(line)
+    source_lines(source).nth(line).map(|(_, text)| text)
 }
 
 fn line_prefix_up_to(line: &str, character: usize) -> &str {
-    let max = line
-        .char_indices()
-        .nth(character)
-        .map(|(i, _)| i)
-        .unwrap_or(line.len());
-    &line[..max]
+    let mut remaining = character;
+    for (byte, ch) in line.char_indices() {
+        if remaining < ch.len_utf16() {
+            return &line[..byte];
+        }
+        remaining -= ch.len_utf16();
+    }
+    line
 }
 
 /// Token under `character` on `line`, treating identifier-class characters
 /// (alphanumerics, `_`, and `-`, which appears in alias names like `slot-lede`)
-/// as part of a single token. UTF-8-safe — walks `char_indices` rather than
-/// raw bytes so multi-byte codepoints are not split mid-token.
+/// as part of a single token. Cursor offsets count UTF-16 units per LSP;
+/// token boundaries stay on UTF-8 character boundaries.
 fn token_at(line: &str, character: usize) -> Option<&str> {
     let chars: Vec<(usize, char)> = line.char_indices().collect();
     if chars.is_empty() {
         return None;
     }
-    let cursor_idx = character.min(chars.len());
-    let cursor_byte = chars
-        .get(cursor_idx)
-        .map(|(i, _)| *i)
-        .unwrap_or_else(|| line.len());
+    let cursor_byte = line_prefix_up_to(line, character).len();
+    let cursor_idx = chars.partition_point(|(byte, _)| *byte < cursor_byte);
 
     // Walk back to the start of the token by character.
     let mut start_char = cursor_idx;
@@ -656,11 +798,58 @@ mod tests {
 
     #[test]
     fn token_at_handles_multibyte_text() {
-        // The cursor walker indexes by *character* offsets, so multi-byte
-        // characters before the cursor must not corrupt the token boundary.
+        // BMP characters occupy one UTF-16 unit even when UTF-8 uses multiple bytes.
         let line = "  héllo-world";
         let tok = token_at(line, 5).expect("expected a token");
         assert_eq!(tok, "héllo-world");
+    }
+
+    #[test]
+    fn expression_completions_exclude_keyword_and_attribute_prefixes() {
+        let source = "$: letter = 1\n<letter name=\"ghost\" />\n<let surname=\"phantom\" />\n$: let actual = 2\ntext {a";
+        let labels: Vec<_> = completion_items(source, position(4, 7))
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(labels, ["actual"]);
+        let literal = "text \"say \\\"{";
+        assert!(completion_items(literal, position(0, literal.len() as u32)).is_empty());
+    }
+
+    #[test]
+    fn filename_and_multiline_context_keep_hovers_out_of_body_text() {
+        let path = Some(std::path::Path::new("view.TSX"));
+        assert!(hover_for_with_path("for", position(0, 1), path).is_none());
+        assert!(completion_items_with_path("for", position(0, 3), path).is_empty());
+        assert!(hover_for_with_path("<for", position(0, 2), path).is_some());
+        let source = "<div\n class=\"lede\"\n>\nfor\n</div>\n.lede text-red-500";
+        assert!(completion_items(source, position(1, 10))
+            .iter()
+            .any(|item| item.label == "lede"));
+        assert!(hover_for(source, position(1, 10)).is_some());
+        assert!(hover_for(source, position(3, 1)).is_none());
+        assert!(completion_items("# lede\n.lede text-red-500", position(0, 6)).is_empty());
+        assert!(hover_for("# lede\n.lede text-red-500", position(0, 4)).is_none());
+    }
+
+    #[test]
+    fn unicode_protocol_positions_and_line_endings_preserve_alias_queries() {
+        for ending in ["\n", "\r\n", "\r"] {
+            let source = format!("<div class=\"😀 lede\"/>{ending}.lede text-red-500{ending}");
+            let completion_column = "<div class=\"😀 lede".encode_utf16().count() as u32;
+            let hover_column = "<div class=\"😀 ".encode_utf16().count() as u32;
+            assert!(completion_items(&source, position(0, completion_column))
+                .iter()
+                .any(|item| item.label == "lede"));
+            let hover = hover_for(&source, position(0, hover_column)).unwrap();
+            let HoverContents::Markup(content) = hover.contents else {
+                panic!("expected markup hover")
+            };
+            assert!(content.value.contains("text-red-500"));
+            let diagnostics = crepus_diagnostics_to_lsp(&format!("<div>😀{ending}</wrong>"));
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].range.start.line, 1);
+        }
     }
 
     #[test]

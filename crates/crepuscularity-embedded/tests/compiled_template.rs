@@ -37,7 +37,7 @@ const CASES: &[Case] = &[
             // Target variables win over caller values in both renderers.
             ("is_embedded", Value::Bool(false)),
         ],
-        golden: "32e4e6d8efe757eda0990a3fb4f464b733d7dae89f74c3c7459b8064878978ed",
+        golden: "d439479305f027ed8142093dd117ba51ed65e2993e20bd64bef4c948787bce81",
     },
     Case {
         template: FIXTURE,
@@ -48,13 +48,13 @@ const CASES: &[Case] = &[
             ("hot", Value::Int(1)),
             ("alarm", Value::Str("yes")),
         ],
-        golden: "6af116ce7910e8b0c1b1388226542cf73047a49b6c99c03253b3a66c4c5cb19f",
+        golden: "6d07c2391396eb46cfee1a9e76d12c4e7348b7c4f4dd5d0cc7844d7f9d1d6aa2",
     },
     Case {
         template: STM32_UI,
         source: include_str!("../../../examples/advanced/embedded-stm32/ui.crepus"),
         vars: &[("cpu", Value::Int(73)), ("status", Value::Str("ok"))],
-        golden: "c72e2fdb4b91d988dd2d3b511bd7d7fa6e3f892986249744c9533ca75dab103e",
+        golden: "684af25a96ada83e8667cae858b0feb9b909035390b7edf8eb522ec602867d0e",
     },
 ];
 
@@ -81,6 +81,95 @@ fn compiled_templates_match_golden_pixels_and_hit_targets() {
             "case {i} painted nothing"
         );
         assert_eq!(digest(fb.pixels()), case.golden, "case {i}");
+    }
+}
+
+#[test]
+fn compiled_fixture_layout_colors_and_half_open_hits_follow_authored_geometry() {
+    use crepuscularity_embedded::Rect;
+    for (i, case) in CASES.iter().enumerate() {
+        let (fb, doc) = render_compiled(case);
+        // p-2 = 8px, the row is 16px high, and items-center centers 8px glyph cells.
+        assert_eq!(
+            doc.node_by_id("cpu-value").unwrap().bounds,
+            Rect::new(40, 12, 192, 8)
+        );
+        let color = if i == 1 {
+            Color::rgb(251, 44, 54)
+        } else {
+            Color::rgb(5, 223, 114)
+        }
+        .to_rgb565()
+        .0;
+        assert!(fb.pixels().contains(&color));
+        for (index, pixel) in fb.pixels().iter().enumerate() {
+            if *pixel == color {
+                assert!((40..232).contains(&(index % 240)));
+                assert!((12..20).contains(&(index / 240)));
+            }
+        }
+        if i < 2 {
+            // 8px top padding + 16px row + 8px gap + 24px status + 8px gap.
+            let reset = doc.node_by_id("reset").unwrap();
+            assert_eq!(reset.bounds, Rect::new(8, 64, 56, 16));
+            assert_eq!(reset.on_click.as_deref(), Some("reset_alarm"));
+            assert_eq!(doc.hit_test(8, 64), Some("reset"));
+            assert_eq!(doc.hit_test(63, 79), Some("reset"));
+            assert_eq!(doc.hit_test(64, 79), None);
+            assert_eq!(doc.hit_test(8, 80), None);
+            assert_eq!(
+                doc.node_by_id(if i == 0 { "ok" } else { "alarm" })
+                    .unwrap()
+                    .bounds,
+                Rect::new(8, 32, 224, 24)
+            );
+            assert_eq!(doc.hit_test(7, 32), None);
+            assert_eq!(
+                doc.hit_test(12, 36),
+                Some(if i == 0 { "ok" } else { "alarm" })
+            );
+        } else {
+            assert_eq!(
+                doc.node_by_id("status-label").unwrap().bounds,
+                Rect::new(64, 36, 168, 8)
+            );
+            assert_eq!(doc.hit_test(64, 36), Some("status-label"));
+            assert_eq!(doc.hit_test(64, 44), None);
+        }
+    }
+}
+
+#[test]
+fn compiled_conditions_and_button_labels_ignore_nonvisible_children() {
+    static CONTROLS: &CompiledTemplate =
+        crepuscularity_macros::embedded_document!("tests/fixtures/compiled-controls.crepus");
+    for (show, label) in [(false, "Fallback"), (true, "Shown")] {
+        let mut fb = Rgb565Buffer::new(SCREEN, Color::rgb(0, 0, 0));
+        let doc = CONTROLS.render(&[("show", Value::Bool(show))], SCREEN, &mut fb);
+        let action = doc.node_by_id("action").unwrap();
+        assert_eq!(action.text.as_deref(), Some(label));
+        assert_eq!(action.bounds.y, 0);
+        assert_eq!(doc.hit_test(0, 0), Some("action"));
+        assert!(fb.pixels().contains(&0x07e0));
+        #[cfg(feature = "std")]
+        {
+            let mut ctx = crepuscularity_embedded::TemplateContext::new();
+            ctx.set("show", show);
+            let mut expected = Rgb565Buffer::new(SCREEN, Color::rgb(0, 0, 0));
+            let expected_doc = crepuscularity_embedded::render_template_to_framebuffer(
+                include_str!("fixtures/compiled-controls.crepus"),
+                &ctx,
+                SCREEN,
+                &mut expected,
+            )
+            .unwrap();
+            assert_eq!(fb.pixels(), expected.pixels());
+            for y in 0..SCREEN.height {
+                for x in 0..SCREEN.width {
+                    assert_eq!(doc.hit_test(x, y), expected_doc.hit_test(x, y));
+                }
+            }
+        }
     }
 }
 
@@ -124,14 +213,9 @@ fn std_renderer_agrees_with_compiled_output() {
         let expected_doc =
             render_template_to_framebuffer(case.source, &ctx, SCREEN, &mut expected).unwrap();
         let (actual, actual_doc) = render_compiled(case);
-        assert_eq!(
-            digest(expected.pixels()),
-            case.golden,
-            "std renderer, case {i}"
-        );
         assert_eq!(actual.pixels(), expected.pixels(), "case {i}");
-        for y in (0..SCREEN.height).step_by(4) {
-            for x in (0..SCREEN.width).step_by(4) {
+        for y in 0..SCREEN.height {
+            for x in 0..SCREEN.width {
                 assert_eq!(
                     actual_doc.hit_test(x, y),
                     expected_doc.hit_test(x, y),

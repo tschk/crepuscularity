@@ -2,7 +2,7 @@
 ///
 /// Runs `cargo build --message-format=json-diagnostic-rendered-ansi`,
 /// streams the JSON output, and returns a `BuildOutcome`.
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -57,7 +57,7 @@ pub fn cargo_build(
         .arg("--message-format=json-diagnostic-rendered-ansi")
         .current_dir(cwd)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null()) // diagnostics come through JSON stdout
+        .stderr(Stdio::piped()) // Cargo setup failures are not JSON diagnostics
         .env("CARGO_BUILD_INCREMENTAL", "true");
 
     options.apply_profile_to_command(&mut cmd);
@@ -68,11 +68,28 @@ pub fn cargo_build(
             eprintln!("[crepus] Failed to spawn cargo: {e}");
             return BuildOutcome {
                 success: false,
-                errors: vec![],
+                errors: vec![fallback_error(format!("failed to spawn cargo: {e}"), &hud)],
             };
         }
     };
 
+    let stderr = child.stderr.take().unwrap();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut captured = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let count = match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            let _ = std::io::stderr().write_all(&buffer[..count]);
+            captured.extend_from_slice(&buffer[..count]);
+        }
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&captured).into_owned())
+    });
     let stdout = child.stdout.take().unwrap();
     let mut errors: Vec<BuildError> = Vec::new();
     let mut success = false;
@@ -126,8 +143,42 @@ pub fn cargo_build(
         }
     }
 
-    let _ = child.wait();
+    let status = child.wait();
+    let stderr = match stderr_reader.join() {
+        Ok(Ok(stderr)) => stderr,
+        Ok(Err(error)) => format!("read Cargo stderr: {error}"),
+        Err(_) => "Cargo stderr reader panicked".to_string(),
+    };
+    success &= status.as_ref().is_ok_and(|status| status.success());
+    if !success && errors.is_empty() {
+        let message = if !stderr.trim().is_empty() {
+            stderr.trim_end().to_string()
+        } else {
+            match status {
+                Ok(status) => format!("Cargo build failed ({status})"),
+                Err(error) => format!("wait for Cargo: {error}"),
+            }
+        };
+        errors.push(fallback_error(message, &hud));
+    }
     BuildOutcome { success, errors }
+}
+
+fn fallback_error(message: String, hud: &Option<Arc<Mutex<HudState>>>) -> BuildError {
+    let error = BuildError {
+        level: "error".into(),
+        message,
+        ..Default::default()
+    };
+    if let Some(hud) = hud {
+        if let Ok(mut state) = hud.lock() {
+            state.status = DevStatus::Failed {
+                errors: vec![error.clone()],
+                count: 1,
+            };
+        }
+    }
+    error
 }
 
 /// Kill a child process (best-effort).

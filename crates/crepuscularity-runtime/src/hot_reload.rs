@@ -36,8 +36,10 @@ use gpui::{
 };
 use notify::Watcher;
 
+use crate::events::{with_event_handlers, EventHandlers};
 use crate::renderer::{
-    prepare_includes, render_nodes_prepared, with_gpui_target_in_place, PreparedIncludes,
+    prepare_includes, render_nodes_prepared_with_bindings, with_gpui_target_in_place,
+    PreparedIncludes,
 };
 use crepuscularity_core::ast::Node;
 use crepuscularity_core::context::TemplateContext;
@@ -48,8 +50,11 @@ pub struct HotReloadState {
     /// Last completed snapshot; empty until the initial background load finishes.
     pub template: Result<Arc<Vec<Node>>, String>,
     pub context: TemplateContext,
+    pub bindings: crate::RuntimeBindings,
     pub changed: Arc<Mutex<bool>>,
 
+    binding_namespace: String,
+    event_handlers: Option<EventHandlers>,
     prepared: Option<PreparedSnapshot>,
     #[cfg(test)]
     preparation_gate: Option<Arc<PreparationGate>>,
@@ -107,11 +112,18 @@ impl PreparedSnapshot {
         Arc::ptr_eq(&self.nodes, nodes) && same_environment(&self.environment, context)
     }
 
-    fn render(&self, current: &TemplateContext) -> gpui::AnyElement {
-        render_nodes_prepared(
+    fn render(
+        &self,
+        current: &TemplateContext,
+        namespace: &str,
+        bindings: &crate::RuntimeBindings,
+    ) -> gpui::AnyElement {
+        render_nodes_prepared_with_bindings(
+            namespace,
             &self.nodes,
             &self.render_context(current),
             Arc::clone(&self.includes),
+            bindings,
         )
     }
 
@@ -322,7 +334,10 @@ impl HotReloadState {
             path,
             template,
             context,
+            bindings: crate::RuntimeBindings::default(),
             changed,
+            binding_namespace: format!("hot-template:{:?}", cx.entity_id()),
+            event_handlers: None,
             prepared: None,
             #[cfg(test)]
             preparation_gate: None,
@@ -330,6 +345,18 @@ impl HotReloadState {
             watcher_path: None,
             cancel,
         }
+    }
+
+    /// Register named native callbacks and element factories retained across reloads.
+    pub fn with_bindings(mut self, bindings: crate::RuntimeBindings) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
+    /// Register the callbacks named by `@click`, including component call arguments.
+    pub fn with_event_handlers(mut self, handlers: EventHandlers) -> Self {
+        self.event_handlers = Some(handlers);
+        self
     }
 
     /// Queue a background reload, retaining the current snapshot until it completes.
@@ -371,7 +398,18 @@ impl HotReloadState {
         match &self.template {
             Ok(_) => match &self.prepared {
                 Some(snapshot) => {
-                    with_gpui_target_in_place(&mut self.context, |context| snapshot.render(context))
+                    let bindings = &self.bindings;
+                    let namespace = &self.binding_namespace;
+                    let context = &mut self.context;
+                    let mut render = || {
+                        with_gpui_target_in_place(context, |context| {
+                            snapshot.render(context, namespace, bindings)
+                        })
+                    };
+                    match &self.event_handlers {
+                        Some(handlers) => with_event_handlers(handlers, render),
+                        None => render(),
+                    }
                 }
                 None => div().into_any_element(),
             },
@@ -604,7 +642,11 @@ mod target_and_snapshot_tests {
         cx: &mut gpui::TestAppContext,
     ) -> Option<gpui::ElementId> {
         state.read_with(cx, |state, _| {
-            let mut element = state.prepared.as_ref().unwrap().render(&state.context);
+            let mut element = state.prepared.as_ref().unwrap().render(
+                &state.context,
+                &state.binding_namespace,
+                &state.bindings,
+            );
             element
                 .downcast_mut::<gpui::Stateful<gpui::Div>>()
                 .and_then(|element| gpui::Element::id(element))
@@ -685,11 +727,17 @@ mod target_and_snapshot_tests {
     fn variable_edits_use_the_current_scope_without_preparing_again(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("view.crepus");
-        std::fs::write(&path, "include child.crepus label={name}").unwrap();
-        std::fs::write(dir.path().join("child.crepus"), "div id={label}").unwrap();
         let mut context = TemplateContext::new();
         context.set("name", "first");
+        Arc::make_mut(&mut context.virtual_files)
+            .insert("child.crepus".into(), "div id={label}".into());
         let state = cx.new(|cx| HotReloadState::new(path, context, cx));
+        state.update(cx, |state, _| {
+            state.template = Ok(Arc::new(
+                crepuscularity_core::parse_template("include child.crepus label={name}").unwrap(),
+            ));
+            *state.changed.lock().unwrap() = false;
+        });
         cx.run_until_parked();
         let includes = state.read_with(cx, |state, _| {
             Arc::clone(&state.prepared.as_ref().unwrap().includes)

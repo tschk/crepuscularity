@@ -402,6 +402,58 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires installed Bun to execute the actual emitted docs script"]
+    fn emitted_search_script_rejects_unsafe_paths() {
+        let html = render_shell("body", "Title", "<nav></nav>", &ThemeCss::default(), "Site");
+        let script = html
+            .split_once("<script>")
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let fixture = tempfile::tempdir().unwrap();
+        let harness = r#"
+const handlers = {};
+const input = {value: 'Guide', addEventListener(name, fn) {handlers[name] = fn;}};
+const results = {children: [], replaceChildren() {this.children = [];}, appendChild(el) {this.children.push(el);}};
+globalThis.document = {
+  getElementById(id) {return id === 'doc-search-input' ? input : results;},
+  querySelectorAll() {return [];}, addEventListener() {},
+  createElement() {return {setAttribute(name, value) {this[name] = value;}};}
+};
+globalThis.fetch = async () => ({json: async () => [
+  {title: 'Guide valid', path: 'guide.html'},
+  {title: 'Guide nested', path: 'nested/guide.html'},
+  {title: 'Guide backslash', path: 'folder\\evil.html'},
+  {title: 'Guide traversal', path: '../evil.html'},
+  {title: 'Guide scheme', path: 'javascript:alert(1)'},
+  {title: 'Guide absolute', path: '/evil.html'},
+  {title: 'Guide network', path: '//evil.example'}
+]});
+"#;
+        let checks = r#"
+await new Promise(resolve => setTimeout(resolve, 0));
+handlers.input.call(input);
+const paths = results.children.map(item => item.href);
+if (JSON.stringify(paths) !== JSON.stringify(['guide.html', 'nested/guide.html'])) {
+  throw new Error('unsafe search paths: ' + JSON.stringify(paths));
+}
+"#;
+        let path = fixture.path().join("search.mjs");
+        std::fs::write(&path, format!("{harness}\n{script}\n{checks}")).unwrap();
+        let output = std::process::Command::new("bun")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn generate_docs_escapes_markdown_titles_in_nav() {
         let src = tempfile::tempdir().expect("src");
         let out = tempfile::tempdir().expect("out");

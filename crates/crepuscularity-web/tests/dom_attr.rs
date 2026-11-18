@@ -28,4 +28,23 @@ mod tests {
             err_msg
         );
     }
+    #[wasm_bindgen_test]
+    fn unsafe_url_attributes_fail_before_dom_lookup() {
+        let element = ElementRef::new("missing-url");
+        for (name, value) in [
+            ("href", "javascript:alert(1)"),
+            ("HREF", "javascript:alert(1)"),
+            ("src", "java\nscript:alert(1)"),
+            ("action", "data:text/html,unsafe"),
+        ] {
+            assert_eq!(
+                element
+                    .attr(name, value)
+                    .unwrap_err()
+                    .as_string()
+                    .as_deref(),
+                Some("unsafe URL attribute value")
+            );
+        }
+    }
 }

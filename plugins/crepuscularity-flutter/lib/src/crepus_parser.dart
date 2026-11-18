@@ -733,12 +733,12 @@ const Map<String, String> _palette = {
   'black': '#000000',
   'transparent': '#00000000',
   'muted': '#8d8980',
-  'red-500': '#ef4444',
-  'green-500': '#22c55e',
-  'blue-500': '#3b82f6',
-  'blue-900': '#1e3a8a',
-  'amber-500': '#f59e0b',
-  'slate-500': '#64748b',
+  'red-500': '#fb2c36',
+  'green-500': '#00c950',
+  'blue-500': '#2b7fff',
+  'blue-900': '#1c398e',
+  'amber-500': '#fe9a00',
+  'slate-500': '#62748e',
 };
 
 List<double> _parseSparklineValues(String? raw) {

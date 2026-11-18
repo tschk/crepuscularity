@@ -12,7 +12,22 @@ export interface TabItem {
   children: ViewNode[];
 }
 
+export type LabelPart =
+  | { kind: "literal"; value: string }
+  | { kind: "expr"; value: string };
+
 export interface ViewStyle {
+  htmlTag?: string;
+  htmlDisplayContents?: boolean;
+  htmlFor?: string;
+  ariaLabel?: string;
+  formName?: string;
+  formValue?: string;
+  inputType?: string;
+  required?: boolean;
+  formMin?: string;
+  formMax?: string;
+  formStep?: string;
   id?: string;
   classes?: string[];
 
@@ -38,7 +53,9 @@ export interface ViewStyle {
   minHeight?: number;
   maxWidth?: number;
   maxHeight?: number;
+  /** @deprecated Not emitted or interpreted by the current View IR schema. */
   widthFraction?: number;
+  /** @deprecated Not emitted or interpreted by the current View IR schema. */
   heightFraction?: number;
   aspectRatio?: number;
 
@@ -132,6 +149,7 @@ export type ViewNode =
   | ({
       kind: "button";
       label: string;
+      labelParts?: LabelPart[];
       onClick?: string;
       onLongPress?: string;
     } & Styled)
@@ -188,6 +206,7 @@ export type ViewNode =
   | ({
       kind: "image";
       src: string;
+      srcBind?: string;
       alt?: string;
       placeholder?: string;
       onLongPress?: string;
@@ -195,12 +214,13 @@ export type ViewNode =
   | ({
       kind: "link";
       href: string;
+      hrefBind?: string;
       target?: string;
       rel?: string;
       children: ViewNode[];
     } & Styled)
   | ({ kind: "webView"; src: string } & Styled)
-  | ({ kind: "scroll"; axis: StackAxis; children: ViewNode[] } & Styled)
+  | ({ kind: "scroll"; axis: StackAxis; onLongPress?: string; children: ViewNode[] } & Styled)
   | ({ kind: "list"; ordered: boolean; children: ViewNode[] } & Styled)
   | ({ kind: "listItem"; onLongPress?: string; children: ViewNode[] } & Styled)
   | ({ kind: "slotRotate"; phrases: string[]; intervalMs: number } & Styled)
@@ -210,6 +230,7 @@ export type ViewNode =
       bind: string;
       multiline?: boolean;
       secure?: boolean;
+      onInput?: string;
       onChange?: string;
     } & Styled)
   | ({

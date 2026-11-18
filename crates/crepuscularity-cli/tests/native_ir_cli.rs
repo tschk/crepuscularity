@@ -122,6 +122,112 @@ fn native_ir_renders_stdin_json_virtual_files() {
     assert_eq!(value["root"][0]["children"][0]["content"], "Ada");
 }
 
+fn ir_envelope(payload: serde_json::Value) -> std::process::Output {
+    let mut child = crepus()
+        .args(["native", "ir", "--stdin-json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn native_ir_dispatches_template_filename_without_reading_it() {
+    for (filename, source) in [
+        (
+            "virtual/component.svelte",
+            "{#if show}<p>Hello {name}</p>{/if}",
+        ),
+        (
+            "virtual/component.vue",
+            "<template><p v-if=\"show\">Hello {{name}}</p></template>",
+        ),
+        (
+            "virtual/component.astro",
+            "---\nconst ignored = true;\n---\n<p>Hello {name}</p>",
+        ),
+        (
+            "virtual/component.ng",
+            "<p *ngIf=\"show\">Hello {{name}}</p>",
+        ),
+        ("virtual/component.tsx", "<p>Hello {name}</p>"),
+        ("virtual/component.jsx", "<p>Hello {name}</p>"),
+        ("virtual/component.crepus", "p \"Hello {name}\""),
+    ] {
+        let payload = serde_json::json!({"template": source, "filename": filename, "context": {"name": "Ada", "show": true}});
+        let output = ir_envelope(payload);
+        assert!(
+            output.status.success(),
+            "{filename}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ir: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(ir.to_string().contains("Hello Ada"), "{filename}: {ir}");
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory
+            .path()
+            .join(std::path::Path::new(filename).file_name().unwrap());
+        std::fs::write(&file, source).unwrap();
+        let output = crepus()
+            .args(["native", "ir"])
+            .arg(&file)
+            .args(["--var", "name=Ada", "--var", "show=true"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{filename}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let from_file: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(from_file, ir, "{filename}");
+    }
+}
+
+#[test]
+fn native_ir_rejects_invalid_filename_metadata() {
+    for filename in [
+        serde_json::json!(1),
+        serde_json::json!({}),
+        serde_json::json!("bad\0.vue"),
+        serde_json::json!(""),
+    ] {
+        let output =
+            ir_envelope(serde_json::json!({"template": "p \"Hello\"", "filename": filename}));
+        assert!(!output.status.success(), "accepted {filename}");
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("filename"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn native_ir_filename_does_not_override_include_base() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("part.crepus"), "p \"Included\"").unwrap();
+    let output = ir_envelope(serde_json::json!({
+        "template": "include part.crepus", "filename": "missing/virtual.crepus", "baseDir": directory.path()
+    }));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ir: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(ir.to_string().contains("Included"), "{ir}");
+}
+
 #[test]
 #[cfg_attr(
     windows,

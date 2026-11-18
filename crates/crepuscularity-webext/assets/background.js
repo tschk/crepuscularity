@@ -6,6 +6,14 @@ const DEFAULT_SETTINGS = {
   autoRender: false
 };
 
+function storageFailure(error) {
+  let message = "Storage operation failed";
+  try { message = String(error?.message ?? error); } catch (_) {
+    try { message = String(error); } catch (_) {}
+  }
+  return { ok: false, error: message };
+}
+
 const api = globalThis.browser ?? globalThis.chrome;
 if (!api?.runtime) {
   throw new Error("browser runtime API is unavailable");
@@ -20,15 +28,6 @@ const runtimeReady = fetch("../vendor/runtime_bg.wasm")
     return null;
   });
 
-function seedSettings() {
-  return browserApi.storage.sync
-    .get(DEFAULT_SETTINGS)
-    .then((settings) => browserApi.storage.sync.set({ ...DEFAULT_SETTINGS, ...settings }))
-    .catch((error) => {
-      console.error("Failed to seed extension settings", error);
-    });
-}
-
 api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "settings:get") {
     browserApi.storage.sync
@@ -37,16 +36,20 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         ok: true,
         settings: { ...DEFAULT_SETTINGS, ...settings }
       }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
+      .catch((error) => sendResponse(storageFailure(error)));
     return true;
   }
 
   if (message?.type === "settings:set") {
-    const nextSettings = { ...DEFAULT_SETTINGS, ...message.settings };
+    const nextSettings = { ...message.settings };
     browserApi.storage.sync
       .set(nextSettings)
-      .then(() => sendResponse({ ok: true, settings: nextSettings }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
+      .then(() => browserApi.storage.sync.get(DEFAULT_SETTINGS))
+      .then((settings) => sendResponse({
+        ok: true,
+        settings: { ...DEFAULT_SETTINGS, ...settings }
+      }))
+      .catch((error) => sendResponse(storageFailure(error)));
     return true;
   }
 
@@ -58,12 +61,15 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return { ok: false, error: "unknown message type" };
     })
     .then((response) => sendResponse(response))
-    .catch((error) => sendResponse({ ok: false, error: String(error) }));
+    .catch((error) => {
+      let message = "Runtime threw an unprintable value";
+      try { message = String(error); } catch (_) {}
+      sendResponse({ ok: false, error: message });
+    });
   return true;
 });
 
 api.runtime.onInstalled.addListener(() => {
-  seedSettings();
   runtimeReady
     .then((runtime) => {
       if (runtime && typeof runtime.settings_seed === "function") {
@@ -87,5 +93,3 @@ api.storage.onChanged.addListener((_changes, area) => {
       console.error("settings_seed failed on storage change", error);
     });
 });
-
-seedSettings();

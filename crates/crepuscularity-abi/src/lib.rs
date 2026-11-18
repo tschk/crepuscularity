@@ -14,9 +14,12 @@
 //! Pointers passed to [`CrepusEventCallback`] are valid until the next
 //! `crepus_session_dispatch_event` call on the same session (or until the session
 //! is freed). Do not retain them past that point.
+//! Callbacks must not call session functions on the same session, including free.
+//! Re-entry is rejected through [`crepus_last_error`]; a rejected free leaves
+//! the session alive. Other sessions may be used during a callback.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::path::PathBuf;
@@ -24,7 +27,7 @@ use std::ptr;
 
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_native::{
-    render_component_file_to_ir, render_from_files, render_template_to_ir, to_json,
+    render_component_file_to_ir, render_from_files, render_template_to_ir, to_json_owned,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -45,6 +48,19 @@ const MAX_FILES: usize = 10_000;
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    static ACTIVE_SESSIONS: RefCell<HashSet<*mut CrepusSession>> = RefCell::new(HashSet::new());
+}
+
+struct SessionCall(*mut CrepusSession);
+
+impl Drop for SessionCall {
+    fn drop(&mut self) {
+        ACTIVE_SESSIONS.with(|sessions| sessions.borrow_mut().remove(&self.0));
+    }
+}
+
+fn session_is_active(session: *mut CrepusSession) -> bool {
+    ACTIVE_SESSIONS.with(|sessions| sessions.borrow().contains(&session))
 }
 
 pub type CrepusEventCallback = extern "C" fn(event_json: *const c_char, userdata: *mut c_void);
@@ -96,6 +112,13 @@ pub extern "C" fn crepus_session_new() -> *mut CrepusSession {
 #[no_mangle]
 pub extern "C" fn crepus_session_free(session: *mut CrepusSession) {
     if session.is_null() {
+        return;
+    }
+    if session_is_active(session) {
+        set_error_for(
+            session,
+            "session cannot be freed during its event callback".to_string(),
+        );
         return;
     }
     drop_session(session);
@@ -156,6 +179,7 @@ pub extern "C" fn crepus_session_set_context_json(
 ) -> i32 {
     with_session(session, |session| {
         let raw = read_required_json(context_json_utf8, "context_json")?;
+        validate_context_numbers(&raw, 0)?;
         let value: Value = serde_json::from_str(&raw).map_err(|e| format!("context JSON: {e}"))?;
         let mut ctx = TemplateContext::new();
         merge_json_ctx(&value, &mut ctx)?;
@@ -171,6 +195,7 @@ pub extern "C" fn crepus_session_apply_context_patch_json(
 ) -> i32 {
     with_session(session, |session| {
         let raw = read_required_json(context_json_utf8, "context_json")?;
+        validate_context_numbers(&raw, 0)?;
         let value: Value = serde_json::from_str(&raw).map_err(|e| format!("context JSON: {e}"))?;
         merge_json_ctx(&value, &mut session.context)?;
         Ok(())
@@ -268,15 +293,13 @@ fn dispatch_event(
     if let Some(context) = &event.context {
         merge_json_ctx(context, &mut session.context)?;
     }
-    if let Some((key, value)) = bind_update(&event.handler) {
-        session.context.set(key, TemplateValue::Str(value));
-    }
-
     let handler = event
         .handler
-        .clone()
-        .or(event.event.clone())
+        .or(event.event)
         .unwrap_or_else(|| "event".to_string());
+    if let Some((key, value)) = bind_update(&handler) {
+        session.context.set(key, TemplateValue::Str(value));
+    }
     let payload = json!({
         "kind": "event",
         "handler": handler,
@@ -303,8 +326,13 @@ fn dispatch_event(
 }
 
 fn parse_event(raw: &str) -> Result<EventEnvelope, String> {
-    if let Ok(value) = serde_json::from_str::<Value>(raw) {
-        match value {
+    if let Ok(fields) = serde_json::from_str::<HashMap<String, &serde_json::value::RawValue>>(raw) {
+        if let Some(context) = fields.get("context") {
+            validate_context_numbers(context.get(), 0)?;
+        }
+    }
+    match serde_json::from_str::<Value>(raw) {
+        Ok(value) => match value {
             Value::String(handler) => Ok(EventEnvelope {
                 handler: Some(handler),
                 event: None,
@@ -315,19 +343,20 @@ fn parse_event(raw: &str) -> Result<EventEnvelope, String> {
                 serde_json::from_value(value).map_err(|e| format!("event JSON: {e}"))
             }
             _ => Err("event JSON must be a string or object".to_string()),
+        },
+        Err(error) if serde_json::from_str::<&serde_json::value::RawValue>(raw).is_ok() => {
+            Err(format!("event JSON: {error}"))
         }
-    } else {
-        Ok(EventEnvelope {
+        Err(_) => Ok(EventEnvelope {
             handler: Some(raw.to_string()),
             event: None,
             payload: None,
             context: None,
-        })
+        }),
     }
 }
 
-fn bind_update(handler: &Option<String>) -> Option<(String, String)> {
-    let handler = handler.as_ref()?;
+fn bind_update(handler: &str) -> Option<(String, String)> {
     let rest = handler.strip_prefix("bind:")?;
     let (key, value) = rest.split_once(':')?;
     Some((key.to_string(), value.to_string()))
@@ -349,10 +378,21 @@ fn render_session(session: &mut CrepusSession) -> Result<String, String> {
             }
         }
         Source::Files { entry, files } => {
-            render_from_files(files, entry, &session.context).map_err(|e| e.to_string())?
+            let selected_entry = session.component.as_ref().map(|component| {
+                let path = entry
+                    .split_once('#')
+                    .map_or(entry.as_str(), |(path, _)| path);
+                format!("{path}#{component}")
+            });
+            render_from_files(
+                files,
+                selected_entry.as_deref().unwrap_or(entry),
+                &session.context,
+            )
+            .map_err(|e| e.to_string())?
         }
     };
-    to_json(&ir).map_err(|e| format!("serialize IR: {e}"))
+    to_json_owned(ir).map_err(|e| format!("serialize IR: {e}"))
 }
 
 fn with_session<F>(session: *mut CrepusSession, f: F) -> i32
@@ -375,6 +415,10 @@ where
     if session.is_null() {
         return Err("session pointer is null".to_string());
     }
+    if !ACTIVE_SESSIONS.with(|sessions| sessions.borrow_mut().insert(session)) {
+        return Err("session cannot be re-entered during its event callback".to_string());
+    }
+    let _call = SessionCall(session);
     let session = unsafe { &mut *session };
     f(session)
 }
@@ -406,13 +450,47 @@ fn read_optional(ptr: *const c_char) -> Option<String> {
     )
 }
 
+fn validate_context_numbers(raw: &str, depth: usize) -> Result<(), String> {
+    if depth > 128 {
+        return Err("context JSON nesting exceeds 128 levels".to_string());
+    }
+    let raw = raw.trim();
+    match raw.as_bytes().first() {
+        Some(b'{') => {
+            let fields: HashMap<String, &serde_json::value::RawValue> =
+                serde_json::from_str(raw).map_err(|error| format!("context JSON: {error}"))?;
+            for value in fields.values() {
+                validate_context_numbers(value.get(), depth + 1)?;
+            }
+        }
+        Some(b'[') => {
+            let items: Vec<&serde_json::value::RawValue> =
+                serde_json::from_str(raw).map_err(|error| format!("context JSON: {error}"))?;
+            for value in items {
+                validate_context_numbers(value.get(), depth + 1)?;
+            }
+        }
+        Some(b'-' | b'0'..=b'9')
+            if !raw.contains(['.', 'e', 'E']) && raw.parse::<i64>().is_err() =>
+        {
+            return Err(format!(
+                "integer exceeds signed 64-bit context range: {raw}"
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn merge_json_ctx(value: &Value, ctx: &mut TemplateContext) -> Result<(), String> {
     let Some(obj) = value.as_object() else {
         return Err("context must be a JSON object".to_string());
     };
-    for (key, value) in obj {
-        ctx.set(key.clone(), json_to_template_value(value)?);
-    }
+    let updates = obj
+        .iter()
+        .map(|(key, value)| json_to_template_value(value).map(|value| (key.clone(), value)))
+        .collect::<Result<Vec<_>, _>>()?;
+    ctx.vars.extend(updates);
     Ok(())
 }
 
@@ -423,6 +501,8 @@ fn json_to_template_value(value: &Value) -> Result<TemplateValue, String> {
         Value::Number(v) => {
             if let Some(n) = v.as_i64() {
                 Ok(TemplateValue::Int(n))
+            } else if v.is_u64() {
+                Err(format!("integer exceeds signed 64-bit context range: {v}"))
             } else if let Some(n) = v.as_f64() {
                 Ok(TemplateValue::Float(n))
             } else {
@@ -460,7 +540,7 @@ fn json_to_template_scalar(value: &Value) -> Result<TemplateValue, String> {
 }
 
 fn set_error_for(session: *mut CrepusSession, error: String) {
-    if session.is_null() {
+    if session.is_null() || session_is_active(session) {
         LAST_ERROR.with(|slot| *slot.borrow_mut() = Some(error));
     } else {
         unsafe { &mut *session }.last_error = Some(error);

@@ -704,8 +704,18 @@ stack col
     });
 
     test('only palette colour names are recognised', () {
-      expect(styleOf('text-red-500')!.foregroundColor, '#ef4444');
-      expect(styleOf('bg-blue-900')!.backgroundColor, '#1e3a8a');
+      const colors = {
+        'red-500': '#fb2c36',
+        'green-500': '#00c950',
+        'blue-500': '#2b7fff',
+        'blue-900': '#1c398e',
+        'amber-500': '#fe9a00',
+        'slate-500': '#62748e',
+      };
+      colors.forEach((name, hex) {
+        expect(styleOf('text-$name')!.foregroundColor, hex, reason: name);
+        expect(styleOf('bg-$name')!.backgroundColor, hex, reason: name);
+      });
       expect(styleOf('text-white')!.foregroundColor, '#ffffff');
       expect(styleOf('bg-transparent')!.backgroundColor, '#00000000');
       // Arbitrary values are not honoured — no `text-[#deadbe]` escape hatch.

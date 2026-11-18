@@ -13,7 +13,9 @@
 #[cfg(not(feature = "std"))]
 use alloc::{format, string::String, vec::Vec};
 
-use crate::document::{container, text_node, EmbeddedDocument, EmbeddedNode, EmbeddedStyle};
+use crate::document::{
+    collect_primary_text, container, text_node, EmbeddedDocument, EmbeddedNode, EmbeddedStyle,
+};
 use crate::framebuffer::Framebuffer;
 use crate::layout::layout_document;
 use crate::paint::paint_document;
@@ -160,16 +162,9 @@ impl<V: Vars + ?Sized> Scope<'_, V> {
         nodes.iter().map(|node| self.node(node)).collect()
     }
 
-    /// Button label: the first text child, looking through `span`s, as the std renderer does.
+    /// Button labels use the same visible, evaluated children as the std renderer.
     fn label(&self, children: &[CNode]) -> String {
-        for child in children {
-            match child {
-                CNode::Text(parts) => return self.text(parts),
-                CNode::Element(el) if el.tag == "span" => return self.label(el.children),
-                _ => {}
-            }
-        }
-        String::new()
+        String::from(collect_primary_text(&self.list(children)).unwrap_or_default())
     }
 
     fn text(&self, parts: &[CText]) -> String {
@@ -196,7 +191,12 @@ impl<V: Vars + ?Sized> Scope<'_, V> {
                 otherwise,
             } => {
                 let body = if self.holds(*cond) { then } else { otherwise };
-                container("if", EmbeddedStyle::default(), self.list(body), None, None)
+                let children = self.list(body);
+                let style = EmbeddedStyle {
+                    hidden: children.iter().all(|child| child.style.hidden),
+                    ..EmbeddedStyle::default()
+                };
+                container("if", style, children, None, None)
             }
             CNode::Element(el) => self.element(el),
         }

@@ -17,6 +17,40 @@ use crepuscularity_core::tailwind::{
     parse_opacity_percentage, resolve_css_color, LengthToken,
 };
 
+pub(crate) fn element_state_style(
+    el: &crepuscularity_core::ast::Element,
+    ctx: &TemplateContext,
+    state: &str,
+    base: Option<&gpui::StyleRefinement>,
+) -> gpui::StyleRefinement {
+    let mut style = gpui::StyleRefinement::default();
+    for class in el.classes.iter().map(String::as_str).chain(
+        el.conditional_classes
+            .iter()
+            .filter(|class| ctx.eval_condition(&class.condition).unwrap_or(false))
+            .map(|class| class.class.as_str()),
+    ) {
+        let is_list = class.starts_with('{') && class.ends_with('}');
+        let resolved = if is_list {
+            ctx.interpolate(class).unwrap_or_default()
+        } else {
+            class.to_owned()
+        };
+        let classes = if is_list {
+            resolved.split_whitespace().collect::<Vec<_>>()
+        } else {
+            vec![resolved.as_str()]
+        };
+        for class in classes {
+            style = state_style_with_initial(style, std::iter::once(class), state, Some(ctx), base);
+        }
+    }
+    if style.box_shadow.as_ref() == base.and_then(|base| base.box_shadow.as_ref()) {
+        style.box_shadow = None;
+    }
+    style
+}
+
 /// Apply a class to a div, optionally resolving `{expr}` placeholders against context.
 pub fn apply_class(d: Div, class: &str) -> Div {
     apply_class_with_ctx(d, class, None)
@@ -2074,11 +2108,12 @@ mod definite_length_tests {
     #[test]
     fn definite_lengths_reuse_finite_validation_and_reject_relative_units() {
         for value in [
-            "NaN", "inf", "1e100", "[NaNpx]", "auto", "full", "1/2", "[50%]",
+            "NaN", "inf", "1e100", "[NaNpx]", "auto", "full", "1/2", "[50%]", "-2", "0.3", "01",
+            "1.50",
         ] {
             assert!(parse_definite_length(value).is_none(), "{value}");
         }
-        for value in ["px", "4", "-2", "[12px]", "[1.5rem]"] {
+        for value in ["px", "4", "4.5", "0.25", "[-8px]", "[12px]", "[1.5rem]"] {
             assert!(parse_definite_length(value).is_some(), "{value}");
         }
     }

@@ -917,17 +917,18 @@ fn serve_secondary_preview(
 
     let mut html = render_dev_index_html(site_dir, &files, meta, "");
 
-    let needle = r#"<div id="crepus-root"></div>
-  <script type="module" src="./app.js"></script>"#;
+    let needle = r#"<div id="crepus-root"></div>"#;
     if let Some(pos) = html.find(needle) {
-        let replacement = format!(
-            r#"<div id="crepus-root">{inner}</div>
-  <!-- crepus web dev: preview only (entry is WASM on /) -->"#
-        );
+        let replacement = format!(r#"<div id="crepus-root" style="opacity:1">{inner}</div>"#);
         html.replace_range(pos..pos + needle.len(), &replacement);
+        html = html.replace(
+            r#"<script type="module" src="./app.js"></script>"#,
+            "<!-- crepus web dev: preview only (entry is WASM on /) -->",
+        );
     } else {
         html = error_document("dev server: could not patch index shell (internal)");
     }
+    html = html.replace("./vendor/unocss.js", "/vendor/unocss.js");
     inject_reload_before_body_end(&mut html);
     write_html_response(stream, &html);
 }
@@ -1128,6 +1129,38 @@ fn guess_mime(ext: &str) -> &'static str {
 mod tests {
     use crate::crepus_toml::WebTargetMeta;
     use std::collections::HashMap;
+
+    #[test]
+    fn secondary_preview_is_visible_without_bootstrapping_the_entry_runtime() {
+        use std::io::Read;
+        use std::net::{TcpListener, TcpStream};
+        let site = tempfile::tempdir().unwrap();
+        let files = std::sync::Arc::new(std::sync::RwLock::new(HashMap::from([(
+            "page.crepus".to_string(),
+            "p \"Preview fixture\"".to_string(),
+        )])));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        super::serve_secondary_preview(&mut server, &files, "page.crepus", site.path(), None);
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("<p>Preview fixture</p>"), "{response}");
+        assert!(
+            response.contains(r#"id="crepus-root" style="opacity:1""#),
+            "{response}"
+        );
+        assert!(!response.contains(r#"src="./app.js""#), "{response}");
+        assert!(
+            response.contains(r#"src="/vendor/unocss.js""#),
+            "{response}"
+        );
+    }
 
     #[test]
     fn template_validation_messages_are_sorted_by_relative_path() {

@@ -4,7 +4,7 @@
 //! `JsValue`: it avoids a `serde-wasm-bindgen` dependency and `JSON.parse` on a
 //! single string beats field-by-field reflection for trees of any real size.
 
-use crepuscularity_core::context::TemplateContext;
+use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_native::{render_template_to_ir, render_template_to_ir_with_path, IR_VERSION};
 use wasm_bindgen::prelude::*;
 
@@ -72,11 +72,19 @@ fn build_context_inner(context_json: Option<&str>) -> Result<TemplateContext, St
         .as_object()
         .ok_or_else(|| "context must be a JSON object".to_string())?;
     for (k, v) in obj {
-        let s = match v {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
+        let value = match v {
+            serde_json::Value::String(s) => TemplateValue::Str(s.clone()),
+            serde_json::Value::Bool(v) => TemplateValue::Bool(*v),
+            serde_json::Value::Null => TemplateValue::Null,
+            serde_json::Value::Number(v) => v
+                .as_i64()
+                .map(TemplateValue::Int)
+                .or_else(|| v.as_f64().map(TemplateValue::Float))
+                .ok_or_else(|| "context number cannot be represented".to_string())?,
+            // ponytail: structured values stay JSON strings until the JS context API supports lists/scopes.
+            other => TemplateValue::Str(other.to_string()),
         };
-        ctx.set(k, s.as_str());
+        ctx.set(k, value);
     }
     Ok(ctx)
 }
@@ -149,6 +157,20 @@ mod tests {
     fn test_build_context_inner_valid() {
         let ctx = build_context_inner(Some(r#"{"key": "value"}"#)).unwrap();
         assert_eq!(format!("{:?}", ctx.get("key").unwrap()), r#"Str("value")"#);
+    }
+
+    #[test]
+    fn context_scalars_keep_their_types() {
+        let ctx = build_context_inner(Some(
+            r#"{"no":false,"yes":true,"nothing":null,"integer":7,"fraction":1.5,"list":[1]}"#,
+        ))
+        .unwrap();
+        assert!(matches!(ctx.get("no"), Some(TemplateValue::Bool(false))));
+        assert!(matches!(ctx.get("yes"), Some(TemplateValue::Bool(true))));
+        assert!(matches!(ctx.get("nothing"), Some(TemplateValue::Null)));
+        assert!(matches!(ctx.get("integer"), Some(TemplateValue::Int(7))));
+        assert!(matches!(ctx.get("fraction"), Some(TemplateValue::Float(value)) if *value == 1.5));
+        assert!(matches!(ctx.get("list"), Some(TemplateValue::Str(value)) if value == "[1]"));
     }
 
     #[test]

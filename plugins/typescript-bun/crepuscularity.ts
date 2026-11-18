@@ -1,5 +1,4 @@
-import { spawnSync } from "node:child_process"
-import { isAbsolute, basename } from "node:path"
+import { isAbsolute, basename, dirname, resolve } from "node:path"
 
 export interface ViewIr {
   version: number
@@ -17,15 +16,21 @@ export function crepusBin(): string {
 const BIND_BLOCKLIST = new Set<string>(["baseDir", "_"]) // ponytail: block security-sensitive keys only
 
 export async function renderIr(path: string, context: Record<string, unknown> = {}): Promise<ViewIr> {
-  const template = await Bun.file(path).text()
-  const proc = spawnSync(crepusBin(), ["native", "ir", "--stdin-json"], {
-    input: JSON.stringify({ template, context }),
-    encoding: "utf8"
+  const template = new TextDecoder("utf-8", { fatal: true }).decode(await Bun.file(path).arrayBuffer())
+  const proc = Bun.spawn([crepusBin(), "native", "ir", "--stdin-json"], {
+    stdin: new Blob([JSON.stringify({ template, context, filename: path, baseDir: dirname(resolve(path)) })]),
+    stdout: "pipe",
+    stderr: "pipe",
   })
-  if (proc.status !== 0) {
-    throw new Error(proc.stderr)
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (status !== 0) {
+    throw new Error(stderr)
   }
-  return JSON.parse(proc.stdout) as ViewIr
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(stdout)) as ViewIr
 }
 
 export async function renderHtml(path: string, context: Record<string, unknown> = {}): Promise<string> {
@@ -68,8 +73,10 @@ export class CrepusViewSession {
     const parsed = typeof event === "string" ? { handler: event } : event
     if (parsed.handler.startsWith("bind:")) {
       const [, key, ...rest] = parsed.handler.split(":")
-      if (!BIND_BLOCKLIST.has(key)) {
-        this.context[key] = rest.join(":")
+      if (rest.length > 0 && !BIND_BLOCKLIST.has(key)) {
+        Object.defineProperty(this.context, key, {
+          value: rest.join(":"), writable: true, enumerable: true, configurable: true,
+        })
       }
     }
     const callback = this.handlers.get(parsed.handler)

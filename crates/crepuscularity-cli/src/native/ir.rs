@@ -8,7 +8,7 @@ use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_core::{DriverCache, Fingerprint};
 use crepuscularity_native::{
     generate_native_source, render_component_file_to_ir, render_from_files, render_template_to_ir,
-    to_json, to_json_pretty, NativeCodegenTarget,
+    render_template_to_ir_with_path, to_json, to_json_pretty, NativeCodegenTarget,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -40,10 +40,29 @@ pub struct IrEnvelope {
     entry: Option<String>,
     files: Option<HashMap<String, String>>,
     template: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_filename")]
+    filename: Option<String>,
     context: Option<Value>,
     component: Option<String>,
     pretty: Option<bool>,
     base_dir: Option<PathBuf>,
+}
+
+fn deserialize_filename<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::de::Error;
+    let filename = Option::<String>::deserialize(deserializer)
+        .map_err(|e| D::Error::custom(format!("filename: {e}")))?;
+    if filename
+        .as_ref()
+        .is_some_and(|name| name.is_empty() || name.contains('\0'))
+    {
+        return Err(D::Error::custom(
+            "filename must be nonempty and contain no NUL",
+        ));
+    }
+    Ok(filename)
 }
 
 #[derive(Args, Debug, Clone)]
@@ -150,8 +169,12 @@ pub fn run_ir_parsed(parsed: IrArgs) -> Result<String, CrepusCliError> {
                 render_component_file_to_ir(&template, &component, &ctx)
                     .map_err(|e| CrepusCliError::context(e.to_string()))?
             } else {
-                render_template_to_ir(&template, &ctx)
-                    .map_err(|e| CrepusCliError::context(e.to_string()))?
+                render_template_to_ir_with_path(
+                    &template,
+                    &ctx,
+                    env.filename.as_deref().map(Path::new),
+                )
+                .map_err(|e| CrepusCliError::context(e.to_string()))?
             }
         } else {
             return Err(CrepusCliError::context(
@@ -188,7 +211,8 @@ pub fn run_ir_parsed(parsed: IrArgs) -> Result<String, CrepusCliError> {
         render_component_file_to_ir(&content, &component, &ctx)
             .map_err(|e| CrepusCliError::context(e.to_string()))?
     } else {
-        render_template_to_ir(&content, &ctx).map_err(|e| CrepusCliError::context(e.to_string()))?
+        render_template_to_ir_with_path(&content, &ctx, Some(&path))
+            .map_err(|e| CrepusCliError::context(e.to_string()))?
     };
     stringify_ir(&ir, parsed.pretty)
 }

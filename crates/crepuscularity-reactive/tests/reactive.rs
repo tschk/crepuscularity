@@ -258,3 +258,118 @@ fn stale_source_cleanup() {
     );
     assert_eq!(*last_value.borrow(), 200);
 }
+
+#[test]
+fn disposing_a_queued_effect_during_flush_cancels_its_run() {
+    let trigger = Signal::new(false);
+    let target = Signal::new(0);
+    let runs = Rc::new(RefCell::new(0));
+    let handle = Rc::new(RefCell::new(None::<Effect>));
+    let disposer = Effect::new({
+        let trigger = trigger.clone();
+        let handle = handle.clone();
+        move || {
+            if trigger.get() {
+                if let Some(effect) = handle.borrow_mut().take() {
+                    effect.dispose();
+                }
+            }
+        }
+    });
+    *handle.borrow_mut() = Some(Effect::new({
+        let target = target.clone();
+        let runs = runs.clone();
+        move || {
+            target.get();
+            *runs.borrow_mut() += 1;
+        }
+    }));
+    batch_begin();
+    trigger.set(true);
+    target.set(1);
+    batch_end();
+    target.set(2);
+    assert_eq!(*runs.borrow(), 1);
+    assert!(handle.borrow().is_none());
+    disposer.dispose();
+}
+
+#[test]
+fn memo_switches_dependencies_even_when_selected_value_is_equal() {
+    let select_left = Signal::new(true);
+    let left = Signal::new(1);
+    let right = Signal::new(1);
+    let computations = Rc::new(RefCell::new(0));
+    let memo = Memo::new({
+        let select_left = select_left.clone();
+        let left = left.clone();
+        let right = right.clone();
+        let computations = computations.clone();
+        move || {
+            *computations.borrow_mut() += 1;
+            if select_left.get() {
+                left.get()
+            } else {
+                right.get()
+            }
+        }
+    });
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let effect = Effect::new({
+        let memo = memo.clone();
+        let observed = observed.clone();
+        move || observed.borrow_mut().push(memo.get())
+    });
+    select_left.set(false);
+    assert_eq!(
+        *observed.borrow(),
+        vec![1],
+        "equal memo values must not rerun effects"
+    );
+    assert_eq!(*computations.borrow(), 2);
+    left.set(9);
+    assert_eq!(
+        *computations.borrow(),
+        2,
+        "old dependency must be unsubscribed"
+    );
+    right.set(3);
+    assert_eq!(*observed.borrow(), vec![1, 3]);
+    effect.dispose();
+    memo.dispose();
+}
+
+#[test]
+fn disposing_unqueued_nodes_preserves_batched_effects_and_memos() {
+    let source = Signal::new(0);
+    let latest = Rc::new(RefCell::new(vec![0; 64]));
+    let mut pending = Vec::new();
+    let mut memos = Vec::new();
+    for index in 0..64 {
+        let source = source.clone();
+        let memo = Memo::new(move || source.get() + 1);
+        let read = memo.clone();
+        let latest = latest.clone();
+        pending.push(Effect::new(move || latest.borrow_mut()[index] = read.get()));
+        memos.push(memo);
+    }
+    let unrelated: Vec<_> = (0..64).map(|_| Effect::new(|| {})).collect();
+    let unused: Vec<_> = (0..64).map(|_| Memo::new(|| 0)).collect();
+    batch_begin();
+    source.set(2);
+    for effect in unrelated {
+        effect.dispose();
+    }
+    for memo in unused {
+        memo.dispose();
+    }
+    assert!(latest.borrow().iter().all(|value| *value == 1));
+    batch_end();
+    assert!(latest.borrow().iter().all(|value| *value == 3));
+    for effect in pending {
+        effect.dispose();
+    }
+    for memo in memos {
+        memo.dispose();
+    }
+}

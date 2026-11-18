@@ -76,14 +76,15 @@ def render_ir(path: str | Path, context: dict[str, Any] | None = None, allowed_d
     args = [_crepus_bin(), "native", "ir", command_path]
     input_data = None
     if context is not None:
-        source = template_path.read_text()
-        payload = {"template": source, "context": context, "baseDir": str(template_path.parent)}
+        source = template_path.read_bytes().decode("utf-8")
+        payload = {"template": source, "context": context, "filename": str(path), "baseDir": str(template_path.parent)}
         args = [_crepus_bin(), "native", "ir", "--stdin-json"]
-        input_data = json.dumps(payload)
-    proc = subprocess.run(args, input=input_data, text=True, capture_output=True, check=False)
+        input_data = json.dumps(payload).encode("utf-8")
+    proc = subprocess.run(args, input=input_data, capture_output=True, check=False)
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip())
-    data = json.loads(proc.stdout)
+        stderr = proc.stderr.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        raise RuntimeError(stderr.strip())
+    data = json.loads(proc.stdout.decode("utf-8"))
     return ViewIr(version=data["version"], root=data["root"])
 
 

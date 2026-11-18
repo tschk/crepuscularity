@@ -119,6 +119,10 @@ fn web_build_example_site_emits_wasm() {
         eprintln!("skipping: wasm32 target or wasm-bindgen not installed");
         return;
     }
+    let bindgen_before = Command::new("wasm-bindgen")
+        .arg("--version")
+        .output()
+        .expect("installed wasm-bindgen version");
     let out = tempfile::tempdir().expect("tempdir");
     let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/web-site")
@@ -139,6 +143,15 @@ fn web_build_example_site_emits_wasm() {
     assert!(
         status.success(),
         "crepus web build should succeed with wasm32 + wasm-bindgen"
+    );
+    let bindgen_after = Command::new("wasm-bindgen")
+        .arg("--version")
+        .output()
+        .expect("installed wasm-bindgen remains available");
+    assert!(bindgen_after.status.success());
+    assert_eq!(
+        bindgen_after.stdout, bindgen_before.stdout,
+        "building a site must not replace the installed wasm-bindgen version"
     );
 
     let has_wasm = std::fs::read_dir(out.path().join("pkg"))

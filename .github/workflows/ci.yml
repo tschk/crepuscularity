@@ -20,6 +20,11 @@ jobs:
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
+    env:
+      # Compiler integration tests link many binaries; omit debug symbols, not assertions.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -49,7 +54,7 @@ jobs:
         uses: actions/cache@v4 # v4.3.0
         with:
           path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-build-target-nodebug-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Set SDKROOT (macOS)
         if: runner.os == 'macOS'
@@ -99,6 +104,53 @@ jobs:
       - name: Test CLI with all features
         run: cargo test --locked --package crepuscularity-cli --features full
         if: matrix.os == 'ubuntu-latest'
+
+      - name: Test selected compiler, runtime and embedded feature contracts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo test --locked -p crepuscularity-core -p crepuscularity-native --all-features
+          cargo test --locked -p crepuscularity-runtime --all-features
+          cargo test --locked -p crepuscularity-embedded -p crepuscularity-lvgl --features crepuscularity-embedded/macros,crepuscularity-embedded/mipidsi
+          cargo test --locked -p crepuscularity-embedded --no-default-features --features macros,mipidsi
+
+      - name: Install Bun for integration contracts
+        if: matrix.os == 'ubuntu-latest'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Test editor, palette and extension contracts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          bun install --frozen-lockfile
+          cargo test --locked -p crepuscularity-cli --bin crepus -- --ignored
+          bun run test:tooling
+          bun run test:webext
+          bun install --frozen-lockfile --cwd editors/vscode
+          bun run --cwd editors/vscode compile
+          python3 scripts/test-tailwind-colors.py
+
+      - name: Test CLI protocol and C adapter boundaries
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo build --locked -p crepuscularity-cli --no-default-features -p crepuscularity-lsp -p crepuscularity-abi
+          python3 scripts/test-lsp-protocol.py
+          python3 scripts/test-lsp-protocol.py --without-shutdown
+          mkdir -p target/contract-tests
+          gcc -Wall -Wextra -Werror plugins/c/crepuscularity_plugin.c -o target/contract-tests/crepus-c
+          g++ -std=c++17 -Wall -Wextra -Werror plugins/cpp/crepuscularity_plugin.cpp -o target/contract-tests/crepus-cpp
+          python3 scripts/test-c-pipes.py target/contract-tests/crepus-c target/contract-tests/crepus-cpp
+          python3 scripts/test-c-html.py
+          CREPUS_BIN="$PWD/target/debug/crepus" CREPUS_ABI_LIB="$PWD/target/debug/libcrepuscularity_abi.so" python3 -m unittest discover -s plugins/python -p 'test*.py'
+          CREPUS_BIN="$PWD/target/debug/crepus" bun test ./plugins/typescript-bun/transport-contract.test.ts
+
+      - name: Test parser package installation and browser workers
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          bash crates/crepuscularity-wasm/build.sh
+          python3 -m pip install playwright==1.65.2
+          python3 -m playwright install --with-deps chromium webkit
+          python3 crates/crepuscularity-wasm/npm/browser.test.py
 
   build-examples:
     name: Build Examples
@@ -178,10 +230,12 @@ jobs:
           ruby-version: "3.3"
 
       - name: Install PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: "8.3"
           coverage: none
+        env:
+          verbose: true
 
       - name: Install Java
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
@@ -231,6 +285,9 @@ jobs:
           javac -version
           kotlinc -version
           dotnet --version
+
+      - name: Test Swift transport contracts
+        run: swift test --package-path plugins
 
       - name: Run plugin smoke
         run: bash scripts/plugin-smoke.sh

@@ -7,16 +7,28 @@
   "description": "WASM build of the crepuscularity parser — .crepus, JSX, Svelte, Vue, Astro and Angular templates to View IR",
   "license": "ISC",
   "type": "module",
-  "main": "./index.ts",
+  "main": "./index.js",
   "types": "./index.ts",
   "exports": {
-    ".": "./index.ts",
-    "./types": "./types.ts"
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.js"
+    },
+    "./types": "./types.ts",
+    "./browser": {
+      "types": "./browser.ts",
+      "default": "./browser.js"
+    }
   },
   "files": [
     "index.ts",
+    "index.js",
+    "parser.ts",
+    "browser.ts",
+    "browser.js",
     "types.ts",
     "wasm",
+    "browser",
     "README.md"
   ],
   "repository": {

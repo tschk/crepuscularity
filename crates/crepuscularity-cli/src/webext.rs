@@ -1208,7 +1208,11 @@ try {{
 }} catch (error) {{
   const root = document.getElementById("root");
   if (root) {{
-    root.textContent = String(error?.stack ?? error);
+    let message = "Runtime threw an unprintable value";
+    try {{ message = String(error?.stack ?? error); }} catch (_) {{
+      try {{ message = String(error); }} catch (_) {{}}
+    }}
+    root.textContent = message;
   }} else {{
     throw error;
   }}
@@ -1615,6 +1619,54 @@ mod tests {
         assert!(js.contains("runtime.options_main"));
         assert!(js.contains("runtime.render_options"));
         assert!(js.contains(r#"document.getElementById("root")"#));
+    }
+
+    #[test]
+    #[ignore = "requires installed Bun to execute the actual emitted extension script"]
+    fn emitted_page_displays_unprintable_errors_and_preserves_missing_root_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("app");
+        let dist = root.path().join("dist");
+        std::fs::create_dir_all(app.join("pages")).unwrap();
+        std::fs::write(app.join("pages/options.crepus"), "p \"Options\"").unwrap();
+        let manifest = toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
+        render_crepus_pages(&app, &dist, &manifest).unwrap();
+        let harness = root.path().join("check.mjs");
+        std::fs::write(&harness, r#"
+import { strict as assert } from 'node:assert';
+const source = await Bun.file(process.argv[2]).text();
+const body = source.slice(source.indexOf('\n') + 1);
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+const run = new AsyncFunction('runtime', 'init', 'document', 'fetch', body);
+const fetchWasm = async () => ({ arrayBuffer: async () => new ArrayBuffer(0) });
+const error = new Error('ordinary failure');
+for (const [value, expected] of [
+  [error, error.stack], ['failed', 'failed'],
+  [Object.create(null), 'Runtime threw an unprintable value'],
+  [new Proxy({}, {get() {throw new Error('getter');}}), 'Runtime threw an unprintable value'],
+  [{get stack() {throw new Error('stack');}, toString() {return 'printable';}}, 'printable'],
+]) {
+  const root = {textContent: 'before'};
+  await run({options_main() {throw value;}}, async () => {}, {getElementById: () => root}, fetchWasm);
+  assert.equal(root.textContent, expected);
+}
+const failure = Object.create(null);
+await assert.rejects(run({options_main() {throw failure;}}, async () => {}, {getElementById: () => null}, fetchWasm), value => value === failure);
+console.log('six emitted-page error cases passed');
+"#).unwrap();
+        let output = std::process::Command::new("bun")
+            .arg(&harness)
+            .arg(dist.join("src/options.js"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("six emitted-page error cases passed")
+        );
     }
 
     #[test]

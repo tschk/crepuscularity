@@ -13,4 +13,6 @@ pub use memo::Memo;
 pub use signal::Signal;
 
 #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-pub use dom::dom::{bind_attr, bind_class, bind_text};
+pub use dom::bindings::{
+    bind_attr, bind_bool_attr, bind_checked, bind_class, bind_text, bind_value,
+};

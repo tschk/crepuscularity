@@ -87,13 +87,9 @@ impl SsrHandler {
     /// runtime event loop is not blocked. The pre-parsed template AST (`opts.nodes`) is available
     /// in the state and is shared across all requests via `Arc`.
     pub async fn handle(State(opts): State<Arc<SsrOptions>>) -> Html<String> {
-        let nodes = Arc::clone(&opts.nodes);
-        let defaults = opts.defaults.clone();
-        let title = opts.title.clone();
-
         let html = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let ctx = TemplateContext {
-                vars: defaults,
+                vars: opts.defaults.clone(),
                 base_dir: None,
                 slot: None,
                 virtual_files: std::sync::Arc::new(HashMap::new()),
@@ -101,10 +97,10 @@ impl SsrHandler {
             let counter = Cell::new(0u32);
             let mut bind = crate::BindMap::new();
             let doc = SsrDocument {
-                title: &title,
+                title: &opts.title,
                 ..Default::default()
             };
-            render_ssr_document_with_nodes(&nodes, &counter, &mut bind, &ctx, &doc, true)
+            render_ssr_document_with_nodes(&opts.nodes, &counter, &mut bind, &ctx, &doc, true)
                 .map_err(|e| e.to_string())
         })
         .await

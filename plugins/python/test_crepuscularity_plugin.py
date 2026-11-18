@@ -21,7 +21,7 @@ class PathBoundaryTests(unittest.TestCase):
         self.outside = self.root / "outside.crepus"
         self.outside.write_text('span "outside"')
         self.reply = subprocess.CompletedProcess(
-            [], 0, stdout='{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=""
+            [], 0, stdout=b'{"version":7,"root":[{"kind":"text","content":"allowed"}]}', stderr=b""
         )
 
     def test_rejects_outside_paths_before_reading_or_launching(self):
@@ -67,6 +67,7 @@ class PathBoundaryTests(unittest.TestCase):
                 with patch("crepuscularity_plugin.subprocess.run", return_value=self.reply) as run:
                     ir = render_ir(alias, context, allowed_alias)
                 self.assertEqual(ir.root[0]["content"], "allowed")
+                self.assertNotIn("text", run.call_args.kwargs)
                 if context is None:
                     self.assertEqual(run.call_args.args[0][-1], str(self.inside))
                     self.assertIsNone(run.call_args.kwargs["input"])
@@ -75,6 +76,7 @@ class PathBoundaryTests(unittest.TestCase):
                     self.assertEqual(payload["baseDir"], str(self.allowed))
                     self.assertEqual(payload["template"], self.inside.read_text())
                     self.assertEqual(payload["context"], context)
+                    self.assertEqual(payload["filename"], str(alias))
 
     def test_context_defaults_to_current_directory_boundary(self):
         with patch("crepuscularity_plugin.Path.cwd", return_value=self.allowed):

@@ -48,6 +48,50 @@ function parse_crepus_json(source, context_json) {
     }
 }
 exports.parse_crepus_json = parse_crepus_json;
+
+/**
+ * Parse a template into View IR, choosing the frontend from `filename`.
+ *
+ * The parser dispatches on the file extension, so `.crepus`, `.jsx`/`.tsx`,
+ * `.svelte`, `.vue`, `.astro` and Angular component templates
+ * (`*.component.html`, `*.ng.html`, `*.ng`) all reach the same IR through
+ * their own frontend.
+ * @param {string} source
+ * @param {string | null} [filename]
+ * @param {string | null} [context_json]
+ * @returns {string}
+ */
+function parse_template_json(source, filename, context_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(filename) ? 0 : passStringToWasm0(filename, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(context_json) ? 0 : passStringToWasm0(context_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.parse_template_json(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr4 = r0;
+        var len4 = r1;
+        if (r3) {
+            ptr4 = 0; len4 = 0;
+            throw takeObject(r2);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export3(deferred5_0, deferred5_1, 1);
+    }
+}
+exports.parse_template_json = parse_template_json;
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

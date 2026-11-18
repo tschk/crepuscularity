@@ -28,6 +28,9 @@ web-sys = { workspace = true, optional = true, features = [
     "Window",
     "DomTokenList",
     "Node",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "HtmlSelectElement",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
