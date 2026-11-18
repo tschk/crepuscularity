@@ -11,7 +11,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.1" }
 crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }

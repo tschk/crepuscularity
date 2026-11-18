@@ -8,8 +8,8 @@ repository = "https://github.com/softwarecorporation/crepuscularity"
 readme = "../../README.md"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0", features = ["notify"] }
-crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.5.12" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.1", features = ["notify"] }
+crepuscularity_macros = { path = "../crepuscularity_macros", version = "0.6.0" }
 crossterm = "0.29"
 notify = { workspace = true }
 ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
