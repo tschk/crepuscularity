@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "caseless",
  "crepuscularity-colors",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-embedded"
-version = "0.1.23"
+version = "0.3.0"
 dependencies = [
  "crepuscularity-colors",
  "crepuscularity-core",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-lsp"
-version = "0.2.9"
+version = "0.3.1"
 dependencies = [
  "crepuscularity-core",
  "tokio",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity_macros"
-version = "0.5.12"
+version = "0.6.0"
 dependencies = [
  "crepuscularity-core",
  "proc-macro2",

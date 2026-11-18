@@ -55,7 +55,7 @@ benchmark = []
 [dependencies]
 gpui                   = { package = "gpui-ce", version = "0.2.2", default-features = false, features = ["font-kit"], optional = true }
 gpui_platform          = { package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit"], optional = true }
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.1" }
 crepuscularity-runtime = { path = "../crepuscularity-runtime", version = "0.4.20", optional = true }
 crepuscularity-tui = { path = "../crepuscularity-tui", version = "0.4.24", optional = true }
 crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0", features = ["parallel", "ssr", "axum"] }
@@ -64,7 +64,7 @@ crepuscularity-webext  = { path = "../crepuscularity-webext", version = "0.3.6" 
 crepuscularity-tauri = { path = "../crepuscularity-tauri", version = "0.1.14", features = ["native"] }
 crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.5" }
 crepuscularity-components = { path = "../crepuscularity-components", version = "0.1.0" }
-crepuscularity-embedded = { path = "../crepuscularity-embedded", version = "0.1.23" }
+crepuscularity-embedded = { path = "../crepuscularity-embedded", version = "0.3.0" }
 crepuscularity-lvgl = { path = "../crepuscularity-lvgl", version = "0.1.11" }
 notify                 = { workspace = true }
 serde                  = { workspace = true }
