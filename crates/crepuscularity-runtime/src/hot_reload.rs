@@ -727,11 +727,17 @@ mod target_and_snapshot_tests {
     fn variable_edits_use_the_current_scope_without_preparing_again(cx: &mut gpui::TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("view.crepus");
-        std::fs::write(&path, "include child.crepus label={name}").unwrap();
-        std::fs::write(dir.path().join("child.crepus"), "div id={label}").unwrap();
         let mut context = TemplateContext::new();
         context.set("name", "first");
+        Arc::make_mut(&mut context.virtual_files)
+            .insert("child.crepus".into(), "div id={label}".into());
         let state = cx.new(|cx| HotReloadState::new(path, context, cx));
+        state.update(cx, |state, _| {
+            state.template = Ok(Arc::new(
+                crepuscularity_core::parse_template("include child.crepus label={name}").unwrap(),
+            ));
+            *state.changed.lock().unwrap() = false;
+        });
         cx.run_until_parked();
         let includes = state.read_with(cx, |state, _| {
             Arc::clone(&state.prepared.as_ref().unwrap().includes)
