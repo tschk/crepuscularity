@@ -12,7 +12,7 @@ readme = "../../README.md"
 path = "src/lib.rs"
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity-core", version = "0.5.0" }
+crepuscularity-core = { path = "../crepuscularity-core", version = "0.6.1" }
 crepuscularity-web = { path = "../crepuscularity-web", version = "0.5.0" }
 crepuscularity-native = { path = "../crepuscularity-native", version = "0.6.0" }
 crepuscularity-lvgl = { path = "../crepuscularity-lvgl", version = "0.1.11" }
