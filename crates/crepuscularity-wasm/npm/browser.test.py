@@ -55,10 +55,11 @@ with tempfile.TemporaryDirectory(prefix="crepus-parser-browser-") as directory:
         '["App.astro", "<p>hello</p>"], ["App.component.html", "<p>hello</p>"]])'
         'if (parseTemplate(source, filename).root[0].content !== "hello")'
         'throw new Error(`Installed root entry failed: ${filename}`);'
-        'await import("@tschk/crepuscularity-wasm/browser");')
+        'await import("@tschk/crepuscularity-wasm/browser");'
+        'await import("@tschk/crepuscularity-wasm/types");')
     for runtime in ["node", "bun"]:
         subprocess.run([runtime, "--eval", check], cwd=root, check=True, capture_output=True)
-        print(f"PASS {runtime}: packed install root and browser exports")
+        print(f"PASS {runtime}: packed install root, browser and types exports")
     entry = root / "browser.ts"
     entry.write_text('export { loadParser } from "@tschk/crepuscularity-wasm/browser";')
     subprocess.run([
