@@ -32,6 +32,7 @@ wasm-bindgen "$wasm" --out-dir "$crate_dir/pkg" --target nodejs
 wasm-bindgen "$wasm" --out-dir "$crate_dir/npm/browser" --target web
 
 # Ship JavaScript entry points: Node does not strip TypeScript in node_modules.
+bun build "$crate_dir/npm/parser.ts" "$crate_dir/npm/types.ts" --target browser --outdir "$crate_dir/npm"
 bun build "$crate_dir/npm/index.ts" --target node --external './wasm/*' --outdir "$crate_dir/npm"
 bun build "$crate_dir/npm/browser.ts" --target browser --external './browser/*' --outdir "$crate_dir/npm"
 

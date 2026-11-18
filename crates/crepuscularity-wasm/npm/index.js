@@ -1,7 +1,7 @@
 // crates/crepuscularity-wasm/npm/index.ts
 import * as bindings from "./wasm/crepuscularity_wasm.js";
 
-// crates/crepuscularity-wasm/npm/parser.ts
+// crates/crepuscularity-wasm/npm/parser.js
 function createParser({ ir_version, parse_crepus_json, parse_template_json }) {
   const IR_VERSION = ir_version();
   function validateUnicode(value, label) {

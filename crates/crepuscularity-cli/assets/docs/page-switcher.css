@@ -114,7 +114,8 @@
     text-align: center;
   }
   .page-switcher-list > a:nth-of-type(1) {
-    width: 80px;
+    width: max-content;
+    min-width: 80px;
   }
   .page-switcher-list > a:nth-of-type(2) {
     width: 128px;

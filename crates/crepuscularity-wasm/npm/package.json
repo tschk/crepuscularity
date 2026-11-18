@@ -14,7 +14,10 @@
       "types": "./index.ts",
       "default": "./index.js"
     },
-    "./types": "./types.ts",
+    "./types": {
+      "types": "./types.ts",
+      "default": "./types.js"
+    },
     "./browser": {
       "types": "./browser.ts",
       "default": "./browser.js"
@@ -24,9 +27,11 @@
     "index.ts",
     "index.js",
     "parser.ts",
+    "parser.js",
     "browser.ts",
     "browser.js",
     "types.ts",
+    "types.js",
     "wasm",
     "browser",
     "README.md"
