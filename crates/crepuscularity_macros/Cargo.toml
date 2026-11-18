@@ -4,7 +4,7 @@ version = "0.5.12"
 edition = "2021"
 license = "ISC"
 description = "Compile-time view! macro for Crepuscularity templates (UNSTABLE; in active development)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity_macros"
 readme = "../../README.md"
 

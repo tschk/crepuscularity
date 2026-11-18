@@ -4,7 +4,7 @@ version = "0.4.24"
 edition = "2021"
 license = "ISC"
 description = "Ratatui backend for the Crepuscularity .crepus DSL — write full-screen terminal UIs with nested div layouts."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 readme = "../../README.md"
 
 [dependencies]

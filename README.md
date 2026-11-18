@@ -4,7 +4,7 @@
 
 > **Stability:** This project is **unstable** and in active development. APIs, CLI flags, and template semantics may change without a semver-major release until **1.0**. Pin exact dependency versions and expect occasional breakage.
 
-[deepwiki](https://deepwiki.com/tschk/crepuscularity)
+[deepwiki](https://deepwiki.com/softwarecorporation/crepuscularity)
 
 Think React Native turned into a systems UI toolkit: one compact `.crepus` language can drive GPUI desktop apps, Ratatui terminal UIs, Chromium/Firefox extensions, web output, native mobile shells, embedded panels, and LVGL Pro.
 
@@ -54,7 +54,7 @@ crepus render examples/showcase/product-dashboard.crepus --ctx examples/showcase
 
 Write UI in a concise, indentation-based template DSL (`.crepus` files). Templates compile at build time via the `view!` macro or render at runtime with full hot-reload support. The same `.crepus` syntax drives native desktop (GPUI), terminal UIs (Ratatui), browser extensions (MV3), and HTML output — and is the foundation for native mobile backends targeting SwiftUI and Jetpack Compose. React output is available through the Moonshine TSX emit (`crepus web build --emit moonshine`); JSX, Svelte, Vue, Astro, and Angular are supported as **input** syntaxes, not as output targets.
 
-Use [Aurorality](https://github.com/tschk/aurorality) for united SwiftUI macOS + iOS apps.
+Use [Aurorality](https://github.com/softwarecorporation/aurorality) for united SwiftUI macOS + iOS apps.
 
 ## Minimal target builds
 
@@ -287,9 +287,9 @@ examples/
 - [herdr-gui](https://github.com/undivisible/herdr-gui) - a gui interface for herdr built with crepuscular gpui
 - [drift-wallpaper](https://github.com/undivisible/drift-wallpaper) - settings menu made with crepuscular gpui
 - [rs_vimium](https://github.com/undivisible/rs_vimium) - name self explanatory built with the crepuscular webextension framework
-- [tsc.hk](https://github.com/tschk/tsc.hk) - the tschk website is built with crepuscularity-web
+- [tsc.hk](https://github.com/softwarecorporation/tsc.hk) - the tschk website is built with crepuscularity-web
 - [crepuscularity.tsc.hk](docs-site) - official crepuscularity website made with yours truly
-- [inauguration.tsc.hk](https://github.com/tschk/inauguration/tree/master/docs-site) - inauguration website made with crepuscularity + inauguration
+- [inauguration.tsc.hk](https://github.com/softwarecorporation/inauguration/tree/master/docs-site) - inauguration website made with crepuscularity + inauguration
 
 also have a working cross platform mobile app that ill have an example for soon :)
 

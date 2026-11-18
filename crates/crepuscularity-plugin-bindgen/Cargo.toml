@@ -2,7 +2,7 @@
 name = "crepuscularity-plugin-bindgen"
 version = "0.1.6"
 edition = "2021"
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 license = "ISC"
 description = "Generate Crepuscularity ABI bindings for plugin languages (equilibrium-ffi)"
 publish = true

@@ -2,7 +2,7 @@
 //!
 //! Metadata is embedded from `catalog/components.json` (synced from
 //! `plugins/crepuscularity-components/catalog/`). Full UI implementations for
-//! the Moonshine/React target live in [`github.com/tschk/moonshine`](https://github.com/tschk/moonshine)
+//! the Moonshine/React target live in [`github.com/softwarecorporation/moonshine`](https://github.com/softwarecorporation/moonshine)
 //! (`@tschk/moonshine-components`).
 
 use std::sync::OnceLock;

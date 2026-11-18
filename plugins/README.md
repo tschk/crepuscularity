@@ -9,7 +9,7 @@ These plugins demonstrate the polyglot contract: spawn `crepus native ir`, read 
 | `crepuscularity-flutter/` | Flutter runtime renderer (`crepus flutter dep` / `add`) |
 | `crepuscularity-components/` | Shared UI component catalog + themes (`crepus components list` / `add` / `themes`) |
 
-Moonshine is a separate product ([`github.com/tschk/moonshine`](https://github.com/tschk/moonshine): `@tschk/moonshine`, `@tschk/crepus-moonshine`, `@tschk/moonshine-components`). Use `crepus moonshine new` / `crepus moonshine dep` from the CLI. Local `packages/moonshine*` trees are legacy bridges.
+Moonshine is a separate product ([`github.com/softwarecorporation/moonshine`](https://github.com/softwarecorporation/moonshine): `@tschk/moonshine`, `@tschk/crepus-moonshine`, `@tschk/moonshine-components`). Use `crepus moonshine new` / `crepus moonshine dep` from the CLI. Local `packages/moonshine*` trees are legacy bridges.
 
 Workspace entrypoints:
 

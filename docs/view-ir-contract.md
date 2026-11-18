@@ -79,4 +79,4 @@ Patch payloads use `IrMutation` paths from `crepuscularity_native::mutations`. P
 
 ## Equilibrium
 
-[Equilibrium](https://github.com/tschk/equilibrium) is **not** part of this contract. Plugin maintainers may use it in separate repos to compile/load their own native glue.
+[Equilibrium](https://github.com/softwarecorporation/equilibrium) is **not** part of this contract. Plugin maintainers may use it in separate repos to compile/load their own native glue.

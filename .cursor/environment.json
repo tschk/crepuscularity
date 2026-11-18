@@ -6,7 +6,7 @@
   },
   "install": "chmod +x scripts/cloud-agent-install.sh && ./scripts/cloud-agent-install.sh",
   "repositoryDependencies": [
-    "github.com/tschk/moonshine"
+    "github.com/softwarecorporation/moonshine"
   ],
   "agentCanUpdateSnapshot": true
 }

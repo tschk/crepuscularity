@@ -2,7 +2,7 @@
 
 Generated: 2026-06-25T05:45:00Z
 Phase: L4 (Lite Probe)
-Target: `piolium` balanced audit of `tschk/crepuscularity` @ `main`
+Target: `piolium` balanced audit of `softwarecorporation/crepuscularity` @ `main`
 
 ---
 

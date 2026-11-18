@@ -71,7 +71,7 @@ const raw = JSON.parse(
 // raw.data: { exitCode, stdout, stderr, success }
 ```
 
-Methods: `ping`, `whichIn`, `processRun`, `readFile`, `writeFile`. The [inauguration](https://github.com/tschk/inauguration) repo also ships `in plugin run crepuscularity` for `docs-site/build.in` when building its public site.
+Methods: `ping`, `whichIn`, `processRun`, `readFile`, `writeFile`. The [inauguration](https://github.com/softwarecorporation/inauguration) repo also ships `in plugin run crepuscularity` for `docs-site/build.in` when building its public site.
 
 ## Guest Code
 

@@ -5,9 +5,9 @@ description: >-
   Flutter runtime renderer for Crepuscularity View IR and .crepus source — the
   Flutter counterpart to the SwiftUI and Jetpack Compose native shells.
 version: 0.2.0
-homepage: https://github.com/tschk/crepuscularity
-repository: https://github.com/tschk/crepuscularity
-issue_tracker: https://github.com/tschk/crepuscularity/issues
+homepage: https://github.com/softwarecorporation/crepuscularity
+repository: https://github.com/softwarecorporation/crepuscularity
+issue_tracker: https://github.com/softwarecorporation/crepuscularity/issues
 topics:
   - ui
   - renderer

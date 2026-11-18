@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2021"
 license = "ISC"
 description = "WASM bindings for the crepuscularity .crepus parser and View IR (UNSTABLE)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 readme = "README.md"
 
 [lib]

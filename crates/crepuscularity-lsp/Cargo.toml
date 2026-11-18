@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Max Carter <max@undivisible.dev>"]
 license = "ISC"
 description = "Language server for Crepuscularity .crepus templates (Diagnostics from crepuscularity-core)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 readme = "../../README.md"
 publish = true
 

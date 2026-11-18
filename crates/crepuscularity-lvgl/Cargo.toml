@@ -4,7 +4,7 @@ version = "0.1.11"
 edition = "2021"
 license = "ISC"
 description = "LVGL Pro XML generator for the Crepuscularity .crepus DSL."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 readme = "../../README.md"
 
 [dependencies]

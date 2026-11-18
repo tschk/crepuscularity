@@ -72,7 +72,7 @@ runs:
       shell: bash
       run: |
         if ! command -v crepus &> /dev/null; then
-          cargo install --git https://github.com/tschk/crepuscularity crepuscularity-cli --locked --features full
+          cargo install --git https://github.com/softwarecorporation/crepuscularity crepuscularity-cli --locked --features full
         fi
 
     - name: Verify installation

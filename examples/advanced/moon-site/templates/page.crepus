@@ -19,7 +19,7 @@ div w-full min-h-screen bg-zinc-950 text-zinc-100 px-6 py-16 flex flex-col gap-1
    "Links"
   a href="https://crates.io/crates/crepuscularity-cli" text-sky-400 underline
    "crepuscularity-cli on crates.io"
-  a href="https://github.com/tschk/moonshine" text-sky-400 underline
+  a href="https://github.com/softwarecorporation/moonshine" text-sky-400 underline
    "moonshine on GitHub"
  hr
  div text-sm text-zinc-500

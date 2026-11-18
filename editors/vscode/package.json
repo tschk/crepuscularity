@@ -8,7 +8,7 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tschk/crepuscularity.git",
+    "url": "https://github.com/softwarecorporation/crepuscularity.git",
     "directory": "editors/vscode"
   },
   "engines": {

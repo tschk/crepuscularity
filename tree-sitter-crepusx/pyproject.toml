@@ -19,7 +19,7 @@ license.text = "ISC"
 readme = "README.md"
 
 [project.urls]
-Homepage = "https://github.com/tschk/crepuscularity"
+Homepage = "https://github.com/softwarecorporation/crepuscularity"
 
 [project.optional-dependencies]
 core = ["tree-sitter~=0.21"]

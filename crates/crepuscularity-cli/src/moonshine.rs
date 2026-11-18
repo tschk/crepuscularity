@@ -1,6 +1,6 @@
 //! `crepus moonshine` — scaffold and dependency helper for Moonshine + Crepus apps.
 //!
-//! Moonshine is an external product: <https://github.com/tschk/moonshine>
+//! Moonshine is an external product: <https://github.com/softwarecorporation/moonshine>
 //! (local checkout often at `~/projects/moonshine`). Prefer the `moonshine` CLI
 //! from that repo when available; `crepus moonshine` remains a working fallback.
 //!
@@ -26,7 +26,7 @@ use crate::error::CrepusCliError;
 use crate::scaffold;
 use crate::ui;
 
-/// Resolve a local tschk/moonshine checkout, if present.
+/// Resolve a local softwarecorporation/moonshine checkout, if present.
 ///
 /// Order: `MOONSHINE_PATH` → `../moonshine` relative to cwd → `~/projects/moonshine`.
 fn resolve_moonshine_root() -> Option<PathBuf> {
@@ -265,10 +265,10 @@ fn readme_template(local_hint: &str) -> String {
 
 React + Vite app scaffolded by `crepus moonshine new`.
 
-Moonshine is a separate product: https://github.com/tschk/moonshine
+Moonshine is a separate product: https://github.com/softwarecorporation/moonshine
 (local checkout often at `~/projects/moonshine`).
 
-When available, prefer the `moonshine` CLI from tschk/moonshine for new apps.
+When available, prefer the `moonshine` CLI from softwarecorporation/moonshine for new apps.
 `crepus moonshine` remains a supported Crepuscularity fallback.
 
 ## Setup
@@ -317,7 +317,7 @@ fn dependency_snippets() -> String {
     let mut out = String::from(
         r#"# package.json dependencies for Moonshine + Crepuscularity
 #
-# Moonshine: https://github.com/tschk/moonshine
+# Moonshine: https://github.com/softwarecorporation/moonshine
 # Do NOT use bun's github-repo + nested path form — it 404s. Use file: paths instead.
 "#,
     );
@@ -363,10 +363,10 @@ fn dependency_snippets() -> String {
 
     out.push_str(
         r#"
-# B) Clone tschk/moonshine, then point file: deps at that tree:
+# B) Clone softwarecorporation/moonshine, then point file: deps at that tree:
 
-git clone https://github.com/tschk/moonshine.git ../moonshine
-# or: git clone https://github.com/tschk/moonshine.git ~/projects/moonshine
+git clone https://github.com/softwarecorporation/moonshine.git ../moonshine
+# or: git clone https://github.com/softwarecorporation/moonshine.git ~/projects/moonshine
 
 # Then either re-run `crepus moonshine dep` / `crepus moonshine new`, or set:
 #   export MOONSHINE_PATH=/absolute/path/to/moonshine
@@ -408,7 +408,7 @@ fn scaffold_app(name: &str) {
                 ui::warn()
             );
             eprintln!(
-                "  {} scaffolding with placeholder file:../moonshine/… — clone tschk/moonshine first (see README)",
+                "  {} scaffolding with placeholder file:../moonshine/… — clone softwarecorporation/moonshine first (see README)",
                 ui::dim("→")
             );
             (
@@ -418,7 +418,7 @@ fn scaffold_app(name: &str) {
                 r#"No local moonshine checkout was found. Clone it next to this app (or set `MOONSHINE_PATH`):
 
 ```bash
-git clone https://github.com/tschk/moonshine.git ../moonshine
+git clone https://github.com/softwarecorporation/moonshine.git ../moonshine
 # packages: packages/core, packages/crepus-moonshine, components
 ```
 
@@ -456,7 +456,7 @@ git clone https://github.com/tschk/moonshine.git ../moonshine
         .unwrap_or_else(|e| ui::error(&format!("write README.md: {e}")));
 
     eprintln!(
-        "  {} prefer `moonshine` CLI (tschk/moonshine) when available; `crepus moonshine` stays supported",
+        "  {} prefer `moonshine` CLI (softwarecorporation/moonshine) when available; `crepus moonshine` stays supported",
         ui::dim("→")
     );
     scaffold::scaffold_success(
@@ -922,7 +922,7 @@ mod tests {
         assert!(snip.contains("\"@tschk/crepus-moonshine\""));
         assert!(snip.contains("\"@tschk/moonshine-components\""));
         assert!(snip.contains("file:"));
-        assert!(snip.contains("git clone https://github.com/tschk/moonshine"));
+        assert!(snip.contains("git clone https://github.com/softwarecorporation/moonshine"));
         assert!(!snip.contains("#path:packages/"));
     }
 

@@ -4,7 +4,7 @@ version = "0.1.12"
 edition = "2021"
 license = "ISC"
 description = "Reactive signals for Crepuscularity WASM clients (UNSTABLE; in active development)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-reactive"
 readme = "../../README.md"
 

@@ -9,9 +9,9 @@ The embedded renderer supports layout and painting without `std`, but the
 runtime parser requires `std`. A compile-time template path can instead let
 firmware update variables, lay out, and paint without an on-device parser.
 
-PR [#856](https://github.com/tschk/crepuscularity/pull/856) restores the
+PR [#856](https://github.com/softwarecorporation/crepuscularity/pull/856) restores the
 `no_std` build and adds a Thumb firmware check to CI. PR
-[#853](https://github.com/tschk/crepuscularity/pull/853) proposes compiling a
+[#853](https://github.com/softwarecorporation/crepuscularity/pull/853) proposes compiling a
 bounded template into data that firmware can render with `alloc`. The embedded
 implementation rejects animations and unsupported events, which its original
 compiler silently ignored. Tests compare representative pixels and hit targets with
@@ -24,7 +24,7 @@ The runtime renderer does not attach template event handlers. It displays an
 error in place of an element that declares an event instead of silently
 rendering an inert control. The compile-time macro and runtime preview have
 different interaction contracts.
-PR [#853](https://github.com/tschk/crepuscularity/pull/853) proposes a named
+PR [#853](https://github.com/softwarecorporation/crepuscularity/pull/853) proposes a named
 click-handler registry for hot-reloaded templates. Its scope is click events,
 not general event parity. Without a registry, it leaves clicks inert. Any
 replacement must diagnose unsupported events as well as unknown handlers. A
@@ -44,7 +44,7 @@ explicit limitations, not evidence that every target is pixel-identical.
 The core point parser accepts decimal multipliers, while the integer pixel
 parser uses a smaller table. A class such as `p-0.25` can therefore be
 interpreted on one target and ignored on another. PR
-[#857](https://github.com/tschk/crepuscularity/pull/857) proposes a common
+[#857](https://github.com/softwarecorporation/crepuscularity/pull/857) proposes a common
 Tailwind v4 quarter-step rule, with a separate copy for `no_std` builds and a
 parity test. It is not compatible with the shipped web runtime: a Chromium
 check against the live site returned 1.2 px for `p-0.3`, 6 px for `p-1.50`,

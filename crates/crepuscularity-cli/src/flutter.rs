@@ -17,7 +17,7 @@ use crate::error::CrepusCliError;
 // The pub package name uses an underscore (pub.dev forbids hyphens); the repo
 // path stays hyphenated to match the sibling crates.
 const PUB_NAME: &str = "crepuscularity_flutter";
-const REPO_URL: &str = "https://github.com/tschk/crepuscularity";
+const REPO_URL: &str = "https://github.com/softwarecorporation/crepuscularity";
 const PKG_PATH: &str = "plugins/crepuscularity-flutter";
 
 pub fn execute(cmd: FlutterCommands) -> Result<(), CrepusCliError> {
@@ -97,7 +97,7 @@ mod tests {
     fn git_block_pins_ref_and_path() {
         let block = dependency_block(None, "abc123", 0);
         assert!(block.contains("crepuscularity_flutter:"));
-        assert!(block.contains("url: https://github.com/tschk/crepuscularity"));
+        assert!(block.contains("url: https://github.com/softwarecorporation/crepuscularity"));
         assert!(block.contains("ref: abc123"));
         assert!(block.contains("path: plugins/crepuscularity-flutter"));
     }

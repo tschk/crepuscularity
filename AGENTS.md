@@ -130,13 +130,13 @@ extension in `parse_template_with_path`, all producing the same `ast::Node` tree
 
 ### `crepus moonshine` — Moonshine + Crepus web apps
 
-**Moonshine is a separate product:** [`github.com/tschk/moonshine`](https://github.com/tschk/moonshine) (`@tschk/moonshine`; local checkout often `~/projects/moonshine`). Prefer the `moonshine` CLI from that repo when available; `crepus moonshine` remains a working Crepuscularity fallback. Crepuscularity compiles `.crepus` → View IR and emits a TSX file that imports `@tschk/moonshine/react`.
+**Moonshine is a separate product:** [`github.com/softwarecorporation/moonshine`](https://github.com/softwarecorporation/moonshine) (`@tschk/moonshine`; local checkout often `~/projects/moonshine`). Prefer the `moonshine` CLI from that repo when available; `crepus moonshine` remains a working Crepuscularity fallback. Crepuscularity compiles `.crepus` → View IR and emits a TSX file that imports `@tschk/moonshine/react`.
 
 - Scaffold: `crepus moonshine new <name>` → Vite shell + `index.crepus` + `package.json` (imports `@tschk/moonshine/react`)
 - Dep snippets: `crepus moonshine dep` →
-  - `@tschk/moonshine` → `github:tschk/moonshine#path:packages/core`
-  - `@tschk/crepus-moonshine` → `github:tschk/moonshine#path:packages/crepus-moonshine`
-  - `@tschk/moonshine-components` → `github:tschk/moonshine#path:components`
+  - `@tschk/moonshine` → `github:softwarecorporation/moonshine#path:packages/core`
+  - `@tschk/crepus-moonshine` → `github:softwarecorporation/moonshine#path:packages/crepus-moonshine`
+  - `@tschk/moonshine-components` → `github:softwarecorporation/moonshine#path:components`
 - Emit: `crepus web build --emit moonshine --site .` → `dist/crepus-emit.moonshine.tsx` (`renderCrepusIr` + `createApp` from `@tschk/moonshine/react`) + `crepus-view-ir.json`
 - React component implementations: `moonshine/components/` as `@tschk/moonshine-components` (not in this repo)
 

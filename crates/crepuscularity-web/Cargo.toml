@@ -4,7 +4,7 @@ version = "0.5.2"
 edition = "2021"
 license = "ISC"
 description = "Web / SSR / DOM integration for Crepuscularity (UNSTABLE; in active development)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-web"
 readme = "../../README.md"
 

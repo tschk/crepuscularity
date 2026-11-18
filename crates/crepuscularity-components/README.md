@@ -7,7 +7,7 @@ UI implementations live elsewhere:
 
 | Target | Home |
 |--------|------|
-| React (Moonshine) | [`@tschk/moonshine-components`](https://github.com/tschk/moonshine) (`components/` in that repo) |
+| React (Moonshine) | [`@tschk/moonshine-components`](https://github.com/softwarecorporation/moonshine) (`components/` in that repo) |
 | Flutter / Svelte (legacy in-tree) | `plugins/crepuscularity-components/packages/{flutter,svelte}` |
 
 ## Sync

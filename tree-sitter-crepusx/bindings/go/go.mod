@@ -1,4 +1,4 @@
-module github.com/tschk/crepuscularity/tree-sitter-crepusx
+module github.com/softwarecorporation/crepuscularity/tree-sitter-crepusx
 
 go 1.24.6
 

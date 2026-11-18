@@ -1718,7 +1718,7 @@ impl BenchTool {
             BenchTool::Npm => "bundled with Node.js — https://nodejs.org/",
             BenchTool::Bun => "https://bun.sh/",
             BenchTool::Dotnet => {
-                "Wax: `wax install dotnet` — https://github.com/tschk/wax (avoid brew dotnet shim); or Microsoft install — https://dotnet.microsoft.com/download"
+                "Wax: `wax install dotnet` — https://github.com/softwarecorporation/wax (avoid brew dotnet shim); or Microsoft install — https://dotnet.microsoft.com/download"
             },
             BenchTool::CargoLeptos => "cargo install cargo-leptos --locked",
             BenchTool::DioxusCli => "cargo install dioxus-cli --locked",

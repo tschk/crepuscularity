@@ -171,7 +171,7 @@ fn path_for_target(comp: &CatalogComponent, t: ComponentTarget) -> Option<String
         return None;
     }
 
-    // React implementations live in tschk/moonshine (`@tschk/moonshine-components`),
+    // React implementations live in softwarecorporation/moonshine (`@tschk/moonshine-components`),
     // not the thin plugins/crepuscularity-components/packages/moonshine package.
     if matches!(t, ComponentTarget::Moonshine) {
         return Some("@tschk/moonshine-components".to_string());
@@ -250,7 +250,7 @@ fn print_path_hints(selected: &[(ComponentTarget, String)], root: &Path) {
     for (t, path) in selected {
         if matches!(t, ComponentTarget::Moonshine) {
             println!(
-                "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
+                "  {:<10} {}  [external: github.com/softwarecorporation/moonshine → components/]",
                 target_key(*t),
                 path
             );
@@ -272,7 +272,7 @@ fn print_guidance() {
         "  • Spec JSON under plugins/crepuscularity-components/specs/ is the source of truth."
     );
     println!(
-        "  • Moonshine/React: install `@tschk/moonshine-components` from tschk/moonshine (`components/`), not plugins/crepuscularity-components."
+        "  • Moonshine/React: install `@tschk/moonshine-components` from softwarecorporation/moonshine (`components/`), not plugins/crepuscularity-components."
     );
     println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
     println!("  • GPUI: include the gpui package module from your desktop crate.");

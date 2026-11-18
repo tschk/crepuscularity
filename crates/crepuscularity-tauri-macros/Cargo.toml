@@ -4,7 +4,7 @@ version = "0.1.8"
 edition = "2021"
 license = "ISC"
 description = "Command macros for crepuscularity-tauri."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 
 [lib]
 proc-macro = true

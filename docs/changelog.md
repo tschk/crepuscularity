@@ -50,4 +50,4 @@ for a site head rather than a `.crepus` pragma.
 
 - This changelog is generated with the rest of `docs/` by `crepus web build`.
 
-Earlier GitHub binary tags: [v0.11.1](https://github.com/tschk/crepuscularity/releases/tag/v0.11.1) (2026-07-30).
+Earlier GitHub binary tags: [v0.11.1](https://github.com/softwarecorporation/crepuscularity/releases/tag/v0.11.1) (2026-07-30).

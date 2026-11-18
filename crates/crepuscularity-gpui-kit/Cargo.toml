@@ -5,7 +5,7 @@ edition = "2021"
 license = "ISC"
 publish = false
 description = "Experimental GPUI Kit adapter for Crepuscularity compiled templates"
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 
 [features]
 default = ["component", "assets"]

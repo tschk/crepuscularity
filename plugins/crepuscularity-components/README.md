@@ -6,7 +6,7 @@ Multi-target dither / primitive / motion component registry for Crepuscularity
 ## Ownership / Moonshine
 
 **Moonshine React implementations live in a separate product:**
-[`github.com/tschk/moonshine`](https://github.com/tschk/moonshine) under `components/`,
+[`github.com/softwarecorporation/moonshine`](https://github.com/softwarecorporation/moonshine) under `components/`,
 published as `@tschk/moonshine-components`.
 
 This plugin tree keeps:
@@ -25,7 +25,7 @@ Rust CLI registry: `crates/crepuscularity-components` (embed via `include_str!`)
 | `catalog/components.json` | Component registry (ids, specs, platforms, themes) |
 | `catalog/themes/` | Named theme JSON (7 themes) |
 | `specs/` | Per-component source-of-truth specs (44) |
-| `packages/{flutter,svelte,moonshine,gpui}/` | Target implementations (Flutter/Svelte kept; Moonshine → tschk/moonshine) |
+| `packages/{flutter,svelte,moonshine,gpui}/` | Target implementations (Flutter/Svelte kept; Moonshine → softwarecorporation/moonshine) |
 
 ## Themes
 

@@ -4,7 +4,7 @@ version = "0.5.10"
 edition = "2021"
 license = "ISC"
 description = "GPUI backend for Crepuscularity (view! macro re-exports) — UNSTABLE; in active development."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-gpui"
 readme = "../../README.md"
 

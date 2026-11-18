@@ -28,7 +28,7 @@ application_name = "Crepuscularity"
 generator = "crepuscularity"
 twitter_card = "summary_large_image"
 json_ld = [
-  """{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"Crepuscularity","codeRepository":"https://github.com/tschk/crepuscularity","programmingLanguage":"Rust","url":"https://crepuscularity.tsc.hk/"}"""
+  """{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"Crepuscularity","codeRepository":"https://github.com/softwarecorporation/crepuscularity","programmingLanguage":"Rust","url":"https://crepuscularity.tsc.hk/"}"""
 ]
 
 # ponytail: docs-renderer binary removed; use `crepus render` for docs
@@ -38,7 +38,7 @@ base_url = "https://crepuscularity.tsc.hk"
 title = "Crepuscularity"
 description = "Multi-target UI framework for GPUI, web, browser extensions, terminal UIs, embedded displays, and native shells."
 sources = [
-  { path = "../README.md", href = "https://github.com/tschk/crepuscularity/blob/main/README.md", title = "Repository README" },
+  { path = "../README.md", href = "https://github.com/softwarecorporation/crepuscularity/blob/main/README.md", title = "Repository README" },
   { path = "../docs/README.md", href = "https://crepuscularity.tsc.hk/docs/", title = "Documentation overview" },
   { path = "../docs/cli.md", href = "https://crepuscularity.tsc.hk/docs/cli.html", title = "CLI" },
   { path = "../docs/changelog.md", href = "https://crepuscularity.tsc.hk/docs/changelog.html", title = "Changelog" },

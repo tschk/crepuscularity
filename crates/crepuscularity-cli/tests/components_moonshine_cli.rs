@@ -99,7 +99,7 @@ fn moonshine_dep_prints_packages() {
     assert!(stdout.contains("@tschk/crepus-moonshine"));
     assert!(stdout.contains("@tschk/moonshine-components"));
     assert!(stdout.contains("file:"));
-    assert!(stdout.contains("git clone https://github.com/tschk/moonshine"));
+    assert!(stdout.contains("git clone https://github.com/softwarecorporation/moonshine"));
     assert!(
         !stdout.contains("#path:packages/"),
         "must not use broken bun github nested-path form: {stdout}"

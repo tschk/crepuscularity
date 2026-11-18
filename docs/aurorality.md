@@ -55,7 +55,7 @@ The CLI can watch `.crepus` and optionally:
 2. Re-run **`swiftgen`** on save (`--swiftgen-view`, `--swiftgen-out`, …) and broadcast a **`SwiftgenStatus`** envelope (ok/errors/output path).
 3. Emit **`DevHello`** when a client connects (session id, watch roots, swiftgen config, whether IR is enabled).
 
-Swift hosts wire [`HotReloadClient`](https://github.com/tschk/aurorality) → **`HotReloadBus`** → HUD / optional live IR preview (`AurorDevOverlay`). Pure-swiftgen workflows may pass **`--no-ir`**.
+Swift hosts wire [`HotReloadClient`](https://github.com/softwarecorporation/aurorality) → **`HotReloadBus`** → HUD / optional live IR preview (`AurorDevOverlay`). Pure-swiftgen workflows may pass **`--no-ir`**.
 
 See also [IDE extensions](ide-extensions.md) for editor-facing notes.
 
@@ -67,5 +67,5 @@ See also [IDE extensions](ide-extensions.md) for editor-facing notes.
 
 ## Related Projects
 
-- Aurorality repo: [tschk/aurorality](https://github.com/tschk/aurorality)
+- Aurorality repo: [softwarecorporation/aurorality](https://github.com/softwarecorporation/aurorality)
 - Native shell examples in this repo: [native.md](native.md)

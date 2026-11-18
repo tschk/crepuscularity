@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Setup Crepuscularity
-        uses: tschk/crepuscularity/.github/actions/setup-crepuscularity@main
+        uses: softwarecorporation/crepuscularity/.github/actions/setup-crepuscularity@main
         with:
           rust-version: stable
           cache: true
@@ -80,7 +80,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Setup Crepuscularity
-        uses: tschk/crepuscularity/.github/actions/setup-crepuscularity@main
+        uses: softwarecorporation/crepuscularity/.github/actions/setup-crepuscularity@main
         with:
           rust-version: stable
           cache: true

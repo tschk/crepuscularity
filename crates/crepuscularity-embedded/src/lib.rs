@@ -24,7 +24,7 @@
 //!
 //! Or with initial variables: `ui!(UI, 240, 320, "cpu" => 42, "status" => "ok")`.
 //!
-//! Docs: [`embedded.md`](https://github.com/tschk/crepuscularity/blob/main/docs/embedded.md) · Example: `examples/embedded-dashboard`.
+//! Docs: [`embedded.md`](https://github.com/softwarecorporation/crepuscularity/blob/main/docs/embedded.md) · Example: `examples/embedded-dashboard`.
 //!
 //! Lower-level: [`Template`], [`Rgb565View`].
 //!

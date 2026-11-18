@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh-orb toolchain for tschk/crepuscularity (Rust workspace + WASM CLI tests).
+# Fresh-orb toolchain for softwarecorporation/crepuscularity (Rust workspace + WASM CLI tests).
 set -euo pipefail
 
 step() {

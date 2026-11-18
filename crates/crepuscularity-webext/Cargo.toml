@@ -4,7 +4,7 @@ version = "0.3.6"
 edition = "2021"
 description = "Browser extension (MV3) support for Crepuscularity — UNSTABLE; in active development."
 license = "ISC"
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-webext"
 readme = "../../README.md"
 

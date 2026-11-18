@@ -4,7 +4,7 @@ version = "0.1.13"
 edition = "2021"
 license = "ISC"
 description = "Plain C ABI for Crepuscularity View IR sessions."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-abi"
 readme = "../../README.md"
 

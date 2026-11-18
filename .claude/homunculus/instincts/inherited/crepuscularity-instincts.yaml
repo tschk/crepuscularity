@@ -1,4 +1,4 @@
-# Instincts generated from https://github.com/tschk/crepuscularity
+# Instincts generated from https://github.com/softwarecorporation/crepuscularity
 # Generated: 2026-06-02T06:13:33.032Z
 # Version: 2.0
 # NOTE: This file supplements (does not replace) any existing curated instincts.
@@ -10,7 +10,7 @@ trigger: "when writing a commit message"
 confidence: 0.6
 domain: git
 source: repo-analysis
-source_repo: https://github.com/tschk/crepuscularity
+source_repo: https://github.com/softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Commit Length
@@ -30,7 +30,7 @@ trigger: "when creating a new file"
 confidence: 0.8
 domain: code-style
 source: repo-analysis
-source_repo: https://github.com/tschk/crepuscularity
+source_repo: https://github.com/softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Naming Files
@@ -50,7 +50,7 @@ trigger: "when importing modules"
 confidence: 0.75
 domain: code-style
 source: repo-analysis
-source_repo: https://github.com/tschk/crepuscularity
+source_repo: https://github.com/softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Import Relative
@@ -70,7 +70,7 @@ trigger: "when exporting from a module"
 confidence: 0.7
 domain: code-style
 source: repo-analysis
-source_repo: https://github.com/tschk/crepuscularity
+source_repo: https://github.com/softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Export Style
@@ -90,7 +90,7 @@ trigger: "When creating a new file"
 confidence: 0.9
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct File Naming
@@ -109,7 +109,7 @@ trigger: "When defining a new function"
 confidence: 0.9
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Function Naming
@@ -128,7 +128,7 @@ trigger: "When defining a new class or struct"
 confidence: 0.9
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Class Naming
@@ -147,7 +147,7 @@ trigger: "When declaring a constant"
 confidence: 0.9
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Constant Naming
@@ -166,7 +166,7 @@ trigger: "When importing modules"
 confidence: 0.8
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Import Style
@@ -185,7 +185,7 @@ trigger: "When exporting symbols"
 confidence: 0.8
 domain: code-style
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Export Style
@@ -204,7 +204,7 @@ trigger: "When adding tests"
 confidence: 0.7
 domain: testing
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Test Location
@@ -223,7 +223,7 @@ trigger: "When writing a commit message"
 confidence: 0.8
 domain: git
 source: repo-analysis
-source_repo: tschk/crepuscularity
+source_repo: softwarecorporation/crepuscularity
 ---
 
 # Crepuscularity Instinct Git Commit Format

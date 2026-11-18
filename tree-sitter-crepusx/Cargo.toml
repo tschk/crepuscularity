@@ -6,7 +6,7 @@ license = "ISC"
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "crepusx"]
 categories = ["parsing", "text-editors"]
-repository = "https://github.com/tschk/crepuscularity/tree-sitter-crepusx"
+repository = "https://github.com/softwarecorporation/crepuscularity/tree-sitter-crepusx"
 edition = "2021"
 autoexamples = false
 

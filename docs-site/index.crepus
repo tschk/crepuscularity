@@ -20,7 +20,7 @@ div min-h-screen overflow-x-hidden antialiased crepus-twilight-page text-sm lead
 					"Lite"
 				a href="https://crates.io/crates/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
 					"Crates"
-				a href="https://github.com/tschk/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
+				a href="https://github.com/softwarecorporation/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
 					"GitHub"
 
 		main id="main-content" flex flex-col
@@ -333,7 +333,7 @@ $ crepus aurora new my-ios && crepus aurora dev
 					"Crates"
 				a href="./docs/lite.html" nav-link
 					"Lite"
-				a href="https://github.com/tschk/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
+				a href="https://github.com/softwarecorporation/crepuscularity" nav-link rel="noopener noreferrer" target="_blank"
 					"GitHub"
 
 <style>

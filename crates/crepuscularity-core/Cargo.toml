@@ -4,7 +4,7 @@ version = "0.5.0"
 edition = "2021"
 license = "ISC"
 description = "Parser, AST, and expression evaluation for the Crepuscularity .crepus DSL (UNSTABLE; in active development)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-core"
 readme = "../../README.md"
 

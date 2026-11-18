@@ -4,7 +4,7 @@ version = "0.4.20"
 edition = "2021"
 license = "ISC"
 description = "Runtime parser, GPUI renderer, and hot-reload engine for Crepuscularity (UNSTABLE; in active development)."
-repository = "https://github.com/tschk/crepuscularity"
+repository = "https://github.com/softwarecorporation/crepuscularity"
 documentation = "https://docs.rs/crepuscularity-runtime"
 readme = "../../README.md"
 

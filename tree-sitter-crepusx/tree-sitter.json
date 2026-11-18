@@ -14,7 +14,7 @@
     "license": "ISC",
     "description": "crepusx grammar for tree-sitter",
     "links": {
-      "repository": "https://github.com/tschk/crepuscularity"
+      "repository": "https://github.com/softwarecorporation/crepuscularity"
     }
   },
   "bindings": {
