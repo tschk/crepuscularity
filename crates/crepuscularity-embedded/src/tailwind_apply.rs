@@ -13,7 +13,9 @@ use crepuscularity_core::tailwind::parse::{
     parse_color_rgb, parse_size_width_height, parse_spacing_px, SizeToken,
 };
 
-#[cfg(not(feature = "std"))]
+// Compile the no_std copy in std tests as well so its contract stays checked against core.
+#[cfg(any(not(feature = "std"), test))]
+#[cfg_attr(feature = "std", allow(dead_code))]
 mod tailwind_parse {
     use crepuscularity_colors::lookup_named_color;
 
@@ -25,27 +27,37 @@ mod tailwind_parse {
         Spacing(u16),
     }
 
+    /// Mirrors core: canonical nonnegative quarter steps, one unit = four pixels.
+    fn parse_spacing_multiplier_px(rest: &str) -> Option<f32> {
+        let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+        let canonical_whole = whole == "0" || (!whole.starts_with('0') && !whole.is_empty());
+        if !canonical_whole || !whole.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let quarter = match (rest.contains('.'), fraction) {
+            (false, _) => 0,
+            (true, "25") => 1,
+            (true, "5") => 2,
+            (true, "75") => 3,
+            _ => return None,
+        };
+        let px = whole.parse::<f32>().ok()? * 4.0 + quarter as f32;
+        px.is_finite().then_some(px)
+    }
+
     pub fn parse_spacing_px(rest: &str) -> Option<u16> {
-        if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            let stripped = inner.strip_suffix("px").unwrap_or(inner);
-            return stripped.parse::<u16>().ok();
-        }
-        match rest {
-            "px" => Some(1),
-            "0" => Some(0),
-            "0.5" => Some(2),
-            "1" => Some(4),
-            "1.5" => Some(6),
-            "2" => Some(8),
-            "2.5" => Some(10),
-            "3" => Some(12),
-            "3.5" => Some(14),
-            "4" => Some(16),
-            "5" => Some(20),
-            "6" => Some(24),
-            "8" => Some(32),
-            _ => rest.parse::<u16>().ok().map(|n| n.saturating_mul(4)),
-        }
+        let px = if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            inner
+                .strip_suffix("px")
+                .unwrap_or(inner)
+                .parse::<f32>()
+                .ok()?
+        } else if rest == "px" {
+            1.0
+        } else {
+            parse_spacing_multiplier_px(rest)?
+        };
+        (px >= 0.0 && px <= f32::from(u16::MAX) && f32::from(px as u16) == px).then_some(px as u16)
     }
 
     pub fn parse_size_width_height(rest: &str) -> Option<SizeToken> {
@@ -84,6 +96,11 @@ mod tailwind_parse {
         None
     }
 
+    fn parse_hex_rgb(s: &str) -> Option<[u8; 3]> {
+        let color = crate::color::parse_hex(s)?.to_rgb888();
+        Some([color.r, color.g, color.b])
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -96,11 +113,6 @@ mod tailwind_parse {
             assert_eq!(parse_color_rgb(wrapped), parse_color_rgb("#123456"));
             assert_eq!(parse_color_rgb("#aé1234"), None);
         }
-    }
-
-    fn parse_hex_rgb(s: &str) -> Option<[u8; 3]> {
-        let color = crate::color::parse_hex(s)?.to_rgb888();
-        Some([color.r, color.g, color.b])
     }
 }
 
@@ -480,6 +492,58 @@ mod tests {
     use crate::document::{Align, EmbeddedStyle, FlexDir, SizeHint};
     #[cfg(not(feature = "std"))]
     use alloc::format;
+
+    #[test]
+    fn quarter_step_spacing_matches_core_and_fits_integer_pixels() {
+        for quarters in 0..=400u16 {
+            let token = match quarters % 4 {
+                0 => format!("{}", quarters / 4),
+                1 => format!("{}.25", quarters / 4),
+                2 => format!("{}.5", quarters / 4),
+                _ => format!("{}.75", quarters / 4),
+            };
+            let mut style = EmbeddedStyle::default();
+            apply_class(&format!("p-{token}"), &mut style, None);
+            assert_eq!(style.padding, quarters, "{token}");
+            assert_eq!(
+                super::tailwind_parse::parse_spacing_px(&token),
+                Some(quarters)
+            );
+            assert_eq!(
+                crepuscularity_core::tailwind::parse::parse_spacing_px(&token),
+                Some(quarters)
+            );
+        }
+        for (token, expected) in [
+            ("-2", None),
+            ("0.3", None),
+            ("1.50", None),
+            ("01", None),
+            (".5", None),
+            ("+4", None),
+            ("1e1", None),
+            ("16384", None),
+            ("16383.75", Some(65535)),
+            ("[20.5px]", None),
+            ("[20.0px]", Some(20)),
+            ("[1e1px]", Some(10)),
+            ("[-2px]", None),
+            ("[65536]", None),
+            ("[inf]", None),
+            ("[NaN]", None),
+        ] {
+            assert_eq!(
+                super::tailwind_parse::parse_spacing_px(token),
+                expected,
+                "{token}"
+            );
+            assert_eq!(
+                crepuscularity_core::tailwind::parse::parse_spacing_px(token),
+                expected,
+                "{token}"
+            );
+        }
+    }
 
     #[test]
     fn visibility_and_opacity_are_independent() {

@@ -635,11 +635,15 @@ mod tests {
         .is_err());
     }
     #[test]
-    fn nested_renders_are_disjoint_and_runtime_alias_hygienic() {
-        let out=lower("const __crepusSvelteSnippetRuntime=0;function row(value){return <p>{value}</p>}return <Render call={()=> (row(<Render call={()=> (row(1))}/>))}/>",MoonshineModuleTarget::Dom).unwrap();
+    fn nested_renders_are_disjoint_and_runtime_alias_hygienic() -> Result<(), String> {
+        let out = lower(
+            "const __crepusSvelteSnippetRuntime=0;function row(value){return <p>{value}</p>}return <Render call={()=> (row(<Render call={()=> (row(1))}/>))}/>",
+            MoonshineModuleTarget::Dom,
+        )?;
         assert!(out.contains("mapArray as __crepusSvelteSnippetRuntime_"));
         assert_eq!(out.matches("get={()=> (row)}").count(), 2);
         assert!(!out.contains("call={()=>"));
+        Ok(())
     }
     #[test]
     fn inline_snippet_parameters_follow_their_lexical_symbols() {

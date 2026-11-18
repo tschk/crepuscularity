@@ -132,7 +132,9 @@ fn layout_children(parent: &mut EmbeddedNode) {
         } else {
             child.style.width
         };
-        let cross = if parent.style.align == Align::Stretch && cross_hint == SizeHint::Auto {
+        let cross = if parent.style.align == Align::Stretch
+            && matches!(cross_hint, SizeHint::Auto | SizeHint::Flex1)
+        {
             if row {
                 inner.h
             } else {
@@ -301,7 +303,7 @@ fn cross_size(child: &EmbeddedNode, row: bool, inner: Rect) -> u16 {
     let avail = if row { inner.h } else { inner.w };
     match hint {
         SizeHint::Fixed(v) => v.min(avail),
-        SizeHint::Fill | SizeHint::Flex1 => avail,
+        SizeHint::Fill => avail,
         SizeHint::Fraction { num, den } => {
             if den == 0 {
                 avail
@@ -309,7 +311,7 @@ fn cross_size(child: &EmbeddedNode, row: bool, inner: Rect) -> u16 {
                 ((avail as u32).saturating_mul(num as u32) / den as u32).min(u16::MAX as u32) as u16
             }
         }
-        SizeHint::Auto => {
+        SizeHint::Auto | SizeHint::Flex1 => {
             if let Some(text) = &child.text {
                 let metrics = FontMetrics::default();
                 let (tw, th) = metrics.measure_text(text);

@@ -20,33 +20,30 @@ const maxRows = 200;
 const borderAlpha = 0.72;
 const offTier = 0.4;
 
-double clamp01(double value) => value.isNaN ? 0 : value.clamp(0.0, 1.0);
+double clamp01(double value) => value < 0 ? 0 : value > 1 ? 1 : value;
 
-/// Bound the backing grid before integer conversion; NaN uses the minimum grid.
 ({int cols, int rows}) backingSize(double width, double height) {
   return (
-    cols: width.isNaN ? 8 : (width / cellSize).clamp(8, maxCols).round(),
-    rows: height.isNaN ? 8 : (height / cellSize).clamp(8, maxRows).round(),
+    cols: math.min(maxCols, math.max(8, (width / cellSize).round())),
+    rows: math.min(maxRows, math.max(8, (height / cellSize).round())),
   );
 }
 
 List<double> resampleSeries(List<double> source, int cols) {
   if (source.isEmpty) return List<double>.filled(cols, 0);
   final out = List<double>.filled(cols, 0);
-  final last = source.length - 1;
+  final last = math.max(source.length - 1, 1);
   for (var c = 0; c < cols; c++) {
     final t = c / math.max(cols - 1, 1) * last;
     final i = t.floor();
     final f = t - i;
     final a = source[i];
     final b = source[math.min(i + 1, source.length - 1)];
-    final delta = b - a;
-    out[c] = delta.isInfinite ? a * (1 - f) + b * f : a + delta * f;
+    out[c] = a + (b - a) * f;
   }
   return out;
 }
 
-/// Nonfinite options use their defaults; dimming is bounded to 0–1.
 void paintDitherColumn(
   Canvas canvas,
   int x,
@@ -59,9 +56,6 @@ void paintDitherColumn(
   bool stacked = false,
   double sparse = 0,
 }) {
-  if (!intensity.isFinite) intensity = 0;
-  dim = dim.isFinite ? clamp01(dim) : 1;
-  if (!sparse.isFinite) sparse = 0;
   final t = top.round();
   final f = floor.round();
   final depth = f - t;
@@ -71,16 +65,14 @@ void paintDitherColumn(
     canvas.drawRect(Rect.fromLTWH(x.toDouble(), t.toDouble(), 1, 1), paint);
     return;
   }
-  final bias =
-      (variant == DitherVariant.dotted ? 0.12 : 0) +
+  final bias = (variant == DitherVariant.dotted ? 0.12 : 0) +
       (stacked ? 0.2 : 0) -
       sparse;
   for (var y = t; y < f; y++) {
     var density = (y - t) / depth;
     if (stacked) density = 0.5 + 0.5 * density;
     if (variant == DitherVariant.hatched && ((x + y) & 3) >= 2) continue;
-    final lit =
-        variant == DitherVariant.solid ||
+    final lit = variant == DitherVariant.solid ||
         density > _bayer[y & 3][x & 3] - 0.1 * intensity - bias;
     if (variant == DitherVariant.dotted && !lit) continue;
     final k = (0.3 + density * 0.7) * (1 + 0.22 * intensity);
@@ -93,14 +85,11 @@ void paintDitherColumn(
   if (depth > 1) {
     final feather = Paint()
       ..color = fill.withValues(alpha: borderAlpha * 0.5 * dim);
-    canvas.drawRect(
-      Rect.fromLTWH(x.toDouble(), (t + 1).toDouble(), 1, 1),
-      feather,
-    );
+    canvas.drawRect(Rect.fromLTWH(x.toDouble(), (t + 1).toDouble(), 1, 1), feather);
   }
 }
 
-/// Paint a sparkline/area fill at logical [size], ignoring nonfinite samples.
+/// Paint a sparkline/area fill into [canvas] at logical [size].
 void paintSparkline(
   Canvas canvas,
   Size size, {
@@ -109,23 +98,14 @@ void paintSparkline(
   DitherVariant variant = DitherVariant.gradient,
   double intensity = 0,
 }) {
-  if (values.isEmpty || !size.isFinite || size.width <= 0 || size.height <= 0)
-    return;
-  var series = values.where((value) => value.isFinite).toList(growable: false);
-  if (series.isEmpty) return;
+  if (values.isEmpty || size.width <= 0 || size.height <= 0) return;
   final backing = backingSize(size.width, size.height);
   final cols = backing.cols;
   final rows = backing.rows;
-  var min = series.reduce(math.min);
-  var max = series.reduce(math.max);
-  if ((max - min).isInfinite) {
-    final scale = math.max(min.abs(), max.abs());
-    series = series.map((value) => value / scale).toList(growable: false);
-    min /= scale;
-    max /= scale;
-  }
-  final span = max > min ? max - min : 1.0;
-  final resampled = resampleSeries(series, cols);
+  final min = values.reduce(math.min);
+  final max = values.reduce(math.max);
+  final span = math.max(max - min, 1e-9);
+  final resampled = resampleSeries(values, cols);
   final tops = List<int>.generate(cols, (x) {
     final normalized = (resampled[x] - min) / span;
     return (rows - 1 - normalized * (rows - 1)).round().clamp(0, rows - 1);

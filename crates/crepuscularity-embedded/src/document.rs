@@ -200,6 +200,57 @@ pub struct EmbeddedNode {
     pub children: Vec<EmbeddedNode>,
 }
 
+pub(crate) fn container(
+    tag: &str,
+    style: EmbeddedStyle,
+    children: Vec<EmbeddedNode>,
+    id: Option<String>,
+    on_click: Option<String>,
+) -> EmbeddedNode {
+    EmbeddedNode {
+        id,
+        tag: tag.into(),
+        text: None,
+        on_click,
+        style,
+        bounds: Default::default(),
+        children,
+    }
+}
+
+pub(crate) fn text_node(text: String) -> EmbeddedNode {
+    EmbeddedNode {
+        id: None,
+        tag: "text".into(),
+        text: Some(text),
+        on_click: None,
+        style: EmbeddedStyle::default(),
+        bounds: Default::default(),
+        children: Vec::new(),
+    }
+}
+
+pub(crate) fn collect_primary_text(children: &[EmbeddedNode]) -> Option<&str> {
+    for child in children {
+        if child.style.hidden || child.style.invisible || child.style.opacity_percent == Some(0) {
+            continue;
+        }
+        if matches!(
+            child.tag.as_str(),
+            "text" | "span" | "if" | "for" | "match" | "slot"
+        ) {
+            if let Some(text) = child
+                .text
+                .as_deref()
+                .or_else(|| collect_primary_text(&child.children))
+            {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct EmbeddedDocument {
     pub root: Vec<EmbeddedNode>,

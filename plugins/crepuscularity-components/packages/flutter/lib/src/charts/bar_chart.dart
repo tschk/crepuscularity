@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show listEquals;
 
 import '../dither/dither_paint.dart';
 import '../dither/palette.dart';
 import 'area_chart.dart';
 
 /// Full-width dithered bar chart.
-/// Rebuild after changing values; each painter snapshots the supplied list.
 class DitherBarChart extends StatelessWidget {
   const DitherBarChart({
     required this.values,
@@ -43,11 +41,11 @@ class DitherBarChart extends StatelessWidget {
 
 class DitherBarPainter extends CustomPainter {
   DitherBarPainter({
-    required List<double> values,
+    required this.values,
     required this.color,
     required this.variant,
     this.intensity = 0,
-  }) : values = List<double>.of(values);
+  });
 
   final List<double> values;
   final DitherColor color;
@@ -68,7 +66,7 @@ class DitherBarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant DitherBarPainter oldDelegate) {
-    return !listEquals(oldDelegate.values, values) ||
+    return oldDelegate.values != values ||
         oldDelegate.color != color ||
         oldDelegate.variant != variant ||
         oldDelegate.intensity != intensity;

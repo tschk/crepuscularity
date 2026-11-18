@@ -11,26 +11,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 #[derive(Debug)]
-struct Document {
-    text: String,
-    version: i32,
-}
-
-impl Document {
-    fn replace_if_newer(&mut self, text: String, version: i32) -> bool {
-        if version <= self.version {
-            return false;
-        }
-        self.text = text;
-        self.version = version;
-        true
-    }
-}
-
-#[derive(Debug)]
 struct Backend {
     client: Client,
-    docs: Arc<RwLock<HashMap<Url, Document>>>,
+    docs: Arc<RwLock<HashMap<Url, TextDocumentItem>>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -74,41 +57,31 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
-        let text = params.text_document.text;
-        let version = params.text_document.version;
-        // Keep state changes and their queued diagnostics in the same lifecycle order.
+        let document = params.text_document;
         let mut docs = self.docs.write().await;
-        docs.insert(
-            uri.clone(),
-            Document {
-                text: text.clone(),
-                version,
-            },
-        );
-        self.publish_doc_diagnostics(uri, text, version).await;
-        drop(docs);
+        self.publish_doc_diagnostics(&document).await;
+        docs.insert(document.uri.clone(), document);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
         if let Some(last) = params.content_changes.into_iter().last() {
-            let version = params.text_document.version;
             let mut docs = self.docs.write().await;
-            let Some(doc) = docs.get_mut(&uri) else {
+            let Some(document) = docs.get_mut(&uri) else {
                 return;
             };
-            if !doc.replace_if_newer(last.text.clone(), version) {
+            if params.text_document.version <= document.version {
                 return;
             }
-            self.publish_doc_diagnostics(uri, last.text, version).await;
-            drop(docs);
+            document.text = last.text;
+            document.version = params.text_document.version;
+            self.publish_doc_diagnostics(document).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri;
         let mut docs = self.docs.write().await;
+        let uri = params.text_document.uri;
         docs.remove(&uri);
         self.client.publish_diagnostics(uri, vec![], None).await;
         drop(docs);
@@ -118,7 +91,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let docs = self.docs.read().await;
-        let Some(text) = docs.get(&uri).map(|doc| doc.text.clone()) else {
+        let Some(text) = docs.get(&uri).map(|document| document.text.clone()) else {
             return Ok(None);
         };
         drop(docs);
@@ -135,7 +108,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
         let docs = self.docs.read().await;
-        let Some(text) = docs.get(&uri).map(|doc| doc.text.clone()) else {
+        let Some(text) = docs.get(&uri).map(|document| document.text.clone()) else {
             return Ok(None);
         };
         drop(docs);
@@ -145,11 +118,14 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
-    async fn publish_doc_diagnostics(&self, uri: Url, text: String, version: i32) {
-        let path = uri.to_file_path().unwrap_or_else(|_| uri.path().into());
-        let diagnostics = crepus_diagnostics_to_lsp_with_path(&text, Some(&path));
+    async fn publish_doc_diagnostics(&self, document: &TextDocumentItem) {
+        let path = document
+            .uri
+            .to_file_path()
+            .unwrap_or_else(|_| document.uri.path().into());
+        let diagnostics = crepus_diagnostics_to_lsp_with_path(&document.text, Some(&path));
         self.client
-            .publish_diagnostics(uri, diagnostics, Some(version))
+            .publish_diagnostics(document.uri.clone(), diagnostics, Some(document.version))
             .await;
     }
 }
@@ -174,7 +150,7 @@ async fn main() {
     .finish();
     let service = tower::ServiceBuilder::new()
         .map_request(move |request: Request| {
-            // tower-lsp waits for more stdin after exit; this standalone server must terminate.
+            // tower-lsp stops its service on exit but still waits for stdin to close.
             if request.method() == "exit" && request.id().is_none() {
                 std::process::exit(if shutdown.load(Ordering::SeqCst) {
                     0
@@ -187,75 +163,4 @@ async fn main() {
         .service(service);
 
     Server::new(stdin, stdout, socket).serve(service).await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::future::Future;
-    use std::task::{Context, Poll, Waker};
-    use tower::Service;
-
-    #[test]
-    fn document_changes_require_a_strictly_newer_version() {
-        let mut doc = Document {
-            text: "current".into(),
-            version: -2,
-        };
-        for version in [i32::MIN, -3, -2] {
-            assert!(!doc.replace_if_newer("stale".into(), version));
-            assert_eq!(doc.text, "current");
-            assert_eq!(doc.version, -2);
-        }
-        assert!(doc.replace_if_newer(String::new(), -1));
-        assert_eq!(doc.text, "");
-        assert_eq!(doc.version, -1);
-        assert!(doc.replace_if_newer("latest".into(), i32::MAX));
-        assert!(!doc.replace_if_newer("duplicate".into(), i32::MAX));
-        assert_eq!(doc.text, "latest");
-    }
-
-    #[tokio::test]
-    async fn blocked_publication_keeps_document_lifecycle_ordered() {
-        let (mut service, _socket) = LspService::new(|client| Backend {
-            client,
-            docs: Arc::new(RwLock::new(HashMap::new())),
-            shutdown: Arc::new(AtomicBool::new(false)),
-        });
-        let initialize: Request =
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#
-                .parse()
-                .unwrap();
-        service.call(initialize).await.unwrap();
-        let backend = service.inner();
-        let mut context = Context::from_waker(Waker::noop());
-        let mut fill = Box::pin(async {
-            loop {
-                backend.client.show_message(MessageType::INFO, "fill").await;
-            }
-        });
-        assert!(matches!(fill.as_mut().poll(&mut context), Poll::Pending));
-        drop(fill);
-        let uri: Url = "file:///tmp/crepus-lifecycle.crepus".parse().unwrap();
-        let mut open = Box::pin(backend.did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: uri.clone(),
-                language_id: "crepus".into(),
-                version: 1,
-                text: "div".into(),
-            },
-        }));
-        assert!(open.as_mut().poll(&mut context).is_pending());
-        assert!(
-            backend.docs.try_write().is_err(),
-            "publication released the lifecycle lock before enqueueing"
-        );
-        let mut close = Box::pin(backend.did_close(DidCloseTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri },
-        }));
-        assert!(close.as_mut().poll(&mut context).is_pending());
-        drop(open);
-        drop(close);
-        assert!(backend.docs.try_write().is_ok());
-    }
 }

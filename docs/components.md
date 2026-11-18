@@ -70,7 +70,13 @@ In JSX syntax:
 
 ## Multi-Component Files
 
-Group related components in a single file with TOML frontmatter:
+Group related components in a single file with TOML frontmatter. Each component
+name must be unique; duplicate definitions are parse errors.
+Separate `---` from the component name with spaces or a tab. Section markers
+inside multiline quoted text remain literal text.
+An opening `+++` frontmatter block must have a closing `+++` delimiter on its
+own line. A line containing exactly `+++` is reserved as the closing delimiter.
+When provided, component `description` metadata must be a TOML string.
 
 ```text
 +++
@@ -150,6 +156,12 @@ Each component gets its own context with:
 - Props passed via `prop=value` syntax
 - Defaults from `$: default` or TOML `[Component.defaults]`
 - The slot content (accessible via `slot` keyword)
+
+TOML `[Component.defaults]` values support strings, signed 64-bit integers,
+finite floats, and booleans. Arrays, tables, dates, and non-finite floats are
+parse errors; the diagnostic names the component and property.
+Declare defaults with `[Component.defaults]` or an inline `defaults = { ... }`
+table; other types for the `defaults` field are parse errors.
 
 Props always override defaults:
 

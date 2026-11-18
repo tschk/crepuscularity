@@ -1,5 +1,5 @@
 import * as bindings from "./wasm/crepuscularity_wasm.js";
-import { createParser } from "./parser.js";
+import { createParser } from "./parser.ts";
 
 export type * from "./parser.js";
 export const { IR_VERSION, parseCrepus, parseTemplate } = createParser(bindings);

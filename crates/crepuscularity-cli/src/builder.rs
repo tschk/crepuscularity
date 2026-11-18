@@ -3,7 +3,7 @@
 /// Runs `cargo build --message-format=json-diagnostic-rendered-ansi`,
 /// streams the JSON output, and returns a `BuildOutcome`.
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -19,29 +19,6 @@ struct CargoLine {
     reason: String,
     message: Option<CompilerMsg>,
     success: Option<bool>,
-    target: Option<CargoTarget>,
-    executable: Option<PathBuf>,
-}
-
-impl CargoLine {
-    fn binary_executable(self) -> Option<(String, PathBuf)> {
-        if self.reason != "compiler-artifact" {
-            return None;
-        }
-        let target = self.target?;
-        if !target.kind.iter().any(|kind| kind == "bin") {
-            return None;
-        }
-        Some((target.name, self.executable?))
-    }
-}
-
-#[derive(Deserialize, Default)]
-struct CargoTarget {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    kind: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -63,67 +40,6 @@ struct MsgSpan {
 pub struct BuildOutcome {
     pub success: bool,
     pub errors: Vec<BuildError>,
-    executables: Vec<(String, PathBuf)>,
-}
-
-#[derive(Clone)]
-pub enum BinSelection {
-    Required(String),
-    Package(String),
-}
-
-impl BinSelection {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Required(name) | Self::Package(name) => name,
-        }
-    }
-}
-
-impl std::fmt::Display for BinSelection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-impl BuildOutcome {
-    pub fn executable_for(&self, selection: &BinSelection) -> Result<(String, PathBuf), String> {
-        if self
-            .executables
-            .iter()
-            .any(|(name, _)| name == selection.name())
-        {
-            return self
-                .executable(selection.name())
-                .map(|path| (selection.name().to_owned(), path));
-        }
-        if let BinSelection::Package(_) = selection {
-            return match self.executables.as_slice() {
-                [(name, path)] => Ok((name.clone(), path.clone())),
-                [] => Err("Cargo reported no executable; select a binary with --bin".into()),
-                _ => {
-                    Err("Cargo reported multiple executable binaries; select one with --bin".into())
-                }
-            };
-        }
-        self.executable(selection.name())
-            .map(|path| (selection.name().to_owned(), path))
-    }
-
-    pub fn executable(&self, bin_name: &str) -> Result<PathBuf, String> {
-        let mut matches = self.executables.iter().filter(|(name, _)| name == bin_name);
-        let Some((_, path)) = matches.next() else {
-            return Err(format!(
-                "Cargo did not report an executable for binary '{bin_name}'"
-            ));
-        };
-        if matches.next().is_some() {
-            return Err(format!(
-                "Cargo reported multiple executables for binary '{bin_name}'"
-            ));
-        }
-        Ok(path.clone())
-    }
 }
 
 /// Run `cargo build` in `cwd`.
@@ -153,7 +69,6 @@ pub fn cargo_build(
             return BuildOutcome {
                 success: false,
                 errors: vec![fallback_error(format!("failed to spawn cargo: {e}"), &hud)],
-                executables: vec![],
             };
         }
     };
@@ -178,7 +93,6 @@ pub fn cargo_build(
     let stdout = child.stdout.take().unwrap();
     let mut errors: Vec<BuildError> = Vec::new();
     let mut success = false;
-    let mut executables = Vec::new();
 
     for line in BufReader::new(stdout).lines() {
         let line = match line {
@@ -222,11 +136,6 @@ pub fn cargo_build(
                     }
                 }
             }
-            "compiler-artifact" => {
-                if let Some(artifact) = msg.binary_executable() {
-                    executables.push(artifact);
-                }
-            }
             "build-finished" => {
                 success = msg.success.unwrap_or(false);
             }
@@ -252,11 +161,7 @@ pub fn cargo_build(
         };
         errors.push(fallback_error(message, &hud));
     }
-    BuildOutcome {
-        success,
-        errors,
-        executables,
-    }
+    BuildOutcome { success, errors }
 }
 
 fn fallback_error(message: String, hud: &Option<Arc<Mutex<HudState>>>) -> BuildError {
@@ -283,97 +188,73 @@ pub fn kill_child(child: &mut Child) {
 }
 
 /// Find the binary name to run after a build.
-/// An explicit override wins, then `package.default-run`, the first named `[[bin]]`,
-/// and finally `[package] name`.
-pub fn find_bin_selection(cwd: &Path, override_name: Option<&str>) -> Option<BinSelection> {
-    if let Some(name) = override_name {
-        return Some(BinSelection::Required(name.to_string()));
-    }
-    let content = std::fs::read_to_string(cwd.join("Cargo.toml")).ok()?;
-    let manifest: toml::Value = toml::from_str(&content).ok()?;
-    if let Some(name) = manifest
-        .get("package")
-        .and_then(|package| package.get("default-run"))
-        .and_then(toml::Value::as_str)
-        .filter(|name| !name.is_empty())
-    {
-        return Some(BinSelection::Required(name.to_owned()));
-    }
-    let name = |value: &toml::Value| {
-        value
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-    };
-    manifest
-        .get("bin")
-        .and_then(toml::Value::as_array)
-        .and_then(|bins| bins.iter().find_map(name))
-        .map(BinSelection::Required)
-        .or_else(|| {
-            manifest
-                .get("package")
-                .and_then(name)
-                .map(BinSelection::Package)
-        })
-}
-#[cfg(test)]
+/// Prefers `[[bin]] name` over `[package] name` in Cargo.toml.
+/// Falls back to `override_name` if provided.
 pub fn find_bin_name(cwd: &Path, override_name: Option<&str>) -> Option<String> {
-    find_bin_selection(cwd, override_name).map(|selection| selection.name().to_owned())
+    if let Some(name) = override_name {
+        return Some(name.to_string());
+    }
+
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, String>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+
+    let toml_path = cwd.join("Cargo.toml");
+
+    let content = CACHE.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if let Some(cached) = map.get(&toml_path) {
+            return Some(cached.clone());
+        }
+
+        if let Ok(c) = std::fs::read_to_string(&toml_path) {
+            map.insert(toml_path, c.clone());
+            Some(c)
+        } else {
+            None
+        }
+    })?;
+
+    let mut in_bin = false;
+    let mut in_package = false;
+    let mut package_name: Option<String> = None;
+
+    for line in content.lines() {
+        let t = line.trim();
+        if t == "[[bin]]" {
+            in_bin = true;
+            in_package = false;
+            continue;
+        }
+        if t.starts_with('[') {
+            in_bin = false;
+            in_package = t == "[package]";
+            continue;
+        }
+        if (in_bin || in_package) && t.starts_with("name") {
+            if let Some(eq) = t.find('=') {
+                let name = t[eq + 1..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
+                if !name.is_empty() {
+                    if in_bin {
+                        return Some(name); // [[bin]] wins immediately
+                    } else if package_name.is_none() {
+                        package_name = Some(name);
+                    }
+                }
+            }
+        }
+    }
+
+    package_name
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn executable_artifacts_filter_non_bins_and_keep_fresh_custom_paths() {
-        for fresh in [false, true] {
-            let raw = format!(
-                r#"{{"reason":"compiler-artifact","target":{{"name":"app","kind":["bin"]}},"executable":"/custom/debug/app.exe","fresh":{fresh}}}"#
-            );
-            let artifact: CargoLine = serde_json::from_str(&raw).unwrap();
-            assert_eq!(
-                artifact.binary_executable(),
-                Some(("app".into(), PathBuf::from("/custom/debug/app.exe")))
-            );
-        }
-        for raw in [
-            r#"{"reason":"compiler-artifact","target":{"name":"build-script-build","kind":["custom-build"]},"executable":"/wrong/build-script-build"}"#,
-            r#"{"reason":"compiler-artifact","target":{"name":"lib","kind":["lib"]},"executable":null}"#,
-            r#"{"reason":"compiler-artifact","target":{},"executable":"/wrong/unknown"}"#,
-            r#"{"reason":"compiler-artifact","target":{"name":"app","kind":["bin"]},"executable":null}"#,
-            r#"{"reason":"build-finished","success":true}"#,
-        ] {
-            let artifact: CargoLine = serde_json::from_str(raw).unwrap();
-            assert!(artifact.binary_executable().is_none(), "{raw}");
-        }
-    }
-
-    #[test]
-    fn executable_selection_requires_one_matching_binary() {
-        let mut outcome = BuildOutcome {
-            success: true,
-            errors: vec![],
-            executables: vec![
-                ("other".into(), PathBuf::from("/custom/debug/other")),
-                ("app".into(), PathBuf::from("/custom/debug/app")),
-            ],
-        };
-        assert_eq!(
-            outcome.executable("app").unwrap(),
-            PathBuf::from("/custom/debug/app")
-        );
-        assert!(outcome
-            .executable("missing")
-            .unwrap_err()
-            .contains("did not report"));
-        outcome
-            .executables
-            .push(("app".into(), PathBuf::from("/another/debug/app")));
-        assert!(outcome.executable("app").unwrap_err().contains("multiple"));
-    }
 
     #[test]
     fn parse_build_finished_msg() {
@@ -475,50 +356,5 @@ name = "my-lib"
     fn find_bin_name_no_toml_returns_none() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(find_bin_name(dir.path(), None), None);
-    }
-
-    #[test]
-    fn executable_selection_preserves_required_names_and_exact_ambiguity() {
-        let mut outcome = BuildOutcome {
-            success: true,
-            errors: Vec::new(),
-            executables: vec![("worker".into(), PathBuf::from("/fixture/worker"))],
-        };
-        for manifest in [
-            "[package]\nname='host'\ndefault-run='missing'\n",
-            "[package]\nname='host'\n[[bin]]\nname='missing'\n",
-        ] {
-            let root = tempfile::tempdir().unwrap();
-            std::fs::write(root.path().join("Cargo.toml"), manifest).unwrap();
-            let selection = find_bin_selection(root.path(), None).unwrap();
-            assert!(outcome.executable_for(&selection).is_err());
-        }
-        assert_eq!(
-            outcome
-                .executable_for(&BinSelection::Package("host".into()))
-                .unwrap()
-                .0,
-            "worker"
-        );
-        outcome
-            .executables
-            .push(("worker".into(), PathBuf::from("/another/worker")));
-        assert!(outcome
-            .executable_for(&BinSelection::Package("worker".into()))
-            .unwrap_err()
-            .contains("multiple"));
-        assert!(outcome
-            .executable_for(&BinSelection::Required("worker".into()))
-            .unwrap_err()
-            .contains("multiple"));
-        assert!(outcome
-            .executable_for(&BinSelection::Package("host".into()))
-            .unwrap_err()
-            .contains("--bin"));
-        outcome.executables.clear();
-        assert!(outcome
-            .executable_for(&BinSelection::Package("host".into()))
-            .unwrap_err()
-            .contains("--bin"));
     }
 }

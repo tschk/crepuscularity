@@ -3,11 +3,11 @@
 //!
 //! Framebuffer rendering for `.crepus` on embedded displays and firmware.
 //!
-//! With `std`, use the same workflow as the `crepuscularity-tui` or `crepuscularity-native` crates: depend on this crate,
-//! build a `TemplateContext`, render a template into your surface, use the retained
+//! Same workflow as the `crepuscularity-tui` or `crepuscularity-native` crates: depend on this crate,
+//! build a [`TemplateContext`], render a template into your surface, use the retained
 //! [`EmbeddedDocument`] for layout bounds and hit-testing.
 //!
-//! # Quick start (host template rendering; requires `std`)
+//! # Quick start (firmware / simulator; requires `std`)
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "std")]
@@ -26,45 +26,47 @@
 //!
 //! Docs: [`embedded.md`](https://github.com/tschk/crepuscularity/blob/main/docs/embedded.md) · Example: `examples/embedded-dashboard`.
 //!
-//! Lower-level: `Template` (requires `std`), [`Rgb565View`].
+//! Lower-level: [`Template`], [`Rgb565View`].
 //!
 //! # Display RAM you already own
 //!
 //! `Rgb565View` works without `std`; parsing a template at runtime requires `std`.
+//! For `no_std` firmware, `embedded_document!` (feature `macros`) bakes the template at
+//! compile time into a [`CompiledTemplate`] that renders with `core` + `alloc` only.
 //!
 //! ```rust,no_run
-//! # use crepuscularity_embedded::{Framebuffer, Rgb565View, ScreenSize, DEFAULT_BG};
+//! # use crepuscularity_embedded::{Rgb565View, ScreenSize};
 //! # let screen = ScreenSize::new(128, 64);
 //! # let mut ram = [0u16; 128 * 64];
 //! let mut fb = Rgb565View::new(screen, &mut ram).unwrap();
-//! fb.fill(DEFAULT_BG);
+//! // `Template` parses at runtime, so it needs `std`.
 //! # #[cfg(feature = "std")]
 //! # {
 //! # let mut ui = crepuscularity_embedded::Template::from_source("div w-full h-full\n  \"Hi\"", screen);
-//! # ui.draw(&mut fb).unwrap();
+//! ui.draw(&mut fb).unwrap();
 //! # }
 //! // `ram` is ready for DMA
 //! ```
 //!
 //! # `build.rs` / CI
 //!
-//! Validate templates at compile time with `crepuscularity_core::build::compile_crepus`,
+//! Validate templates at compile time with [`crepuscularity_core::build::compile_crepus`],
 //! or `crepus embedded check ui.crepus` in CI. Parsing and includes require the **`std`**
 //! feature (enabled by default). With `default-features = false` you get `no_std` layout,
-//! paint, and [`Framebuffer`] adapters only — use when a host build pre-renders or you
-//! construct [`EmbeddedDocument`] trees in Rust.
+//! paint, [`Framebuffer`] adapters, and [`compiled`] templates from `embedded_document!`.
 //!
 //! # Dev-only snapshots
 //!
 //! `crepus embedded snapshot … --out file.ppm` writes a PPM for visual debugging; production
-//! hosts can use `Ui::render` / `Ui::rgb565`. No-std firmware uses [`paint::paint_document`]
-//! with a prepared document and framebuffer.
+//! firmware should use [`Ui::render`] / [`Ui::rgb565`].
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
 pub mod color;
+pub mod compiled;
 pub mod display;
 pub mod document;
 pub mod font;
@@ -101,12 +103,13 @@ pub use layout::{layout_document, layout_tree};
 pub use screen::ScreenSize;
 pub use style::{parse_classes, style_from_classes};
 
+pub use compiled::{CompiledTemplate, Value, Vars};
 #[cfg(feature = "std")]
 pub use crepuscularity_core::{
     build, parse_component_file, parse_template, CrepusError, TemplateContext, TemplateValue,
 };
 #[cfg(feature = "macros")]
-pub use crepuscularity_macros::embedded_template;
+pub use crepuscularity_macros::{embedded_document, embedded_template};
 pub use display::{
     flush_framebuffer, swap_rgb565_bytes_bgr, DisplayError, PanelConfig, Rgb565ByteOrder,
     Rgb565Display,

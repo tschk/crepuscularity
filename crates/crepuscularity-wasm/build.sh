@@ -4,8 +4,8 @@ set -euo pipefail
 crate_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace_root="$(cd "$crate_dir/../.." && pwd)"
 
-# The generator refuses to run when its schema differs from the wasm-bindgen
-# crate's, and an unrelated `cargo install` can swap the binary underneath us.
+# Resolve the generator from this crate's locked dependency, not an unrelated
+# workspace member, and honor Cargo's configured target directory.
 metadata="$(cargo metadata --locked --manifest-path "$workspace_root/Cargo.toml" --format-version 1)"
 crate_version="$(printf '%s' "$metadata" | bun -e '
 const metadata = await Bun.stdin.json();
@@ -23,40 +23,21 @@ if [ "$crate_version" != "$cli_version" ]; then
 fi
 
 cargo build --locked --manifest-path "$workspace_root/Cargo.toml" -p crepuscularity-wasm --target wasm32-unknown-unknown --release
+wasm="$target_dir/wasm32-unknown-unknown/release/crepuscularity_wasm.wasm"
 
-mkdir -p "$crate_dir/npm/wasm"
-wasm-bindgen \
-    "$target_dir/wasm32-unknown-unknown/release/crepuscularity_wasm.wasm" \
-    --out-dir "$crate_dir/npm/wasm" \
-    --target nodejs
+wasm-bindgen "$wasm" --out-dir "$crate_dir/npm/wasm" --target nodejs
+# The parent npm package is ESM; wasm-bindgen's Node output is CommonJS.
+printf '{"type":"commonjs"}\n' > "$crate_dir/npm/wasm/package.json"
+wasm-bindgen "$wasm" --out-dir "$crate_dir/pkg" --target nodejs
+wasm-bindgen "$wasm" --out-dir "$crate_dir/npm/browser" --target web
 
-rm -f "$crate_dir/npm/wasm/.gitignore" "$crate_dir/npm/wasm/package.json"
+# Ship JavaScript entry points: Node does not strip TypeScript in node_modules.
+bun build "$crate_dir/npm/index.ts" --target node --external './wasm/*' --outdir "$crate_dir/npm"
+bun build "$crate_dir/npm/browser.ts" --target browser --external './browser/*' --outdir "$crate_dir/npm"
 
-# A binding layer that silently lacks a frontend is worse than one that fails:
-# an extension it does not know falls through to generic markup and returns
-# plausible but wrong IR. The expected set is read from the parser directory
-# rather than listed here, so a new frontend is required without editing this.
-missing=""
-for frontend_dir in "$workspace_root/crates/crepuscularity-core/src/parser"/*/; do
-    frontend="$(basename "$frontend_dir")"
-    if ! grep -aq "parser/$frontend/" "$crate_dir/npm/wasm/crepuscularity_wasm_bg.wasm"; then
-        missing="$missing $frontend"
-    fi
-done
-if [ -n "$missing" ]; then
-    echo "built wasm is missing parser frontends:$missing" >&2
-    exit 1
-fi
-
-mkdir -p "$crate_dir/pkg"
-cp "$crate_dir/npm/wasm"/crepuscularity_wasm* "$crate_dir/pkg/"
-
-mkdir -p "$crate_dir/npm/browser"
-wasm-bindgen \
-    "$target_dir/wasm32-unknown-unknown/release/crepuscularity_wasm.wasm" \
-    --out-dir "$crate_dir/npm/browser" \
-    --target web
-
+# Release optimization may erase Rust source paths. Exercise the generated
+# bindings instead of guessing parser availability from incidental WASM bytes.
+node "$crate_dir/npm/frontend-smoke.mjs"
 bun test "$crate_dir/npm/parser.test.ts"
 
-echo "built $crate_dir/npm/wasm"
+echo "built Node, browser and legacy bindings in $crate_dir"

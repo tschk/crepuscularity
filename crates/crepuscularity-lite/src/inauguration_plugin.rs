@@ -164,7 +164,7 @@ mod tests {
         let payload = json!({ "path": "../etc/passwd" });
         let res = p.invoke("readFile", &payload);
         assert!(res.is_err());
-        let err = res.err().unwrap();
+        let err = res.unwrap_err();
         assert_eq!(err.code, "path_escape");
     }
 
@@ -174,25 +174,25 @@ mod tests {
         let payload = json!({ "command": "echo hello" });
         let res = p.invoke("processRun", &payload);
         assert!(res.is_err());
-        let err = res.err().unwrap();
+        let err = res.unwrap_err();
         assert_eq!(err.code, "access_denied");
 
         // Also reject arbitrary commands with spaces or quotes handled improperly previously
         let payload = json!({ "command": "rm -rf /" });
         let res = p.invoke("processRun", &payload);
         assert!(res.is_err());
-        let err = res.err().unwrap();
+        let err = res.unwrap_err();
         assert_eq!(err.code, "access_denied");
 
         let payload = json!({ "command": "/tmp/malicious/in build" });
         let res = p.invoke("processRun", &payload);
         assert!(res.is_err());
-        let err = res.err().unwrap();
+        let err = res.unwrap_err();
         assert_eq!(err.code, "access_denied");
 
         let payload = json!({ "command": r"..\in build" });
         let res = p.invoke("processRun", &payload);
         assert!(res.is_err());
-        assert_eq!(res.err().unwrap().code, "access_denied");
+        assert_eq!(res.unwrap_err().code, "access_denied");
     }
 }

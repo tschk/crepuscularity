@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show listEquals;
 
 import 'dither_paint.dart';
 import 'palette.dart';
 
 /// Full-width dithered sparkline (dither-kit port).
-/// Rebuild after changing values; each painter snapshots the supplied list.
 class DitherSparkline extends StatelessWidget {
   const DitherSparkline({
     required this.values,
@@ -39,10 +37,10 @@ class DitherSparkline extends StatelessWidget {
 
 class _SparklinePainter extends CustomPainter {
   _SparklinePainter({
-    required List<double> values,
+    required this.values,
     required this.color,
     required this.variant,
-  }) : values = List<double>.of(values);
+  });
 
   final List<double> values;
   final DitherColor color;
@@ -61,14 +59,14 @@ class _SparklinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SparklinePainter oldDelegate) {
-    return !listEquals(oldDelegate.values, values) ||
+    return oldDelegate.values != values ||
         oldDelegate.color != color ||
         oldDelegate.variant != variant;
   }
 }
 
 DitherVariant ditherVariantFromName(String? name) {
-  return switch (name?.trim().toLowerCase()) {
+  return switch (name?.toLowerCase()) {
     'dotted' => DitherVariant.dotted,
     'hatched' => DitherVariant.hatched,
     'solid' => DitherVariant.solid,
@@ -83,6 +81,5 @@ List<double> parseSparklineValues(String? raw) {
       .split(RegExp(r'[,\s]+'))
       .map((part) => double.tryParse(part.trim()))
       .whereType<double>()
-      .where((value) => value.isFinite)
       .toList(growable: false);
 }

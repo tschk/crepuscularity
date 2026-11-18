@@ -59,78 +59,11 @@ fn convert(dir: &Path, out: &Path, target: TauriTargetArg) -> Result<(), String>
             staging.display()
         ));
     }
-    // Keep the scaffold entry separate when the source graph already owns main.crepus.
-    let is_main = |path: &str| {
-        Path::new(path)
-            .components()
-            .filter(|part| !matches!(part, std::path::Component::CurDir))
-            .eq(Path::new("main.crepus").components())
-    };
-    let direct_main = is_main(&bundle.entry);
-    let source_prefix = if !direct_main && bundle.files.keys().any(|path| is_main(path)) {
-        "__crepus_source/"
-    } else {
-        ""
-    };
     let result = (|| {
         crate::native::scaffold_native_app_at(&staging)?;
         apply_metadata(&staging, &metadata)?;
-        for (path, source) in &bundle.files {
-            let destination = staging.join("views").join(source_prefix).join(path);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(destination, source).map_err(|e| e.to_string())?;
-            if desktop {
-                let destination = staging.join("desktop/views").join(source_prefix).join(path);
-                if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                fs::write(destination, source).map_err(|e| e.to_string())?;
-            }
-        }
-        if !direct_main {
-            let entry = format!("{source_prefix}{}", bundle.entry)
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('\t', "\\t");
-            let wrapper = format!("include \"{entry}\"\n");
-            fs::write(staging.join("views/main.crepus"), &wrapper).map_err(|e| e.to_string())?;
-            if desktop {
-                fs::write(staging.join("desktop/views/main.crepus"), &wrapper)
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        if desktop {
-            write_desktop_project(&staging.join("desktop"), &windows)?;
-        }
-        fs::write(staging.join("fixture.json"), &fixture).map_err(|e| e.to_string())?;
-        if target != TauriTargetArg::Desktop {
-            fs::write(
-                staging.join("android/app/src/main/assets/fixture.json"),
-                &fixture,
-            )
-            .map_err(|e| e.to_string())?;
-            fs::write(
-                staging.join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift"),
-                swift,
-            )
-            .map_err(|e| e.to_string())?;
-            fs::write(
-            staging.join(
-                "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
-            ),
-            kotlin,
-        )
-        .map_err(|e| e.to_string())?;
-        }
-        if target == TauriTargetArg::Desktop {
-            fs::remove_dir_all(staging.join("ios")).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(staging.join("android")).map_err(|e| e.to_string())?;
-            fs::remove_dir_all(staging.join("rust")).map_err(|e| e.to_string())?;
-        }
+        write_views(&staging, &bundle, desktop, &windows)?;
+        write_native_targets(&staging, &fixture, &swift, &kotlin, target)?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -158,10 +91,7 @@ fn apply_metadata(
     replace(
         root.join("android/app/src/main/AndroidManifest.xml"),
         "android:label=\"NativeShell\"",
-        &format!(
-            "android:label=\"{}\"",
-            crepuscularity_web::escape_html(product_name)
-        ),
+        &format!("android:label=\"{product_name}\""),
     )?;
     if let Some(identifier) = &metadata.identifier {
         replace(
@@ -226,43 +156,73 @@ fn replace(path: impl AsRef<Path>, from: &str, to: &str) -> Result<(), String> {
     fs::write(path, source.replace(from, to)).map_err(|e| e.to_string())
 }
 
-#[cfg(test)]
-mod scaffold_dependency_tests {
-    use super::*;
-    #[test]
-    fn desktop_manifest_is_valid_and_matches_backend_registry_dependencies() {
-        let dir = tempfile::tempdir().unwrap();
-        write_desktop_project(dir.path(), &[]).unwrap();
-        let generated: toml::Value =
-            toml::from_str(&std::fs::read_to_string(dir.path().join("Cargo.toml")).unwrap())
-                .unwrap();
-        let backend: toml::Value =
-            toml::from_str(include_str!("../../crepuscularity-gpui/Cargo.toml")).unwrap();
-        for dependency in ["gpui", "gpui_platform"] {
-            let emitted = &generated["dependencies"][dependency];
-            let shipped = &backend["dependencies"][dependency];
-            for field in ["package", "version"] {
-                assert_eq!(emitted[field], shipped[field], "{dependency}.{field}");
-            }
-            for field in ["git", "rev", "path"] {
-                assert!(emitted.get(field).is_none(), "{dependency}.{field}");
-            }
+fn write_views(
+    staging: &Path,
+    bundle: &crepuscularity_core::bundle::Bundle,
+    desktop: bool,
+    windows: &[crepuscularity_tauri::TauriWindowSpec],
+) -> Result<(), String> {
+    for (path, source) in &bundle.files {
+        let destination = staging.join("views").join(path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        assert_eq!(
-            generated["dependencies"]["gpui"]["default-features"],
-            backend["dependencies"]["gpui"]["default-features"]
-        );
-        assert!(generated["dependencies"]["gpui_platform"]["features"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|feature| feature.as_str() == Some("font-kit")));
-        for feature in ["gpui/font-kit", "gpui_platform/font-kit"] {
-            assert!(backend["features"]["font-kit"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry.as_str() == Some(feature)));
+        fs::write(destination, source).map_err(|e| e.to_string())?;
+        if desktop {
+            let destination = staging.join("desktop/views").join(path);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::write(destination, source).map_err(|e| e.to_string())?;
         }
     }
+    fs::write(
+        staging.join("views/main.crepus"),
+        format!("include {}\n", bundle.entry),
+    )
+    .map_err(|e| e.to_string())?;
+    if desktop {
+        fs::write(
+            staging.join("desktop/views/main.crepus"),
+            format!("include {}\n", bundle.entry),
+        )
+        .map_err(|e| e.to_string())?;
+        write_desktop_project(&staging.join("desktop"), windows)?;
+    }
+    Ok(())
+}
+
+fn write_native_targets(
+    staging: &Path,
+    fixture: &str,
+    swift: &str,
+    kotlin: &str,
+    target: TauriTargetArg,
+) -> Result<(), String> {
+    fs::write(staging.join("fixture.json"), fixture).map_err(|e| e.to_string())?;
+    if target != TauriTargetArg::Desktop {
+        fs::write(
+            staging.join("android/app/src/main/assets/fixture.json"),
+            fixture,
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            staging.join("ios/Sources/NativeShell/Generated/CrepusGeneratedView.swift"),
+            swift,
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(
+            staging.join(
+                "android/app/src/main/java/dev/crepuscularity/nativeshell/generated/CrepusGeneratedView.kt",
+            ),
+            kotlin,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if target == TauriTargetArg::Desktop {
+        fs::remove_dir_all(staging.join("ios")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(staging.join("android")).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(staging.join("rust")).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

@@ -10,6 +10,7 @@ license = "ISC"
 [dependencies]
 crepuscularity-embedded = { path = "../../../../crates/crepuscularity-embedded", default-features = false, features = [
     "embassy-stm32",
+    "macros",
 ] }
 embassy-stm32 = { version = "0.6.0", features = [
     "defmt",

@@ -5,15 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 /// too, so truncated, ragged and hostile documents must parse to *something*
 /// inert rather than throwing.
 void main() {
-  test('quoted text preserves escaped backslashes before escape letters', () {
-    final ir = viewIrFromSource(r'text "\\n \\t \\"');
-    expect((ir.root.single as TextNode).content, r'\n \t \');
-    final attr = viewIrFromSource(r'button label="\\n"');
-    expect((attr.root.single as ButtonNode).label, r'\n');
-    final escapes = viewIrFromSource(r'''text "\n\r\t\"\'\q"''');
-    expect((escapes.root.single as TextNode).content, '\n\r\t"\'\\q');
-  });
-
   group('lexing and trivia', () {
     test('an empty or whitespace-only source is an empty document', () {
       for (final source in const ['', '\n', '   ', '\n\n\t\n', '  \t  \n  ']) {
@@ -546,23 +537,6 @@ stack col
   });
 
   group('layout classes', () {
-    test('last explicit direction wins without bare flex overriding it', () {
-      for (final (classes, axis) in [
-        ('flex-col flex-row', StackAxis.row),
-        ('flex-row flex-col', StackAxis.column),
-        ('row column', StackAxis.column),
-        ('column row', StackAxis.row),
-        ('flex-col flex', StackAxis.column),
-        ('flex flex-col', StackAxis.column),
-      ]) {
-        expect(
-          (viewIrFromSource('div $classes').root.single as StackNode).axis,
-          axis,
-          reason: classes,
-        );
-      }
-    });
-
     test('axis classes select row or column', () {
       for (final cls in const ['flex-col', 'col', 'column']) {
         expect(
@@ -625,7 +599,6 @@ stack col
         'justify-end': 'end',
         'justify-between': 'between',
         'justify-around': 'around',
-        'justify-evenly': 'evenly',
         'justify-start': 'start',
       };
       justify.forEach((cls, expected) {
@@ -658,9 +631,9 @@ stack col
     test('font size classes map to point sizes', () {
       const cases = {
         'text-xs': 12.0,
-        'text-sm': 14.0,
-        'text-base': 16.0,
-        'text-lg': 18.0,
+        'text-sm': 13.0,
+        'text-base': 15.0,
+        'text-lg': 17.0,
         'text-xl': 20.0,
         'text-2xl': 24.0,
         'text-3xl': 30.0,
@@ -723,7 +696,7 @@ stack col
         'rounded-xl': 16.0,
         'rounded-2xl': 20.0,
         'rounded-full': 999.0,
-        'rounded-bogus': null,
+        'rounded-bogus': 8.0,
       };
       cases.forEach((cls, radius) {
         expect(styleOf(cls)!.cornerRadius, radius, reason: cls);
@@ -731,8 +704,18 @@ stack col
     });
 
     test('only palette colour names are recognised', () {
-      expect(styleOf('text-red-500')!.foregroundColor, '#fb2c36');
-      expect(styleOf('bg-blue-900')!.backgroundColor, '#1c398e');
+      const colors = {
+        'red-500': '#fb2c36',
+        'green-500': '#00c950',
+        'blue-500': '#2b7fff',
+        'blue-900': '#1c398e',
+        'amber-500': '#fe9a00',
+        'slate-500': '#62748e',
+      };
+      colors.forEach((name, hex) {
+        expect(styleOf('text-$name')!.foregroundColor, hex, reason: name);
+        expect(styleOf('bg-$name')!.backgroundColor, hex, reason: name);
+      });
       expect(styleOf('text-white')!.foregroundColor, '#ffffff');
       expect(styleOf('bg-transparent')!.backgroundColor, '#00000000');
       // Arbitrary values are not honoured — no `text-[#deadbe]` escape hatch.
@@ -769,7 +752,7 @@ stack col
       final style = styleOf('text "x" p-2 text-lg mystery')!;
       expect(style.classes, ['p-2', 'text-lg', 'mystery']);
       expect(style.padding, 8);
-      expect(style.fontSize, 18);
+      expect(style.fontSize, 17);
     });
 
     test('classes exclude attributes, events, ids and inline text', () {

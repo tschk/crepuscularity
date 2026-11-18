@@ -8,7 +8,9 @@ use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue}
 use crepuscularity_core::eval::eval_expr;
 use crepuscularity_core::CrepusError;
 
-use crate::document::{EmbeddedDocument, EmbeddedNode, EmbeddedStyle};
+use crate::document::{
+    collect_primary_text, container, text_node, EmbeddedDocument, EmbeddedNode, EmbeddedStyle,
+};
 use crate::framebuffer::Framebuffer;
 use crate::layout::layout_document;
 use crate::paint::paint_document;
@@ -299,7 +301,7 @@ fn render_element(
     } else {
         el.bindings
             .iter()
-            .find(|binding| binding.prop == "id")
+            .find(|binding| binding.matches_prop("id"))
             .map(|binding| {
                 crepuscularity_core::eval::eval_binding(binding, ctx)
                     .map(|value| value.map(|value| value_to_str(&value)))
@@ -374,27 +376,6 @@ fn render_element(
     ))
 }
 
-fn collect_primary_text(children: &[EmbeddedNode]) -> Option<&str> {
-    for child in children {
-        if child.style.hidden || child.style.invisible || child.style.opacity_percent == Some(0) {
-            continue;
-        }
-        if matches!(
-            child.tag.as_str(),
-            "text" | "span" | "if" | "for" | "match" | "slot"
-        ) {
-            if let Some(text) = child
-                .text
-                .as_deref()
-                .or_else(|| collect_primary_text(&child.children))
-            {
-                return Some(text);
-            }
-        }
-    }
-    None
-}
-
 fn style(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedStyle, CrepusError> {
     let mut classes = Vec::new();
     for c in &el.classes {
@@ -427,36 +408,6 @@ fn style(el: &Element, ctx: &TemplateContext) -> Result<EmbeddedStyle, CrepusErr
         }
     }
     Ok(style)
-}
-
-fn container(
-    tag: &str,
-    style: EmbeddedStyle,
-    children: Vec<EmbeddedNode>,
-    id: Option<String>,
-    on_click: Option<String>,
-) -> EmbeddedNode {
-    EmbeddedNode {
-        id,
-        tag: tag.into(),
-        text: None,
-        on_click,
-        style,
-        bounds: Default::default(),
-        children,
-    }
-}
-
-fn text_node(text: String) -> EmbeddedNode {
-    EmbeddedNode {
-        id: None,
-        tag: "text".into(),
-        text: Some(text),
-        on_click: None,
-        style: EmbeddedStyle::default(),
-        bounds: Default::default(),
-        children: vec![],
-    }
 }
 
 fn render_text_inline(parts: &[TextPart], ctx: &TemplateContext) -> Result<String, CrepusError> {

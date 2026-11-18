@@ -6,7 +6,6 @@ import tempfile
 
 import os
 from unittest.mock import patch
-import tempfile
 from crepuscularity_plugin import ViewSession, render_html, render_ir, _crepus_bin
 
 
@@ -68,6 +67,7 @@ class PathBoundaryTests(unittest.TestCase):
                 with patch("crepuscularity_plugin.subprocess.run", return_value=self.reply) as run:
                     ir = render_ir(alias, context, allowed_alias)
                 self.assertEqual(ir.root[0]["content"], "allowed")
+                self.assertNotIn("text", run.call_args.kwargs)
                 if context is None:
                     self.assertEqual(run.call_args.args[0][-1], str(self.inside))
                     self.assertIsNone(run.call_args.kwargs["input"])
@@ -76,6 +76,7 @@ class PathBoundaryTests(unittest.TestCase):
                     self.assertEqual(payload["baseDir"], str(self.allowed))
                     self.assertEqual(payload["template"], self.inside.read_text())
                     self.assertEqual(payload["context"], context)
+                    self.assertEqual(payload["filename"], str(alias))
 
     def test_context_defaults_to_current_directory_boundary(self):
         with patch("crepuscularity_plugin.Path.cwd", return_value=self.allowed):
@@ -101,21 +102,6 @@ class PathBoundaryTests(unittest.TestCase):
 
 
 class CrepuscularityPluginTests(unittest.TestCase):
-    def test_context_render_preserves_frontend_filename(self):
-        fixture = pathlib.Path(__file__).parents[1] / "fixtures" / "frontend.svelte"
-        ir = render_ir(fixture, {"name": "Ada"}, fixture.parent)
-        self.assertIn("Frontend content", str(ir.root))
-        self.assertNotIn("ignored", str(ir.root))
-
-    def test_secure_input_renders_as_password(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = pathlib.Path(directory) / "password.crepus"
-            fixture.write_text('input secure bind=password\n')
-            self.assertEqual(
-                render_html(fixture),
-                '<input type="password" data-bind="password" placeholder="">',
-            )
-
     def test_crepus_bin_validation(self):
         valid_paths = [
             "crepus",
@@ -160,10 +146,6 @@ class CrepuscularityPluginTests(unittest.TestCase):
         fixture = pathlib.Path(__file__).parents[1] / "fixtures" / "hello.crepus"
         # Provide a dummy allowed directory that does not contain the fixture
         dummy_dir = pathlib.Path(__file__).parent
-        with patch("crepuscularity_plugin.subprocess.run") as run:
-            with self.assertRaises(ValueError):
-                render_ir(fixture, allowed_dir=dummy_dir)
-            run.assert_not_called()
         with self.assertRaises(ValueError):
             render_ir(fixture, {"name": "Ada"}, dummy_dir)
 

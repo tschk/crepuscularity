@@ -290,7 +290,7 @@ mod tests {
         [capabilities]
         fs = true
         "#;
-        let c: CrepusLiteConfig = toml::from_str(raw).unwrap();
+        let c: CrepusLiteConfig = toml::from_str(raw).expect("Failed to parse TOML configuration");
         assert!(c.capabilities.fs);
         assert!(!c.capabilities.clipboard);
         let a = c.allowed_capabilities();
@@ -305,7 +305,7 @@ mod tests {
         guest_prelude = ["a.js", "b.js"]
         guest_entry = "main.js"
         "#;
-        let c: CrepusLiteConfig = toml::from_str(raw).unwrap();
+        let c: CrepusLiteConfig = toml::from_str(raw).expect("Failed to parse TOML configuration");
         assert_eq!(
             c.guest_prelude,
             vec!["a.js".to_string(), "b.js".to_string()]

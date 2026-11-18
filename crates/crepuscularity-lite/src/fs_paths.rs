@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn rejects_parent_dir() {
         let root = Path::new("/tmp/sandbox-test-root");
-        let err = resolve_under_sandbox(root, "../etc/passwd").err().unwrap();
+        let err = resolve_under_sandbox(root, "../etc/passwd").unwrap_err();
         assert_eq!(err.code, "path_escape");
     }
 
@@ -71,21 +71,21 @@ mod tests {
         let abs_path = "/etc/passwd";
         #[cfg(windows)]
         let abs_path = "C:\\etc\\passwd";
-        let err = resolve_under_sandbox(root, abs_path).err().unwrap();
+        let err = resolve_under_sandbox(root, abs_path).unwrap_err();
         assert_eq!(err.code, "path_not_relative");
     }
 
     #[test]
     fn handles_current_dir() {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "./a/./b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "./a/./b/c.txt").expect("failed to handle current dir");
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
     }
 
     #[test]
     fn accepts_nested() {
         let root = Path::new("/tmp/sandbox");
-        let p = resolve_under_sandbox(root, "a/b/c.txt").unwrap();
+        let p = resolve_under_sandbox(root, "a/b/c.txt").expect("failed to accept nested path");
         assert_eq!(p, PathBuf::from("/tmp/sandbox/a/b/c.txt"));
     }
 
@@ -96,17 +96,19 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root).expect("failed to create root dir");
         let outside = std::env::temp_dir().join(format!(
             "crepus-lite-sandbox-outside-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&outside);
-        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&outside).expect("failed to create outside dir");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link"))
+            .expect("failed to create unix symlink");
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside, root.join("link")).unwrap();
+        std::os::windows::fs::symlink_dir(&outside, root.join("link"))
+            .expect("failed to create windows symlink");
         assert!(resolve_under_sandbox(&root, "link/file.txt").is_err());
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);

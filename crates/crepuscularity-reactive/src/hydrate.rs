@@ -46,8 +46,8 @@ fn decode_ctx_payload(raw: &str, encoding: Option<&str>) -> HashMap<String, Valu
 
 #[cfg(all(target_arch = "wasm32", feature = "dom"))]
 fn read_ctx() -> HashMap<String, Value> {
-    let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
-        return HashMap::new();
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return Default::default();
     };
     if let Some(el) = doc.get_element_by_id("__crepus_hydration__") {
         let encoding = el.get_attribute("data-crepus-encoding");

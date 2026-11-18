@@ -7,8 +7,7 @@ if (!match) throw new Error("generated extension page script missing");
 const body = match[0].slice(3, -3).split("\n").slice(1).join("\n")
   .replaceAll("{{", "{").replaceAll("}}", "}")
   .replaceAll("{prefix}", "../../")
-  .replaceAll("{main_export}", '"options_main"')
-  .replaceAll("{render_export}", '"render_options"');
+  .replaceAll("{fn}", "options");
 const run = new (Object.getPrototypeOf(async function () {}).constructor)("runtime", "init", "document", "fetch", body);
 const fetchWasm = async () => ({ arrayBuffer: async () => new ArrayBuffer(0) });
 

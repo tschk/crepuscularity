@@ -338,3 +338,7 @@ fn js_error_message(value: &JsValue) -> String {
         .and_then(|message| message.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
 }
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod core_tests;

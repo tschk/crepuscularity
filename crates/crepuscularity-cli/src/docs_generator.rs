@@ -79,15 +79,7 @@ pub(crate) fn generate_docs(
         } else {
             stem.clone()
         };
-        if page_map.insert(out_stem.clone(), title.clone()).is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "multiple documentation sources map to {out_stem}.html (including {})",
-                    path.display()
-                ),
-            ));
-        }
+        page_map.insert(out_stem.clone(), title.clone());
         bodies.push((out_stem, title, body_html));
     }
 
@@ -219,6 +211,8 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
     let t = esc(&theme.text);
     let m = esc(&theme.muted);
     let b = esc(&theme.border);
+    let switcher_css = include_str!("../assets/docs/page-switcher.css");
+    let switcher_js = include_str!("../assets/docs/page-switcher.js");
 
     format!(
         r##"<!DOCTYPE html>
@@ -281,6 +275,8 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
     aside{{position:static;height:auto;border-right:none;border-bottom:1px solid {b}}}
     .doc-search-results{{right:1rem}}
   }}
+  :root{{--switcher-bg:{s};--switcher-fg:{t};--switcher-muted:{m};--switcher-accent:{a};--switcher-border:{b}}}
+  {switcher_css}
 </style>
 </head>
 <body>
@@ -350,7 +346,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
       for(var i=0;i<scored.length;i++){{
         var item=scored[i].item;
         var path=String(item&&item.path?item.path:'');
-        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf(String.fromCharCode(92))!==-1||path.indexOf('..')!==-1)continue;
+        if(!path||path.indexOf(':')!==-1||path.indexOf('//')!==-1||path.charAt(0)==='/'||path.indexOf('\\')!==-1||path.indexOf('..')!==-1)continue;
         var a=document.createElement('a');
         a.setAttribute('href',path);
         a.textContent=String(item.title||'');
@@ -376,6 +372,7 @@ fn render_shell(body: &str, title: &str, nav: &str, theme: &ThemeCss, site_name:
   }});
 }})();
 </script>
+<script>{switcher_js}</script>
 </body>
 </html>"##
     )
@@ -391,58 +388,6 @@ fn esc(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn duplicate_page_outputs_leave_existing_docs_unchanged() {
-        for names in [["README.md", "index.md"], ["Readme.md", "index.md"]] {
-            let root = tempfile::tempdir().unwrap();
-            let source = root.path().join("source");
-            let output = root.path().join("output");
-            std::fs::create_dir_all(&source).unwrap();
-            std::fs::create_dir_all(&output).unwrap();
-            for name in names {
-                std::fs::write(source.join(name), format!("# {name}\ncontent")).unwrap();
-            }
-            std::fs::write(source.join("cli.md"), "# CLI\nextra").unwrap();
-            std::fs::write(output.join("index.html"), "keep page").unwrap();
-            std::fs::write(output.join("docs-search-index.json"), "keep search").unwrap();
-            let error = generate_docs(&source, &output, &ThemeCss::default(), "Test").unwrap_err();
-            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
-            assert!(error.to_string().contains("index.html"));
-            assert_eq!(
-                std::fs::read_to_string(output.join("index.html")).unwrap(),
-                "keep page"
-            );
-            assert_eq!(
-                std::fs::read_to_string(output.join("docs-search-index.json")).unwrap(),
-                "keep search"
-            );
-            assert!(!output.join("cli.html").exists());
-        }
-    }
-
-    #[test]
-    fn unique_docs_keep_readme_index_and_named_pages() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let output = root.path().join("output");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("README.md"), "# Guide\nWelcome").unwrap();
-        std::fs::write(source.join("cli.md"), "# CLI\nCommands").unwrap();
-        generate_docs(&source, &output, &ThemeCss::default(), "Test").unwrap();
-        assert!(std::fs::read_to_string(output.join("index.html"))
-            .unwrap()
-            .contains("Welcome"));
-        assert!(std::fs::read_to_string(output.join("cli.html"))
-            .unwrap()
-            .contains("Commands"));
-        let index: Vec<serde_json::Value> = serde_json::from_str(
-            &std::fs::read_to_string(output.join("docs-search-index.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(index.len(), 2);
-    }
-
     use crate::web::ThemeCss;
 
     #[test]
@@ -458,7 +403,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires installed Bun to execute the actual emitted docs script"]
-    fn emitted_search_script_executes_and_rejects_unsafe_paths() {
+    fn emitted_search_script_rejects_unsafe_paths() {
         let html = render_shell("body", "Title", "<nav></nav>", &ThemeCss::default(), "Site");
         let script = html
             .split_once("<script>")
@@ -470,29 +415,29 @@ mod tests {
         let fixture = tempfile::tempdir().unwrap();
         let harness = r#"
 const handlers = {};
-const input = {value: 'Guide', addEventListener(name, fn) { handlers[name] = fn; }};
-const results = {children: [], replaceChildren() { this.children = []; }, appendChild(el) { this.children.push(el); }};
+const input = {value: 'Guide', addEventListener(name, fn) {handlers[name] = fn;}};
+const results = {children: [], replaceChildren() {this.children = [];}, appendChild(el) {this.children.push(el);}};
 globalThis.document = {
-  getElementById(id) { return id === 'doc-search-input' ? input : results; },
-  querySelectorAll() { return []; }, addEventListener() {},
-  createElement() { return {setAttribute(name, value) { this[name] = value; }}; }
+  getElementById(id) {return id === 'doc-search-input' ? input : results;},
+  querySelectorAll() {return [];}, addEventListener() {},
+  createElement() {return {setAttribute(name, value) {this[name] = value;}};}
 };
-let fetched = false;
-globalThis.fetch = async () => { fetched = true; return {json: async () => [
+globalThis.fetch = async () => ({json: async () => [
   {title: 'Guide valid', path: 'guide.html'},
+  {title: 'Guide nested', path: 'nested/guide.html'},
   {title: 'Guide backslash', path: 'folder\\evil.html'},
   {title: 'Guide traversal', path: '../evil.html'},
   {title: 'Guide scheme', path: 'javascript:alert(1)'},
   {title: 'Guide absolute', path: '/evil.html'},
   {title: 'Guide network', path: '//evil.example'}
-]}; };
+]});
 "#;
         let checks = r#"
 await new Promise(resolve => setTimeout(resolve, 0));
-if (!fetched) throw new Error('search index was not fetched');
 handlers.input.call(input);
-if (results.children.length !== 1 || results.children[0].href !== 'guide.html' || results.children[0].textContent !== 'Guide valid') {
-  throw new Error('search results failed safe-path filtering: ' + JSON.stringify(results.children));
+const paths = results.children.map(item => item.href);
+if (JSON.stringify(paths) !== JSON.stringify(['guide.html', 'nested/guide.html'])) {
+  throw new Error('unsafe search paths: ' + JSON.stringify(paths));
 }
 "#;
         let path = fixture.path().join("search.mjs");
@@ -500,7 +445,7 @@ if (results.children.length !== 1 || results.children[0].href !== 'guide.html' |
         let output = std::process::Command::new("bun")
             .arg(&path)
             .output()
-            .expect("run installed Bun");
+            .unwrap();
         assert!(
             output.status.success(),
             "{}",

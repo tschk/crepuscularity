@@ -1,7 +1,9 @@
 """Manual browser gate: python3 crates/crepuscularity-wasm/npm/browser.test.py."""
 import functools
+import hashlib
 import http.server
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +16,11 @@ package = Path(__file__).resolve().parent
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        # Count initialization fetches independently of cross-context caching.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def do_GET(self):
         self.server.request_paths.append(self.path)
         super().do_GET()
@@ -25,20 +32,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 with tempfile.TemporaryDirectory(prefix="crepus-parser-browser-") as directory:
     root = Path(directory)
     manifest = json.loads((package / "package.json").read_text())
-    installed = root / "node_modules" / manifest["name"]
-    installed.mkdir(parents=True)
-    shutil.copyfile(package / "package.json", installed / "package.json")
-    for name in manifest["files"]:
-        source, destination = package / name, installed / name
-        if source.is_dir():
-            shutil.copytree(source, destination)
-        else:
-            shutil.copyfile(source, destination)
     subprocess.run([
-        "bun", "--eval", 'import { parseTemplate } from "@tschk/crepuscularity-wasm";'
-        'if (parseTemplate("<p>hello</p>", "App.svelte").root[0].content !== "hello")'
-        'throw new Error("Installed root entry failed");',
+        "bun", "pm", "pack", "--ignore-scripts", "--filename", str(root / "parser.tgz"),
+    ], cwd=package, check=True, capture_output=True)
+    (root / "package.json").write_text('{"private":true,"type":"module"}')
+    subprocess.run([
+        "bun", "add", "--ignore-scripts", str(root / "parser.tgz"),
     ], cwd=root, check=True, capture_output=True)
+    installed = root / "node_modules" / manifest["name"]
+    for name in manifest["files"]:
+        source = package / name
+        for path in source.rglob("*") if source.is_dir() else [source]:
+            if path.is_file() and not path.name.startswith("."):
+                assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(
+                    (installed / path.relative_to(package)).read_bytes()
+                ).digest(), path
+    print("PASS packed file hashes:", hashlib.sha256((root / "parser.tgz").read_bytes()).hexdigest())
+    check = ('import { parseTemplate } from "@tschk/crepuscularity-wasm";'
+        'for (const [filename, source] of [["App.crepus", \'p "hello"\'],'
+        '["App.tsx", "<p>hello</p>"], ["App.svelte", "<p>hello</p>"],'
+        '["App.vue", "<template><p>hello</p></template>"],'
+        '["App.astro", "<p>hello</p>"], ["App.component.html", "<p>hello</p>"]])'
+        'if (parseTemplate(source, filename).root[0].content !== "hello")'
+        'throw new Error(`Installed root entry failed: ${filename}`);'
+        'await import("@tschk/crepuscularity-wasm/browser");')
+    for runtime in ["node", "bun"]:
+        subprocess.run([runtime, "--eval", check], cwd=root, check=True, capture_output=True)
+        print(f"PASS {runtime}: packed install root and browser exports")
     entry = root / "browser.ts"
     entry.write_text('export { loadParser } from "@tschk/crepuscularity-wasm/browser";')
     subprocess.run([
@@ -101,11 +121,22 @@ self.onmessage = async ({data:mode}) => {
     thread.start()
     try:
         with sync_playwright() as playwright:
-            for name in ["chromium", "webkit"]:
-                browser = getattr(playwright, name).launch(headless=True)
+            for name in os.environ.get("CREPUS_BROWSERS", "chromium,webkit").split(","):
+                options = {"headless": True}
+                if name == "chromium" and os.environ.get("CHROME_PATH"):
+                    options["executable_path"] = os.environ["CHROME_PATH"]
+                browser = getattr(playwright, name).launch(**options)
                 try:
                     page = browser.new_page()
                     page.goto(f"http://127.0.0.1:{server.server_port}/")
+                    result = page.evaluate('''async () => {
+                      const {loadParser} = await import('./browser.js');
+                      const first = loadParser();
+                      if (first !== loadParser()) throw new Error('Page initialization was not shared');
+                      const parser = await first;
+                      return parser.parseTemplate('<template><p>page</p></template>', 'Page.vue').root[0].content;
+                    }''')
+                    assert result == "page", result
                     for mode, expected_path in [
                         ("ready", "/browser/crepuscularity_wasm_bg.wasm"),
                         ("custom", "/relocated.wasm"),

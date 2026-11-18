@@ -57,8 +57,7 @@ impl CatalogComponent {
     fn display_name(&self) -> &str {
         self.title
             .as_deref()
-            .filter(|title| !title.trim().is_empty())
-            .or_else(|| self.name.as_deref().filter(|name| !name.trim().is_empty()))
+            .or(self.name.as_deref())
             .unwrap_or(&self.id)
     }
 }
@@ -158,8 +157,8 @@ fn path_for_target(comp: &CatalogComponent, t: ComponentTarget) -> Option<String
         ComponentTarget::Moonshine => comp.targets.moonshine.clone(),
         ComponentTarget::Gpui => comp.targets.gpui.clone(),
     };
-    if let Some(path) = explicit.filter(|path| !path.trim().is_empty()) {
-        return Some(path);
+    if explicit.is_some() {
+        return explicit;
     }
 
     let key = target_key(t);
@@ -183,38 +182,11 @@ fn path_for_target(comp: &CatalogComponent, t: ComponentTarget) -> Option<String
     Some(format!("{PKG_ROOT}/packages/{key}"))
 }
 
-fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> {
-    let root = repo_root();
-
-    // Prefer crate for existence / display; filesystem for path hints.
-    let crate_meta = crepuscularity_components::list_components()
-        .into_iter()
-        .find(|c| c.id == id);
-
-    let disk_catalog = load_catalog(&root)?;
-    let disk_comp = disk_catalog
-        .as_ref()
-        .and_then(|c| c.components.iter().find(|c| c.id == id));
-
-    if crate_meta.is_none() && disk_comp.is_none() {
-        let mut ids: Vec<&str> = crepuscularity_components::component_ids().to_vec();
-        if let Some(cat) = &disk_catalog {
-            ids.extend(cat.components.iter().map(|c| c.id.as_str()));
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        return Err(CrepusCliError::context(format!(
-            "unknown component {id:?}; known: {}",
-            ids.join(", ")
-        )));
-    }
-
-    let display = crate_meta
-        .as_ref()
-        .map(|c| c.title.as_str())
-        .or_else(|| disk_comp.map(|c| c.display_name()))
-        .unwrap_or(id);
-
+fn resolve_targets(
+    target: Option<ComponentTarget>,
+    disk_comp: Option<&CatalogComponent>,
+    crate_meta: Option<&crepuscularity_components::ComponentMeta>,
+) -> Vec<(ComponentTarget, String)> {
     let wanted: Vec<ComponentTarget> = match target {
         Some(t) => vec![t],
         None => vec![
@@ -225,12 +197,12 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         ],
     };
 
-    let selected: Vec<(ComponentTarget, String)> = if let Some(comp) = disk_comp {
+    if let Some(comp) = disk_comp {
         wanted
             .into_iter()
             .filter_map(|t| path_for_target(comp, t).map(|p| (t, p)))
             .collect()
-    } else if let Some(meta) = &crate_meta {
+    } else if let Some(meta) = crate_meta {
         wanted
             .into_iter()
             .filter_map(|t| {
@@ -248,15 +220,15 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
             .collect()
     } else {
         vec![]
-    };
-
-    if selected.is_empty() {
-        return Err(CrepusCliError::context(format!(
-            "component {id:?} has no path for target {:?}",
-            target.unwrap_or(ComponentTarget::Moonshine)
-        )));
     }
+}
 
+fn print_component_info(
+    id: &str,
+    display: &str,
+    disk_comp: Option<&CatalogComponent>,
+    root: &Path,
+) {
     println!("component: {id}");
     println!("name:      {display}");
     if let Some(comp) = disk_comp {
@@ -271,8 +243,11 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         }
     }
     println!();
+}
+
+fn print_path_hints(selected: &[(ComponentTarget, String)], root: &Path) {
     println!("Install / copy path hints:");
-    for (t, path) in &selected {
+    for (t, path) in selected {
         if matches!(t, ComponentTarget::Moonshine) {
             println!(
                 "  {:<10} {}  [external: github.com/tschk/moonshine → components/]",
@@ -286,6 +261,9 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
         println!("  {:<10} {}  [{status}]", target_key(*t), path);
     }
     println!();
+}
+
+fn print_guidance() {
     println!("Guidance:");
     println!(
         "  • Copy or symlink the target package into your app, or depend on it once published."
@@ -299,6 +277,53 @@ fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> 
     println!("  • Flutter: wire via crepuscularity_flutter + the flutter package path.");
     println!("  • GPUI: include the gpui package module from your desktop crate.");
     println!("  • See `crepus moonshine dep` for @tschk package snippets.");
+}
+
+fn add(id: &str, target: Option<ComponentTarget>) -> Result<(), CrepusCliError> {
+    let root = repo_root();
+
+    // Prefer crate for existence / display; filesystem for path hints.
+    let crate_meta = crepuscularity_components::list_components()
+        .into_iter()
+        .find(|c| c.id == id);
+
+    let disk_catalog = load_catalog(&root)?;
+    let disk_comp = disk_catalog
+        .as_ref()
+        .and_then(|c| c.components.iter().find(|c| c.id == id));
+
+    if crate_meta.is_none() && disk_comp.is_none() {
+        let mut ids: Vec<&str> = crepuscularity_components::component_ids().to_vec();
+        if ids.is_empty() {
+            if let Some(cat) = &disk_catalog {
+                ids = cat.components.iter().map(|c| c.id.as_str()).collect();
+            }
+        }
+        return Err(CrepusCliError::context(format!(
+            "unknown component {id:?}; known: {}",
+            ids.join(", ")
+        )));
+    }
+
+    let display = crate_meta
+        .as_ref()
+        .map(|c| c.title.as_str())
+        .or_else(|| disk_comp.map(|c| c.display_name()))
+        .unwrap_or(id);
+
+    let selected = resolve_targets(target, disk_comp, crate_meta.as_ref());
+
+    if selected.is_empty() {
+        return Err(CrepusCliError::context(format!(
+            "component {id:?} has no path for target {:?}",
+            target.unwrap_or(ComponentTarget::Moonshine)
+        )));
+    }
+
+    print_component_info(id, display, disk_comp, &root);
+    print_path_hints(&selected, &root);
+    print_guidance();
+
     Ok(())
 }
 
@@ -390,36 +415,6 @@ mod tests {
             Some("@tschk/moonshine-components")
         );
         assert!(path_for_target(c, ComponentTarget::Svelte).is_none());
-    }
-
-    #[test]
-    fn blank_explicit_paths_use_conventional_hints() {
-        for path in ["", "   "] {
-            let raw = serde_json::json!({"components": [{"id": "button", "platforms": ["moonshine"], "targets": {"moonshine": path, "svelte": path}}]});
-            let catalog: Catalog = serde_json::from_value(raw).unwrap();
-            let component = &catalog.components[0];
-            assert_eq!(
-                path_for_target(component, ComponentTarget::Moonshine).as_deref(),
-                Some("@tschk/moonshine-components")
-            );
-            assert!(path_for_target(component, ComponentTarget::Svelte).is_none());
-        }
-    }
-
-    #[test]
-    fn blank_display_titles_fall_back_to_name_or_id() {
-        for title in ["", "   "] {
-            let with_name: CatalogComponent = serde_json::from_value(
-                serde_json::json!({"id": "button", "title": title, "name": "Button"}),
-            )
-            .unwrap();
-            assert_eq!(with_name.display_name(), "Button");
-            let without_name: CatalogComponent = serde_json::from_value(
-                serde_json::json!({"id": "button", "title": title, "name": " "}),
-            )
-            .unwrap();
-            assert_eq!(without_name.display_name(), "button");
-        }
     }
 
     #[test]

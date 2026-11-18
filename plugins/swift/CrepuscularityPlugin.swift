@@ -45,7 +45,7 @@ public func renderIr(path: String) throws -> ViewIr {
     let diagnosticURL = diagnosticDirectory.appendingPathComponent("stderr")
     try Data().write(to: diagnosticURL, options: .withoutOverwriting)
     let diagnosticHandle = try FileHandle(forUpdating: diagnosticURL)
-    defer { try? diagnosticHandle.close() }
+    defer { diagnosticHandle.closeFile() }
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [bin, "native", "ir", path]
     process.standardOutput = output
@@ -54,9 +54,9 @@ public func renderIr(path: String) throws -> ViewIr {
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    try? diagnosticHandle.seek(toOffset: 0)
-    let diagnosticData = (try? diagnosticHandle.readToEnd()) ?? Data()
-    try? FileHandle.standardError.write(contentsOf: diagnosticData)
+    diagnosticHandle.seek(toFileOffset: 0)
+    let diagnosticData = diagnosticHandle.readDataToEndOfFile()
+    FileHandle.standardError.write(diagnosticData)
     if process.terminationStatus != 0 {
         let diagnostic = String(decoding: diagnosticData, as: UTF8.self)
         throw NSError(domain: "Crepuscularity", code: Int(process.terminationStatus),

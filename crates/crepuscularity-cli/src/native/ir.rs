@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
+use crepuscularity_core::{DriverCache, Fingerprint};
 use crepuscularity_native::{
     generate_native_source, render_component_file_to_ir, render_from_files, render_template_to_ir,
     render_template_to_ir_with_path, to_json, to_json_pretty, NativeCodegenTarget,
@@ -39,11 +40,29 @@ pub struct IrEnvelope {
     entry: Option<String>,
     files: Option<HashMap<String, String>>,
     template: Option<String>,
-    filename: Option<PathBuf>,
+    #[serde(default, deserialize_with = "deserialize_filename")]
+    filename: Option<String>,
     context: Option<Value>,
     component: Option<String>,
     pretty: Option<bool>,
     base_dir: Option<PathBuf>,
+}
+
+fn deserialize_filename<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::de::Error;
+    let filename = Option::<String>::deserialize(deserializer)
+        .map_err(|e| D::Error::custom(format!("filename: {e}")))?;
+    if filename
+        .as_ref()
+        .is_some_and(|name| name.is_empty() || name.contains('\0'))
+    {
+        return Err(D::Error::custom(
+            "filename must be nonempty and contain no NUL",
+        ));
+    }
+    Ok(filename)
 }
 
 #[derive(Args, Debug, Clone)]
@@ -150,8 +169,12 @@ pub fn run_ir_parsed(parsed: IrArgs) -> Result<String, CrepusCliError> {
                 render_component_file_to_ir(&template, &component, &ctx)
                     .map_err(|e| CrepusCliError::context(e.to_string()))?
             } else {
-                render_template_to_ir_with_path(&template, &ctx, env.filename.as_deref())
-                    .map_err(|e| CrepusCliError::context(e.to_string()))?
+                render_template_to_ir_with_path(
+                    &template,
+                    &ctx,
+                    env.filename.as_deref().map(Path::new),
+                )
+                .map_err(|e| CrepusCliError::context(e.to_string()))?
             }
         } else {
             return Err(CrepusCliError::context(
@@ -308,11 +331,12 @@ pub fn sync_native_fixture_inner(parsed: SyncArgs) -> Result<(), CrepusCliError>
     }
     ctx.base_dir = template_path.parent().map(Path::to_path_buf);
 
+    let component_ref = parsed.component.clone();
     let ir = if let Some(component) = &parsed.component {
         render_component_file_to_ir(&template, component, &ctx)
             .map_err(|e| CrepusCliError::context(e.to_string()))?
     } else {
-        render_template_to_ir_with_path(&template, &ctx, Some(&template_path))
+        render_template_to_ir(&template, &ctx)
             .map_err(|e| CrepusCliError::context(e.to_string()))?
     };
     let mut json = stringify_ir(&ir, parsed.pretty)?;
@@ -320,46 +344,38 @@ pub fn sync_native_fixture_inner(parsed: SyncArgs) -> Result<(), CrepusCliError>
         json.push('\n');
     }
 
-    let mut outputs = Vec::new();
+    // Cache skip: avoid rewriting unchanged fixtures (prevents git dirty
+    // markers on `crepus native sync` re-runs).
+    let cache = DriverCache::open(&root);
+    let fp = Fingerprint::new(&template, component_ref.as_deref(), "native-ir");
+
+    let mut written = 0;
     if !parsed.no_defaults {
         for path in default_fixture_output_paths(&root) {
-            if path.parent().is_some_and(Path::exists) {
-                let relative = path
-                    .strip_prefix(&root)
-                    .map_err(|e| CrepusCliError::context(e.to_string()))?;
-                crate::scaffold::validate_copy_destination(&root, relative)
-                    .map_err(|e| CrepusCliError::io(e, path.clone()))?;
-                outputs.push((path, false));
+            if let Some(parent) = path.parent() {
+                if parent.exists() {
+                    if path.is_file() && cache.is_up_to_date(&fp, &json) {
+                        written += 1;
+                        continue;
+                    }
+                    fs::write(&path, &json).map_err(|e| CrepusCliError::io(e, path.clone()))?;
+                    written += 1;
+                }
             }
         }
     }
     for path in explicit_fixture_output_paths(&root, &parsed.out) {
-        let parent = path
-            .parent()
-            .ok_or_else(|| CrepusCliError::context("fixture output requires a parent directory"))?;
-        let filename = path
-            .file_name()
-            .ok_or_else(|| CrepusCliError::context("fixture output requires a filename"))?;
-        let selected_root =
-            crate::web::absolute_resolved(parent).map_err(CrepusCliError::context)?;
-        crate::scaffold::validate_copy_destination(&selected_root, Path::new(filename))
-            .map_err(|e| CrepusCliError::io(e, path.clone()))?;
-        outputs.push((path, true));
-    }
-    // Validate every destination before updating any fixture, including byte-equal outputs.
-    let written = outputs.len();
-    for (path, create_parent) in outputs {
-        if create_parent {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| CrepusCliError::io(e, parent.to_path_buf()))?;
-            }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| CrepusCliError::io(e, parent.to_path_buf()))?;
         }
-        if fs::read(&path).is_ok_and(|existing| existing == json.as_bytes()) {
+        if path.is_file() && cache.is_up_to_date(&fp, &json) {
+            written += 1;
             continue;
         }
         fs::write(&path, &json).map_err(|e| CrepusCliError::io(e, path.clone()))?;
+        written += 1;
     }
+    cache.record(&fp, &json);
     if written == 0 {
         return Err(CrepusCliError::context(format!(
             "no native fixture directories found under {}",
@@ -386,21 +402,6 @@ pub fn codegen_native_source_inner(parsed: CodegenArgs) -> Result<PathBuf, Crepu
     let view_name = parsed
         .view_name
         .ok_or_else(|| CrepusCliError::context("--view-name NAME is required"))?;
-    let mut components = Path::new(&view_name).components();
-    let windows_drive = view_name
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_alphabetic)
-        && view_name.as_bytes().get(1) == Some(&b':');
-    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
-        || components.next().is_some()
-        || view_name.contains(['/', '\\'])
-        || windows_drive
-    {
-        return Err(CrepusCliError::context(
-            "--view-name must be a single filename, not a path",
-        ));
-    }
 
     let template = fs::read_to_string(&template_path)
         .map_err(|e| CrepusCliError::io(e, template_path.clone()))?;
@@ -418,7 +419,7 @@ pub fn codegen_native_source_inner(parsed: CodegenArgs) -> Result<PathBuf, Crepu
         render_component_file_to_ir(&template, component, &ctx)
             .map_err(|e| CrepusCliError::context(e.to_string()))?
     } else {
-        render_template_to_ir_with_path(&template, &ctx, Some(&template_path))
+        render_template_to_ir(&template, &ctx)
             .map_err(|e| CrepusCliError::context(e.to_string()))?
     };
     let mut source = generate_native_source(&ir, platform.into(), &view_name);
@@ -430,12 +431,7 @@ pub fn codegen_native_source_inner(parsed: CodegenArgs) -> Result<PathBuf, Crepu
         CodegenPlatform::SwiftUi => "swift",
         CodegenPlatform::Compose => "kt",
     };
-    let filename = format!("{}.{}", view_name, ext);
-    let canonical_out =
-        fs::canonicalize(&out_dir).map_err(|e| CrepusCliError::io(e, out_dir.clone()))?;
-    crate::scaffold::validate_copy_destination(&canonical_out, Path::new(&filename))
-        .map_err(|e| CrepusCliError::io(e, out_dir.clone()))?;
-    let path = out_dir.join(filename);
+    let path = out_dir.join(format!("{}.{}", view_name, ext));
     fs::write(&path, source).map_err(|e| CrepusCliError::io(e, path.clone()))?;
     if platform == CodegenPlatform::Compose && is_native_shell_android_generated_dir(&out_dir) {
         prepend_kotlin_package(&path);

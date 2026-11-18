@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Generate crepuscularity-core Tailwind v4 default palette (hex) from theme.css."""
+"""Generate the shared Crepuscularity Tailwind v4 default palette (hex) from theme.css."""
 
 from __future__ import annotations
 
+import argparse
 import math
 import re
-import sys
 import urllib.request
 
 THEME_URL = "https://raw.githubusercontent.com/tailwindlabs/tailwindcss/v4.3.0/packages/tailwindcss/theme.css"
-OUT = "crates/crepuscularity-core/src/tailwind/colors.rs"
+OUT = "crates/crepuscularity-colors/src/palette.rs"
 
 
 def oklch_to_srgb8(l: float, c: float, h_deg: float) -> tuple[int, int, int]:
@@ -28,12 +28,9 @@ def oklch_to_srgb8(l: float, c: float, h_deg: float) -> tuple[int, int, int]:
             return 12.92 * x
         return 1.055 * (x ** (1 / 2.4)) - 0.055
 
-    def cbrt(x: float) -> float:
-        return math.copysign(abs(x) ** (1 / 3), x)
-
-    l_lin = cbrt(l_) ** 2
-    m_lin = cbrt(m_) ** 2
-    s_lin = cbrt(s_) ** 2
+    l_lin = l_ ** 3
+    m_lin = m_ ** 3
+    s_lin = s_ ** 3
 
     r = +4.0767416621 * l_lin - 3.3077115913 * m_lin + 0.2309699292 * s_lin
     g = -1.2684380046 * l_lin + 2.6097574011 * m_lin - 0.3413193965 * s_lin
@@ -54,29 +51,46 @@ def parse_pct(s: str) -> float:
 
 
 def main() -> int:
-    if len(sys.argv) > 2 and sys.argv[1] == "--theme":
-        css = open(sys.argv[2], encoding="utf-8").read()
-        out_path = sys.argv[3] if len(sys.argv) > 3 else OUT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--theme", help="read a local theme.css instead of downloading")
+    parser.add_argument("output", nargs="?", default=OUT)
+    args = parser.parse_args()
+    if args.theme:
+        with open(args.theme, encoding="utf-8") as theme:
+            css = theme.read()
     else:
         css = urllib.request.urlopen(THEME_URL, timeout=30).read().decode()
-        out_path = sys.argv[1] if len(sys.argv) > 1 else OUT
+    out_path = args.output
     entries: list[tuple[str, str]] = []
 
     for m in re.finditer(
-        r"--color-([a-z]+)-(\d+):\s*oklch\(([^)]+)\);", css
+        r"--color-([a-z]+)-(\d+):\s*oklch\(([^)]*)\);", css
     ):
         family, shade, inner = m.group(1), m.group(2), m.group(3)
-        parts = [p.strip() for p in inner.split()]
+        parts = inner.split()
+        if len(parts) != 3:
+            raise ValueError(f"invalid palette OKLCH color: {family}-{shade}")
         l = parse_pct(parts[0])
         c = float(parts[1])
         h = float(parts[2])
+        if not all(math.isfinite(value) for value in (l, c, h)):
+            raise ValueError(f"invalid palette OKLCH color: {family}-{shade}")
         r, g, b = oklch_to_srgb8(l, c, h)
         entries.append((f"{family}-{shade}", f"#{r:02x}{g:02x}{b:02x}"))
 
-    for m in re.finditer(r"--color-([a-z]+):\s*(#[0-9a-fA-F]+);", css):
+    for m in re.finditer(r"--color-([a-z]+):\s*(#[0-9a-fA-F]*);", css):
+        if len(m.group(2)) not in (4, 7):
+            raise ValueError(f"unsupported palette hex color: {m.group(1)} = {m.group(2)}")
         entries.append((m.group(1), m.group(2).lower()))
 
+    if not entries:
+        raise ValueError("theme contains no supported colors")
+
     entries.sort(key=lambda x: x[0])
+
+    for previous, current in zip(entries, entries[1:]):
+        if previous[0] == current[0]:
+            raise ValueError(f"duplicate palette color: {current[0]}")
 
     lines = [
         "//! Full Tailwind CSS v4 default palette (OKLCH → sRGB hex).",

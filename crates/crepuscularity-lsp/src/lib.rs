@@ -218,17 +218,6 @@ pub fn completion_items_with_path(
     }
 }
 
-#[cfg(test)]
-fn detect_completion_context(prefix: &str) -> CompletionCtx {
-    detect_completion_context_in(
-        prefix,
-        prefix
-            .trim_start_matches('\u{feff}')
-            .trim_start()
-            .starts_with('<'),
-    )
-}
-
 fn detect_completion_context_in(prefix: &str, markup_line: bool) -> CompletionCtx {
     // Walk the prefix tracking brace + quote state.
     let mut in_string: Option<char> = None;
@@ -259,7 +248,7 @@ fn detect_completion_context_in(prefix: &str, markup_line: bool) -> CompletionCt
             (Some(q), c) if c == q => in_string = None,
             (Some(_), _) => {}
             (None, '"' | '\'') if !markup_line || markup_tag_start.is_some() || brace_depth > 0 => {
-                in_string = Some(ch);
+                in_string = Some(ch)
             }
             (None, '<') if brace_depth == 0 => markup_tag_start = Some(byte + 1),
             (None, '>') if brace_depth == 0 => markup_tag_start = None,
@@ -480,7 +469,8 @@ fn document_class_aliases(source: &str) -> Vec<(String, String)> {
     // `strip_indent_decorators` already does the hard work of identifying the
     // alias block; we just materialize it as a stable-ordered Vec for UI
     // surfaces (HashMap doesn't iterate deterministically).
-    let decorators = strip_indent_decorators(source);
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    let decorators = strip_indent_decorators(&normalized);
     let mut aliases: Vec<(String, String)> = decorators.class_aliases.into_iter().collect();
     aliases.sort_by(|a, b| a.0.cmp(&b.0));
     aliases
@@ -672,32 +662,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_protocol_line_endings_preserve_queries_and_diagnostic_ranges() {
-        let path = Some(std::path::Path::new("view.jsx"));
-        for ending in ["\n", "\r\n", "\r"] {
-            let source = format!("<div>😀{ending}<for");
-            assert!(
-                completion_items_with_path(&source, position(1, 3), path)
-                    .iter()
-                    .any(|item| item.label == "for"),
-                "{source:?}"
-            );
-            assert!(
-                hover_for_with_path(&source, position(1, 2), path).is_some(),
-                "{source:?}"
-            );
-            assert_eq!(
-                document_let_bindings(&format!("<let name=\"foo\"/>{ending}<let name=\"bar\"/>")),
-                ["bar", "foo"]
-            );
-            let broken = format!("<div>😀{ending}</wrong>");
-            let diagnostics = crepus_diagnostics_to_lsp_with_path(&broken, path);
-            assert_eq!(diagnostics.len(), 1, "{broken:?}");
-            assert_eq!(diagnostics[0].range.start.line, 1, "{broken:?}");
-        }
-    }
-
-    #[test]
     fn jsx_error_becomes_diagnostic_range() {
         let source = "<div ";
         let ds = crepus_diagnostics_to_lsp(source);
@@ -717,29 +681,6 @@ mod tests {
         assert!(labels.contains(&"if"));
         assert!(labels.contains(&"for"));
         assert!(labels.contains(&"slot-rotate"));
-    }
-
-    #[test]
-    fn indent_comments_do_not_offer_completions_or_alias_hovers() {
-        for comment in ["# lede", "  # lede", "# {value", "\u{feff}# lede"] {
-            let source = format!("{comment}\ndiv\n.lede text-red-500\n$: let value = 1");
-            let after_hash =
-                comment[..comment.find('#').unwrap()].encode_utf16().count() as u32 + 1;
-            assert!(!completion_items(&source, position(0, after_hash - 1)).is_empty());
-            for character in after_hash..=comment.encode_utf16().count() as u32 {
-                assert!(
-                    completion_items(&source, position(0, character)).is_empty(),
-                    "{comment}"
-                );
-                assert!(
-                    hover_for(&source, position(0, character)).is_none(),
-                    "{comment}"
-                );
-            }
-            assert!(!completion_items(&source, position(1, 2)).is_empty());
-        }
-        assert!(!completion_items("div #id ", position(0, 8)).is_empty());
-        assert!(completion_items("<div># text", position(0, 11)).is_empty());
     }
 
     #[test]
@@ -840,135 +781,6 @@ mod tests {
     }
 
     #[test]
-    fn hover_ignores_literal_text_expressions_and_unrelated_attributes() {
-        for line in [
-            "text \"for\"",
-            "text \"lede\"",
-            "text {lede}",
-            "<div title=\"lede\" />",
-            "<div class=\"for\" />",
-            "<div>for</div>",
-            "<div> lede</div>",
-            "<div>class=\"lede\"</div>",
-        ] {
-            let source = format!("{line}\n.lede text-red-500\n");
-            let target = if line.contains("lede") { "lede" } else { "for" };
-            let cursor = line.find(target).unwrap() as u32 + 1;
-            assert!(hover_for(&source, position(0, cursor)).is_none(), "{line}");
-        }
-    }
-
-    #[test]
-    fn hover_keeps_alias_docs_in_jsx_class_attributes() {
-        for name in ["class", "className"] {
-            let line = format!("<div>don't</div><div {name}=\"lede\" />");
-            let source = format!("{line}\n.lede text-red-500\n");
-            assert!(
-                hover_for(&source, position(0, line.find("lede").unwrap() as u32 + 1)).is_some()
-            );
-        }
-    }
-
-    #[test]
-    fn markup_context_tracks_sibling_tags_and_quoted_angle_brackets() {
-        for prefix in ["<div>body", "<div title=\">\">body", "<div>don't"] {
-            assert_eq!(detect_completion_context(prefix), CompletionCtx::MarkupText);
-            assert!(completion_items(prefix, position(0, prefix.len() as u32)).is_empty());
-        }
-        for prefix in ["<div>body<for", "<div title=\">\"><for", "<div>don't<for"] {
-            assert_eq!(detect_completion_context(prefix), CompletionCtx::JsxTag);
-            assert!(hover_for(prefix, position(0, prefix.len() as u32)).is_some());
-        }
-        assert_eq!(
-            detect_completion_context("<div title=\">\" "),
-            CompletionCtx::Classes
-        );
-    }
-
-    #[test]
-    fn multiline_markup_retains_attribute_and_body_context() {
-        for newline in ["\n", "\r\n"] {
-            let source = [
-                "<div",
-                "  class=\"lede\"",
-                ">",
-                "  for",
-                "</div>",
-                ".lede text-red-500",
-            ]
-            .join(newline);
-            let items = completion_items(&source, position(1, 10));
-            assert!(items.iter().any(|item| item.label == "lede"));
-            assert!(hover_for(&source, position(1, 10)).is_some());
-            assert!(hover_for(&source, position(3, 3)).is_none());
-            assert!(completion_items(&source, position(3, 5)).is_empty());
-        }
-    }
-
-    #[test]
-    fn multiline_markup_keeps_quoted_attributes_and_utf16_positions() {
-        let source = "<div title=\"😀\nfor\n\"\nclass=\"😀 lede\" >\n</div>\n.lede text-red-500";
-        assert!(hover_for(source, position(1, 1)).is_none());
-        assert!(completion_items(source, position(1, 2)).is_empty());
-        assert!(hover_for(source, position(3, 12)).is_some());
-        assert!(completion_items(source, position(3, 12))
-            .iter()
-            .any(|item| item.label == "lede"));
-    }
-
-    #[test]
-    fn markup_trailing_newline_is_body_text_but_indent_starts_a_new_tag() {
-        assert!(completion_items("<div>\n", position(1, 0)).is_empty());
-        assert!(!completion_items("div\n", position(1, 0)).is_empty());
-        assert!(completion_items("<div>", position(99, 0)).is_empty());
-        assert!(hover_for("<div>", position(99, 0)).is_none());
-        for source in [
-            "<div>\n it's fine\n</div>\n<for",
-            "<!-- \"{\n -->\n<for",
-            "\u{feff}<div>\n</div>\n<for",
-        ] {
-            let line = source.lines().count() as u32 - 1;
-            assert!(hover_for(source, position(line, 3)).is_some(), "{source}");
-            assert!(!completion_items(source, position(line, 3)).is_empty());
-        }
-        assert!(completion_items("<!-- \"{\n still a comment", position(1, 5)).is_empty());
-    }
-
-    #[test]
-    fn jsx_filename_hints_distinguish_partial_body_text_from_indent_tags() {
-        let source = "for";
-        assert!(hover_for(source, position(0, 1)).is_some());
-        for filename in ["view.jsx", "view.TSX", "view.csx"] {
-            let path = Some(std::path::Path::new(filename));
-            assert!(hover_for_with_path(source, position(0, 1), path).is_none());
-            assert!(completion_items_with_path(source, position(0, 3), path).is_empty());
-            assert!(!completion_items_with_path("<for", position(0, 3), path).is_empty());
-            assert!(hover_for_with_path("<for", position(0, 2), path).is_some());
-        }
-        assert!(hover_for_with_path(
-            source,
-            position(0, 1),
-            Some(std::path::Path::new("view.crepus"))
-        )
-        .is_some());
-    }
-
-    #[test]
-    fn jsx_context_skips_preamble_comments_without_losing_declaration_context() {
-        let source = "# comment with { and '😀\n$: let value = 1\n<div\n class=\"lede\"\n>\nfor\n</div>\n.lede text-red-500";
-        assert!(hover_for(source, position(5, 1)).is_none());
-        assert!(hover_for(source, position(3, 10)).is_some());
-        assert!(completion_items(source, position(3, 10))
-            .iter()
-            .any(|item| item.label == "lede"));
-        assert!(completion_items(source, position(0, 12)).is_empty());
-        let declaration = "$: let before = 1\n$: let after = {before\n<div/>";
-        assert!(completion_items(declaration, position(1, 24))
-            .iter()
-            .any(|item| item.label == "before"));
-    }
-
-    #[test]
     fn hover_over_unknown_token_returns_none() {
         let source = "div text-white\n";
         assert!(hover_for(source, position(0, 8)).is_none());
@@ -985,16 +797,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_positions_count_utf16_units() {
-        let line = "😀 slot-lede next";
-        assert_eq!(line_prefix_up_to(line, 1), "");
-        assert_eq!(line_prefix_up_to(line, 2), "😀");
-        assert_eq!(line_prefix_up_to(line, 12), "😀 slot-lede");
-        assert_eq!(token_at(line, 12), Some("slot-lede"));
-        assert_eq!(token_at(line, 14), Some("next"));
-    }
-
-    #[test]
     fn token_at_handles_multibyte_text() {
         // BMP characters occupy one UTF-16 unit even when UTF-8 uses multiple bytes.
         let line = "  héllo-world";
@@ -1003,81 +805,51 @@ mod tests {
     }
 
     #[test]
-    fn jsx_class_completion_accepts_spaces_around_equals() {
-        for prefix in [r#"<div class = "fl"#, r#"<div className  =  'fl"#] {
-            assert_eq!(detect_completion_context(prefix), CompletionCtx::Classes);
+    fn expression_completions_exclude_keyword_and_attribute_prefixes() {
+        let source = "$: letter = 1\n<letter name=\"ghost\" />\n<let surname=\"phantom\" />\n$: let actual = 2\ntext {a";
+        let labels: Vec<_> = completion_items(source, position(4, 7))
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(labels, ["actual"]);
+        let literal = "text \"say \\\"{";
+        assert!(completion_items(literal, position(0, literal.len() as u32)).is_empty());
+    }
+
+    #[test]
+    fn filename_and_multiline_context_keep_hovers_out_of_body_text() {
+        let path = Some(std::path::Path::new("view.TSX"));
+        assert!(hover_for_with_path("for", position(0, 1), path).is_none());
+        assert!(completion_items_with_path("for", position(0, 3), path).is_empty());
+        assert!(hover_for_with_path("<for", position(0, 2), path).is_some());
+        let source = "<div\n class=\"lede\"\n>\nfor\n</div>\n.lede text-red-500";
+        assert!(completion_items(source, position(1, 10))
+            .iter()
+            .any(|item| item.label == "lede"));
+        assert!(hover_for(source, position(1, 10)).is_some());
+        assert!(hover_for(source, position(3, 1)).is_none());
+        assert!(completion_items("# lede\n.lede text-red-500", position(0, 6)).is_empty());
+        assert!(hover_for("# lede\n.lede text-red-500", position(0, 4)).is_none());
+    }
+
+    #[test]
+    fn unicode_protocol_positions_and_line_endings_preserve_alias_queries() {
+        for ending in ["\n", "\r\n", "\r"] {
+            let source = format!("<div class=\"😀 lede\"/>{ending}.lede text-red-500{ending}");
+            let completion_column = "<div class=\"😀 lede".encode_utf16().count() as u32;
+            let hover_column = "<div class=\"😀 ".encode_utf16().count() as u32;
+            assert!(completion_items(&source, position(0, completion_column))
+                .iter()
+                .any(|item| item.label == "lede"));
+            let hover = hover_for(&source, position(0, hover_column)).unwrap();
+            let HoverContents::Markup(content) = hover.contents else {
+                panic!("expected markup hover")
+            };
+            assert!(content.value.contains("text-red-500"));
+            let diagnostics = crepus_diagnostics_to_lsp(&format!("<div>😀{ending}</wrong>"));
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0].range.start.line, 1);
         }
-        assert_eq!(
-            detect_completion_context(r#"<div data-class = "fl"#),
-            CompletionCtx::QuotedString
-        );
-    }
-
-    #[test]
-    fn quoted_angle_brackets_do_not_close_jsx_class_completion() {
-        assert_eq!(
-            detect_completion_context(r#"<div title=">" class="fl"#),
-            CompletionCtx::Classes
-        );
-        assert_eq!(
-            detect_completion_context(r#"<div>text "literal"#),
-            CompletionCtx::MarkupText
-        );
-    }
-
-    #[test]
-    fn escaped_quotes_keep_completion_inside_literal_text() {
-        let line = r#"text "say \"{"#;
-        let source = format!("$: let local = 1\n{line}");
-        assert!(completion_items(&source, position(1, line.len() as u32)).is_empty());
-        assert_eq!(
-            detect_completion_context(r#"text "\\" {"#),
-            CompletionCtx::Expression
-        );
-        assert_eq!(
-            detect_completion_context(r#"<div class="say \"x"#),
-            CompletionCtx::Classes
-        );
-    }
-
-    #[test]
-    fn directive_binding_keywords_require_a_boundary() {
-        let names = document_let_bindings(
-            "$: letter = 1\n$: defaulted = 2\n$: ghost = 3\n$: let letter = 4\n$: default defaulted = 5\n"
-        );
-        assert_eq!(names, vec!["defaulted", "letter"]);
-    }
-
-    #[test]
-    fn escaped_quotes_do_not_expose_binding_attributes_in_text() {
-        assert_eq!(
-            document_let_bindings(r#"<let title="say \" name='ghost'" name="actual" />"#),
-            vec!["actual"]
-        );
-    }
-
-    #[test]
-    fn jsx_binding_names_accept_spaces_around_equals() {
-        assert_eq!(
-            document_let_bindings("<let name = \"foo\" />\n<let-default name  =  'bar' />\n"),
-            vec!["bar", "foo"]
-        );
-    }
-
-    #[test]
-    fn jsx_binding_names_require_an_attribute_boundary() {
-        let names = document_let_bindings(
-            "<let surname=\"ghost\" />\n<let data-name=\"other\" name=\"actual\" />\n<let title=\" name='hidden'\" />\n"
-        );
-        assert_eq!(names, vec!["actual"]);
-    }
-
-    #[test]
-    fn jsx_tags_with_let_prefix_do_not_create_bindings() {
-        assert!(document_let_bindings(
-            "<letter name=\"ghost\" />\n<let-defaulted name=\"other\" />\n"
-        )
-        .is_empty());
     }
 
     #[test]

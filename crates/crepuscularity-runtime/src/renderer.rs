@@ -26,12 +26,13 @@ use crepuscularity_core::virtual_files::lookup_virtual_file;
 mod prepared;
 pub(crate) use prepared::{prepare_includes, PreparedIncludes};
 
-use crate::styler::{apply_class_with_ctx, parse_duration_ms, state_style_with_initial};
+use crate::styler::{apply_class_with_ctx, element_state_style, parse_duration_ms};
 use crepuscularity_core::ast::*;
 use crepuscularity_core::context::{value_to_str, TemplateContext, TemplateValue};
 
 #[derive(Default)]
 struct IncludeCache {
+    bindings: crate::RuntimeBindings,
     bundles: Vec<BundleCache>,
     prepared: Option<Arc<PreparedIncludes>>,
 }
@@ -177,17 +178,29 @@ impl IncludeCache {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn render_nodes_prepared(
     nodes: &[Node],
     ctx: &TemplateContext,
     prepared: Arc<PreparedIncludes>,
 ) -> AnyElement {
+    render_nodes_prepared_with_bindings("root", nodes, ctx, prepared, &Default::default())
+}
+
+pub(crate) fn render_nodes_prepared_with_bindings(
+    namespace: &str,
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    prepared: Arc<PreparedIncludes>,
+    bindings: &crate::RuntimeBindings,
+) -> AnyElement {
     render_nodes_at_path(
         nodes,
         ctx,
-        "root",
+        namespace,
         None,
         &mut IncludeCache {
+            bindings: bindings.capture_event_handlers(),
             prepared: Some(prepared),
             ..Default::default()
         },
@@ -289,7 +302,46 @@ struct SlotFrame<'a> {
 /// Render nodes into one element. Declarations affect following siblings
 /// without changing the caller's context.
 pub fn render_nodes(nodes: &[Node], ctx: &TemplateContext) -> AnyElement {
-    render_nodes_at_path(nodes, ctx, "root", None, &mut IncludeCache::default())
+    render_nodes_with_bindings("root", nodes, ctx, &Default::default())
+}
+
+/// Render one template instance with stable identity and registered native behavior.
+pub fn render_nodes_with_bindings(
+    namespace: &str,
+    nodes: &[Node],
+    ctx: &TemplateContext,
+    bindings: &crate::RuntimeBindings,
+) -> AnyElement {
+    render_nodes_at_path(
+        nodes,
+        ctx,
+        namespace,
+        None,
+        &mut IncludeCache {
+            bindings: bindings.capture_event_handlers(),
+            ..Default::default()
+        },
+    )
+}
+
+pub(crate) fn render_error(message: impl Into<String>) -> AnyElement {
+    div()
+        .text_color(rgb(0xff4444))
+        .child(SharedString::from(message.into()))
+        .into_any_element()
+}
+
+fn scoped_id(scope: &str, segment: &str) -> String {
+    format!("{scope}/{}:{segment}", segment.len())
+}
+
+fn node_identity(path: &str, index: usize, node: &Node, ctx: &TemplateContext) -> String {
+    match node {
+        Node::Element(el) => element_id(el, ctx)
+            .map(|id| scoped_id(path, &format!("id:{id}")))
+            .unwrap_or_else(|| format!("{path}/{index}")),
+        _ => format!("{path}/{index}"),
+    }
 }
 
 fn render_nodes_at_path(
@@ -311,6 +363,7 @@ fn render_siblings_with_ctx(
 ) -> Vec<AnyElement> {
     let mut ctx = Cow::Borrowed(ctx);
     let mut rendered: Vec<AnyElement> = Vec::new();
+    let mut identities = std::collections::HashSet::new();
 
     for (index, node) in nodes.iter().enumerate() {
         if let Node::LetDecl(decl) = node {
@@ -321,13 +374,14 @@ fn render_siblings_with_ctx(
                 ctx.to_mut().vars.insert(decl.name.clone(), val);
             }
         } else {
-            rendered.push(render_node_with_ctx(
-                node,
-                &ctx,
-                &format!("{path}/{index}"),
-                slot,
-                cache,
-            ));
+            let identity = node_identity(path, index, node, &ctx);
+            if !identities.insert(identity.clone()) {
+                rendered.push(render_error(format!(
+                    "Duplicate GPUI template identity `{identity}`"
+                )));
+                continue;
+            }
+            rendered.push(render_node_with_ctx(node, &ctx, &identity, slot, cache));
         }
     }
 
@@ -361,7 +415,10 @@ pub fn render_node(node: &Node, ctx: &TemplateContext) -> AnyElement {
         &with_gpui_target(ctx),
         "root",
         None,
-        &mut IncludeCache::default(),
+        &mut IncludeCache {
+            bindings: crate::RuntimeBindings::default().capture_event_handlers(),
+            ..Default::default()
+        },
     )
 }
 
@@ -414,6 +471,9 @@ fn render_element(
 ) -> AnyElement {
     // Intercept the `slot` pseudo-tag: render slot content from parent, or fallback children.
     if el.tag == "slot" {
+        if !el.event_handlers.is_empty() {
+            return render_error("GPUI slot does not support event handlers");
+        }
         return if let Some(frame) = slot {
             render_nodes_at_path(frame.nodes, frame.context, path, frame.caller_slot, cache)
         } else if let Some((slot_nodes, slot_ctx)) = &ctx.slot {
@@ -421,6 +481,29 @@ fn render_element(
         } else {
             render_nodes_at_path(&el.children, ctx, path, slot, cache)
         };
+    }
+
+    let bindings = cache.bindings.clone();
+    if bindings.has_element(&el.tag) {
+        let children = render_siblings_with_ctx(&el.children, ctx, path, slot, cache);
+        return bindings.render_element(crate::ElementRequest {
+            id: SharedString::from(path.to_owned()),
+            element: el.clone(),
+            context: ctx.clone(),
+            children,
+        });
+    }
+    if let Err(error) = crate::runtime_element::reject_html_attributes(el) {
+        return render_error(error);
+    }
+    if el.tag == "input" {
+        return crate::text_input::runtime_input(el, ctx, path, &bindings)
+            .unwrap_or_else(render_error);
+    }
+    if el.tag == "textarea" {
+        return render_error(
+            "GPUI textarea/multiline editing is not implemented; register a native editor",
+        );
     }
 
     // Web-only rotating text: GPUI shows the first phrase as a static preview.
@@ -443,7 +526,7 @@ fn render_element(
                 d = apply_class_with_ctx(d, &cc.class, Some(ctx));
             }
         }
-        return finish_element(d.child(SharedString::from(label)), el, ctx, path);
+        return finish_element_bound(d.child(SharedString::from(label)), el, ctx, path, &bindings);
     }
 
     let mut d = base_tag_element(&el.tag);
@@ -469,7 +552,7 @@ fn render_element(
         cache,
     ));
 
-    finish_element(d, el, ctx, path)
+    finish_element_bound(d, el, ctx, path, &bindings)
 }
 
 fn element_id(el: &Element, ctx: &TemplateContext) -> Option<SharedString> {
@@ -488,41 +571,13 @@ fn element_id(el: &Element, ctx: &TemplateContext) -> Option<SharedString> {
     (!value.is_empty()).then(|| SharedString::from(value))
 }
 
-fn element_state_style(
+fn finish_element_bound(
+    mut d: gpui::Div,
     el: &Element,
     ctx: &TemplateContext,
-    state: &str,
-    base: Option<&gpui::StyleRefinement>,
-) -> gpui::StyleRefinement {
-    let mut style = gpui::StyleRefinement::default();
-    for class in el.classes.iter().map(String::as_str).chain(
-        el.conditional_classes
-            .iter()
-            .filter(|class| eval_condition_bool(ctx, &class.condition))
-            .map(|class| class.class.as_str()),
-    ) {
-        let is_list = class.starts_with('{') && class.ends_with('}');
-        let resolved = if is_list {
-            ctx.interpolate(class).unwrap_or_default()
-        } else {
-            class.to_owned()
-        };
-        let classes = if is_list {
-            resolved.split_whitespace().collect::<Vec<_>>()
-        } else {
-            vec![resolved.as_str()]
-        };
-        for class in classes {
-            style = state_style_with_initial(style, std::iter::once(class), state, Some(ctx), base);
-        }
-    }
-    if style.box_shadow.as_ref() == base.and_then(|base| base.box_shadow.as_ref()) {
-        style.box_shadow = None;
-    }
-    style
-}
-
-fn finish_element(mut d: gpui::Div, el: &Element, ctx: &TemplateContext, path: &str) -> AnyElement {
+    path: &str,
+    bindings: &crate::RuntimeBindings,
+) -> AnyElement {
     let hover = element_state_style(el, ctx, "hover", Some(d.style()));
     let focus = element_state_style(el, ctx, "focus", Some(d.style()));
     let active = element_state_style(el, ctx, "active", Some(d.style()));
@@ -531,13 +586,29 @@ fn finish_element(mut d: gpui::Div, el: &Element, ctx: &TemplateContext, path: &
         style.overflow.x == Some(gpui::Overflow::Scroll)
             || style.overflow.y == Some(gpui::Overflow::Scroll)
     });
-    let needs_id = scrolling || focusable || active != gpui::StyleRefinement::default();
+    let needs_id = scrolling
+        || focusable
+        || active != gpui::StyleRefinement::default()
+        || !el.bindings.is_empty()
+        || !el.event_handlers.is_empty()
+        || el.tag == "button";
     let d = d.hover(|_| hover).focus(|_| focus);
     let id = element_id(el, ctx)
         .or_else(|| needs_id.then(|| SharedString::from(format!("crepus-node-{path}"))));
     if let Some(id) = id {
         let mut d = d.id(id.clone()).active(|_| active);
-        if focusable {
+        if el.tag == "button" {
+            d = d.role(gpui::accesskit::Role::Button);
+        }
+        d = match crate::runtime_element::apply_bindings(d, el, ctx) {
+            Ok(d) => d,
+            Err(error) => return render_error(error),
+        };
+        d = match crate::runtime_element::apply_events(d, el, ctx, path, bindings) {
+            Ok(d) => d,
+            Err(error) => return render_error(error),
+        };
+        if focusable && !crate::runtime_element::disabled(el, ctx).unwrap_or(true) {
             d = d.focusable().tab_index(0);
         }
         if !el.animations.is_empty() {
@@ -768,16 +839,47 @@ fn render_for(
     cache: &mut IncludeCache,
 ) -> AnyElement {
     let mut children = Vec::new();
+    let mut keys = std::collections::HashSet::new();
+    let mut failure = None;
     for_each_loop_context(block, ctx, |child_ctx| {
+        if failure.is_some() {
+            return;
+        }
+        let key = if let [Node::Element(root)] = block.body.as_slice() {
+            root.bindings
+                .iter()
+                .find(|binding| binding.prop == "key")
+                .map(|binding| {
+                    crepuscularity_core::eval::eval_expr(&binding.value, child_ctx)
+                        .map(|value| value_to_str(&value))
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let key = match key {
+            Ok(key) => key.unwrap_or_else(|| children.len().to_string()),
+            Err(error) => {
+                failure = Some(error);
+                return;
+            }
+        };
+        if !keys.insert(key.clone()) {
+            failure = Some(format!("Duplicate GPUI loop key `{key}`"));
+            return;
+        }
         children.push(render_nodes_at_path(
             &block.body,
             child_ctx,
-            &format!("{path}/{}", children.len()),
+            &scoped_id(path, &format!("item:{key}")),
             slot,
             cache,
         ))
     });
-    div().children(children).into_any_element()
+    failure
+        .map(render_error)
+        .unwrap_or_else(|| div().children(children).into_any_element())
 }
 
 fn render_match(
@@ -1011,6 +1113,22 @@ fn render_named_component(
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+
+    #[test]
+    fn runtime_events_are_reported_instead_of_silently_discarded() {
+        let mut expected = div().text_color(rgb(0xff4444));
+        let expected_color = expected.style().text.color;
+        for source in [
+            "button @click=save\n  \"Save\"",
+            "div @keydown=save\n  \"Keyboard\"",
+            "slot @click=save\n  \"Fallback\"",
+        ] {
+            let nodes = crepuscularity_core::parse_template(source).unwrap();
+            let mut rendered = render_node(&nodes[0], &TemplateContext::new());
+            let diagnostic = rendered.downcast_mut::<gpui::Div>().unwrap();
+            assert_eq!(diagnostic.style().text.color, expected_color, "{source}");
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
@@ -2679,6 +2797,16 @@ mod attribute_id_tests {
         );
         element.bindings[0].origin = BindingOrigin::Expression;
         assert!(element_id(element, &TemplateContext::new()).is_none());
+        element.bindings[0].origin = BindingOrigin::Attribute;
+        let mut rendered = render_nodes(&nodes, &TemplateContext::new());
+        assert_eq!(
+            gpui::Element::id(
+                rendered
+                    .downcast_mut::<gpui::Stateful<gpui::Div>>()
+                    .unwrap()
+            ),
+            Some(gpui::ElementId::Name("42".into()))
+        );
     }
 
     #[test]

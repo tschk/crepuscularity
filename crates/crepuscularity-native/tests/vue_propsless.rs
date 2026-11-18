@@ -136,7 +136,7 @@ fn unsupported_setup_forms_keep_their_diagnostics_without_props() {
             "async setup unsupported",
         ),
         ("for await (const item of []) {}", "await"),
-        ("defineExpose({});", "macro defineExpose"),
+        ("defineExpose({}, {});", "defineExpose requires at most one"),
         ("const props=defineProps();", "typed identifier declaration"),
         (
             "const props=defineProps({label:String});",

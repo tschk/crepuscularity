@@ -1,7 +1,9 @@
 //! ESP-IDF [`esp_lcd`](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/lcd.html) adapter.
 
-use alloc::format;
-use alloc::string::ToString;
+#[cfg(not(feature = "std"))]
+use alloc::{format, string::ToString};
+#[cfg(feature = "std")]
+use std::{format, string::ToString};
 
 use crate::panel::preset::PanelPreset;
 use crate::{DisplayError, PanelConfig, Rgb565Display, ScreenSize};

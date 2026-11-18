@@ -13,11 +13,6 @@ import androidx.compose.runtime.setValue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonArray
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,69 +21,6 @@ import java.io.File
 object CrepusStateStore {
     private val json = Json { ignoreUnknownKeys = true }
     private var revision by mutableLongStateOf(0L)
-
-    private data class Draft(val sequence: Long, val value: JsonElement)
-    private val drafts = mutableMapOf<String, Draft>()
-    private var nextSequence = 0L
-
-    private val jsonNumber = Regex("""-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
-
-    fun snapshotDraft(raw: String): JsonElement {
-        val value = json.parseToJsonElement(raw)
-        fun validate(value: JsonElement) {
-            when (value) {
-                is JsonObject -> value.values.forEach(::validate)
-                is JsonArray -> value.forEach(::validate)
-                is JsonPrimitive -> if (!value.isString && value.content !in listOf("null", "true", "false")) {
-                    require(jsonNumber.matches(value.content) && value.content.toDoubleOrNull()?.isFinite() == true) { "invalid or non-finite change number" }
-                }
-            }
-        }
-        validate(value)
-        return value
-    }
-
-    fun beginDraft(path: String, value: JsonElement): Long {
-        val sequence = ++nextSequence
-        drafts[path] = Draft(sequence, value)
-        revision += 1
-        return sequence
-    }
-
-    fun clearDraft(path: String, sequence: Long) {
-        if (drafts[path]?.sequence == sequence) {
-            drafts.remove(path)
-            revision += 1
-        }
-    }
-
-    fun draftText(path: String, fallback: () -> String): String {
-        revision
-        val value = drafts[path]?.value ?: return fallback()
-        if (value is JsonPrimitive && value.isString) return value.content
-        return text("__crepusDraftValue", "__crepusDraftValue", value)
-    }
-
-    fun draftBool(path: String, fallback: () -> Boolean): Boolean {
-        revision
-        return when (val value = drafts[path]?.value ?: return fallback()) {
-            JsonNull -> false
-            is JsonPrimitive -> if (value.isString) value.content.isNotEmpty()
-                else value.booleanOrNull ?: (value.content.toDoubleOrNull()?.let { it != 0.0 } ?: false)
-            is JsonArray -> value.isNotEmpty()
-            is JsonObject -> value.isNotEmpty()
-        }
-    }
-
-    fun draftNumber(path: String, fallback: () -> Float): Float {
-        revision
-        val draft = drafts[path]?.value ?: return fallback()
-        if (draft is JsonPrimitive && draft.isString) {
-            return number("__crepusDraftValue", "__crepusDraftValue", draft)
-        }
-        val value = (draft as? JsonPrimitive)?.floatOrNull
-        return if (value != null && value.isFinite()) value else 0f
-    }
 
     fun applyResult(raw: String) {
         if (CrepusRustActions.storeResultJson(raw)) {
@@ -108,8 +40,7 @@ object CrepusStateStore {
 
     fun number(expr: String, scopeName: String? = null, scope: JsonElement? = null): Float {
         revision
-        val value = CrepusRustActions.evalNumber(expr, scopeName, scope?.toString()).toFloat()
-        return if (value.isFinite()) value else 0f
+        return CrepusRustActions.evalNumber(expr, scopeName, scope?.toString()).toFloat()
     }
 
     fun items(expr: String, scopeName: String? = null, scope: JsonElement? = null): List<JsonElement> {
@@ -125,14 +56,8 @@ object CrepusRustActions {
         System.loadLibrary("crepus_mobile_actions")
     }
 
-    private var installedActivity = java.lang.ref.WeakReference<ComponentActivity>(null)
-    @Volatile private var pickerGeneration = 0L
-    private val pickerWorker = java.util.concurrent.ThreadPoolExecutor(
-        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
-        java.util.concurrent.ArrayBlockingQueue<Runnable>(4),
-        { task -> Thread(task, "crepus-picker-io").apply { isDaemon = true } },
-        java.util.concurrent.ThreadPoolExecutor.AbortPolicy(),
-    )
+    private lateinit var appContext: Context
+    private lateinit var activity: ComponentActivity
     private var pendingPickerAction: String? = null
     private var openDocuments: (() -> Unit)? = null
 
@@ -140,26 +65,6 @@ object CrepusRustActions {
     external fun dispatchActionJson(action: String): String
     external fun dispatchAndStoreJson(action: String): String
     external fun dispatchChangeJson(action: String, bind: String, valueJson: String): String
-    internal fun dispatchQueuedChange(action: String, bind: String, valueJson: String): String =
-        runCatching {
-            if (action.isNotEmpty()) {
-                dispatchChangeJson(action, bind, valueJson)
-            } else {
-                require(bind.split('.', limit = 128).size <= 126) { "binding path exceeds 126 segments" }
-                val value = CrepusStateStore.snapshotDraft(valueJson)
-                JsonObject(mapOf(
-                    "ok" to JsonPrimitive(true),
-                    "action" to JsonPrimitive("bind"),
-                    "bindings" to JsonObject(mapOf(bind to value)),
-                )).toString()
-            }
-        }.getOrElse(::queuedChangeError)
-
-    internal fun queuedChangeError(error: Throwable): String = JsonObject(mapOf(
-        "ok" to JsonPrimitive(false),
-        "error" to JsonPrimitive(error.message ?: error.toString()),
-    )).toString()
-
     external fun lastResult(): String
     external fun storeResultJson(json: String): Boolean
     external fun evalText(expr: String, scopeName: String?, scopeJson: String?): String
@@ -171,100 +76,23 @@ object CrepusRustActions {
     external fun shutdownAndroid()
 
     fun install(activity: ComponentActivity) {
-        pickerGeneration += 1
-        val generation = pickerGeneration
-        val context = activity.applicationContext
-        installedActivity = java.lang.ref.WeakReference(activity)
-        pendingPickerAction = null
-        openDocuments = null
-        initAndroid(context)
+        this.activity = activity
+        appContext = activity.applicationContext
+        initAndroid(appContext)
         val filePicker =
             activity.registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-                if (pickerGeneration != generation || installedActivity.get() == null) return@registerForActivityResult
-                val action = synchronized(this) {
-                    val pending = pendingPickerAction
-                    pendingPickerAction = null
-                    pending
-                } ?: return@registerForActivityResult
-                importPickedFiles(action, uris.toList(), context, generation, CrepusActions.resultSink)
+                val action = pendingPickerAction ?: return@registerForActivityResult
+                pendingPickerAction = null
+                emit(filePickerResultJson(action, uris))
             }
         openDocuments = { filePicker.launch(arrayOf("*/*")) }
-        CrepusActions.dispatch = { action -> dispatchHostActionOnMain(action) ?: dispatchAndStoreJson(action) }
+        CrepusActions.dispatch = { action -> dispatchHostAction(action) ?: dispatchAndStoreJson(action) }
         CrepusActions.resultSink = { result -> CrepusStateStore.applyResult(result) }
-    }
-
-    fun detach(activity: ComponentActivity): Boolean {
-        if (installedActivity.get() !== activity) return false
-        pickerGeneration += 1
-        installedActivity.clear()
-        openDocuments = null
-        pendingPickerAction = null
-        return true
-    }
-
-    private fun importPickedFiles(
-        action: String,
-        uris: List<Uri>,
-        context: Context,
-        generation: Long,
-        sink: (String) -> Unit,
-    ) {
-        try {
-            pickerWorker.execute {
-                if (pickerGeneration != generation) return@execute
-                val copied = mutableListOf<File>()
-                try {
-                    val result = filePickerResultJson(action, uris, context, copied)
-                    val published = java.util.concurrent.atomic.AtomicBoolean(false)
-                    val delivery = java.util.concurrent.FutureTask<Unit> {
-                        if (pickerGeneration == generation && installedActivity.get() != null) {
-                            published.set(true)
-                            sink(result)
-                        }
-                    }
-                    if (android.os.Handler(android.os.Looper.getMainLooper()).post(delivery)) {
-                        // Only the I/O worker waits; Activity callbacks never await this queue.
-                        runCatching { delivery.get() }
-                    }
-                    if (!published.get()) copied.forEach { it.delete() }
-                } catch (_: Exception) {
-                    copied.forEach { it.delete() }
-                    val delivery = Runnable {
-                        if (pickerGeneration == generation && installedActivity.get() != null) {
-                            sink(errorJson(action, "could not import selected files"))
-                        }
-                    }
-                    android.os.Handler(android.os.Looper.getMainLooper()).post(delivery)
-                }
-            }
-        } catch (_: java.util.concurrent.RejectedExecutionException) {
-            if (pickerGeneration == generation && installedActivity.get() != null) {
-                sink(errorJson(action, "file import queue is full"))
-            }
-        }
-    }
-
-    private fun dispatchHostActionOnMain(action: String): String? {
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            return dispatchHostAction(action)
-        }
-        val task = java.util.concurrent.FutureTask<String?> { dispatchHostAction(action) }
-        check(android.os.Handler(android.os.Looper.getMainLooper()).post(task)) {
-            "main looper unavailable"
-        }
-        return task.get()
     }
 
     private fun dispatchHostAction(action: String): String? {
         dispatchNamedHostAction(action)?.let { return it }
-        val request = runCatching { JSONObject(action) }.getOrElse {
-            val separator = action.indexOf('.')
-            if (separator < 0) return null
-            JSONObject()
-                .put("kind", "plugin")
-                .put("capability", action.substring(0, separator))
-                .put("method", action.substring(separator + 1))
-        }
+        val request = runCatching { JSONObject(action) }.getOrNull() ?: return null
         if (request.optString("kind") != "plugin") return null
         val capability = request.optString("capability")
         if (capability == "app" || capability == "device" || capability == "preferences") return null
@@ -298,18 +126,11 @@ object CrepusRustActions {
 
     private fun dispatchNamedHostAction(action: String): String? =
         when (action) {
-            "import_files" -> synchronized(this) { runCatching {
-                val open = openDocuments ?: error("file picker unavailable")
-                check(pendingPickerAction == null) { "picker already active" }
+            "import_files" -> {
                 pendingPickerAction = action
-                try {
-                    open()
-                    pendingJson(action)
-                } catch (error: Exception) {
-                    pendingPickerAction = null
-                    throw error
-                }
-            }.getOrElse { error -> errorJson(action, error.message ?: error.toString()) } }
+                openDocuments?.invoke() ?: emit(errorJson(action, "file picker unavailable"))
+                pendingJson(action)
+            }
             else -> null
         }
 
@@ -331,14 +152,13 @@ object CrepusRustActions {
             .put("error", error)
             .toString()
 
-    private fun filePickerResultJson(action: String, uris: List<Uri>, context: Context, copied: MutableList<File>): String {
+    private fun filePickerResultJson(action: String, uris: List<Uri>): String {
         val files =
             uris.mapNotNull { uri ->
                 runCatching {
-                    val name = queryDisplayName(context, uri)
-                    val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-                    val file = copyToCache(context, uri, name, mime)
-                    copied.add(file)
+                    val name = queryDisplayName(uri)
+                    val mime = appContext.contentResolver.getType(uri) ?: "application/octet-stream"
+                    val file = copyToCache(uri, name, mime)
                     JSONObject()
                         .put("name", name)
                         .put("mimeType", mime)
@@ -347,35 +167,25 @@ object CrepusRustActions {
                         .put("importSource", "android-document-picker")
                 }.getOrNull()
             }
-        val failedCount = uris.size - files.size
-        val result = JSONObject()
-            .put("ok", failedCount == 0)
+        return JSONObject()
+            .put("ok", true)
             .put("action", action)
-            .put("value", JSONObject().put("files", JSONArray(files)))
-        if (failedCount > 0) {
-            result.put("error", "could not import selected files")
-            result.put("failedCount", failedCount)
-        }
-        return result.toString()
+            .put("value", JSONObject().put("files", files))
+            .toString()
     }
 
-    private fun copyToCache(context: Context, uri: Uri, name: String, mime: String): File {
+    private fun copyToCache(uri: Uri, name: String, mime: String): File {
         val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
             ?: name.substringAfterLast('.', "bin")
-        val file = File.createTempFile("crepus-media-", ".$ext", context.cacheDir)
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                file.outputStream().use { output -> input.copyTo(output) }
-            } ?: error("media item unavailable")
-            return file
-        } catch (error: Exception) {
-            file.delete()
-            throw error
-        }
+        val file = File.createTempFile("crepus-media-", ".$ext", appContext.cacheDir)
+        appContext.contentResolver.openInputStream(uri)?.use { input ->
+            file.outputStream().use { output -> input.copyTo(output) }
+        } ?: error("media item unavailable")
+        return file
     }
 
-    private fun queryDisplayName(context: Context, uri: Uri): String {
-        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+    private fun queryDisplayName(uri: Uri): String {
+        appContext.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)

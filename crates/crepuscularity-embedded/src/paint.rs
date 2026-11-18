@@ -85,6 +85,8 @@ fn stroke_rect(fb: &mut impl Framebuffer, r: Rect, width: u16, color: Color) {
 mod tests {
     use super::*;
     use crate::{framebuffer::Rgb565Buffer, screen::ScreenSize};
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn text_is_painted_inside_its_padding() {
@@ -104,7 +106,7 @@ mod tests {
                 ..crate::EmbeddedStyle::default()
             },
             bounds: Rect::new(0, 0, 12, 10),
-            children: alloc::vec![],
+            children: vec![],
         };
         paint_node(&mut actual, &node, DEFAULT_TEXT);
         draw_text(

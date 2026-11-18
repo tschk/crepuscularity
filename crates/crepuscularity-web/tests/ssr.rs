@@ -177,6 +177,32 @@ fn raw_html_sanitization_ssr() {
 }
 
 #[test]
+fn test_render_template_to_html_with_ssr_markers_false() {
+    let ctx = TemplateContext::new();
+    let tpl = "div\n  \"hello\"";
+    let html = render_template_to_html_with_ssr(tpl, &ctx, false).unwrap();
+    assert_eq!(html, "<div>hello</div>");
+}
+
+#[test]
+fn test_render_template_to_html_with_ssr_markers_true() {
+    let mut ctx = TemplateContext::new();
+    ctx.set("name", "world");
+    let tpl = "div\n  \"hello {name}\"";
+    let html = render_template_to_html_with_ssr(tpl, &ctx, true).unwrap();
+    assert!(html.contains("<div data-crepus-root=\"1\""));
+    assert!(html.contains("__crepus_hydration__"));
+}
+
+#[test]
+fn test_render_template_to_html_with_ssr_parse_error() {
+    let ctx = TemplateContext::new();
+    let tpl_err = "div\n  for in";
+    let result = render_template_to_html_with_ssr(tpl_err, &ctx, true);
+    assert!(result.is_err(), "Invalid syntax should cause parse error");
+}
+
+#[test]
 fn head_extra_strips_malicious_script() {
     let ctx = TemplateContext::new();
     let doc = SsrDocument {

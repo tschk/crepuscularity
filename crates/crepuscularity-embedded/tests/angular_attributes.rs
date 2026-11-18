@@ -6,6 +6,22 @@ use crepuscularity_embedded::{
 use std::path::Path;
 
 #[test]
+fn case_insensitive_attribute_ids_reach_pixels_and_hits() {
+    let screen = ScreenSize::new(32, 16);
+    let nodes = parse_template_with_path(
+        "<button [attr.ID]='name' [attr.hidden]='null' [disabled]='false' class='bg-[#ffffff]'>Go</button>",
+        Some(Path::new("a.ng")),
+    ).unwrap();
+    let mut ctx = TemplateContext::new();
+    ctx.set("name", "last");
+    let mut fb = Rgb565Buffer::new(screen, Color::rgb(0, 0, 0));
+    let doc = render_parsed_nodes_to_framebuffer(&nodes, &ctx, screen, &mut fb).unwrap();
+    assert!(doc.node_by_id("last").is_some());
+    assert_eq!(doc.hit_test(0, 0), Some("last"));
+    assert!(fb.pixels().contains(&u16::MAX));
+}
+
+#[test]
 fn angular_attribute_presence_and_null_ids_remain_distinct() {
     let nodes = parse_template_with_path(
         "<div [attr.id]='name' [attr.hidden]='state'><span>Visible</span></div>",

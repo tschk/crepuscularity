@@ -12,16 +12,12 @@ use crate::dispatch::browser_target;
 use crate::scaffold;
 use crate::ui;
 use crate::wasm_bundle::{
-    cargo_build_wasm32, find_wasm_file, run_wasm_bindgen, run_wasm_opt, wasm_profile_dir,
+    cargo_build_wasm32, find_wasm_file, run_wasm_bindgen, run_wasm_opt, wasm_profile_dirs,
     WasmOptStatus,
 };
 use crepuscularity_core::watch::COOLDOWN_MS;
+use crepuscularity_core::{DriverCache, Fingerprint};
 use crepuscularity_webext::BrowserTarget;
-
-mod output;
-mod safari;
-mod validate;
-mod watch;
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
@@ -35,8 +31,7 @@ pub fn execute(cmd: WebextCommands) {
         } => {
             let app_path = app_path_or_cwd(app);
             let options = build.into_options_or_exit();
-            build_extension(&app_path, false, browser_target(browser), options)
-                .unwrap_or_else(|error| ui::error(&error));
+            build_extension(&app_path, false, browser_target(browser), options);
         }
         WebextCommands::Dev {
             build,
@@ -45,10 +40,8 @@ pub fn execute(cmd: WebextCommands) {
         } => {
             let app_path = app_path_or_cwd(app);
             let options = build.into_options_or_exit();
-            let loaded =
-                load_extension_manifest(&app_path, None).unwrap_or_else(|error| ui::error(&error));
-            let browsers = selected_browsers(&loaded.config, browser_target(browser))
-                .unwrap_or_else(|error| ui::error(&error));
+            let loaded = load_extension_manifest(&app_path, None);
+            let browsers = selected_browsers(&loaded.config, browser_target(browser));
             if browsers.len() != 1 {
                 ui::error("crepus webext dev needs one browser; pass --browser");
             }
@@ -60,8 +53,7 @@ pub fn execute(cmd: WebextCommands) {
                 true,
                 browser,
                 options,
-            )
-            .unwrap_or_else(|error| ui::error(&error));
+            );
             watch_and_reload(&app_path, browser, options);
         }
         WebextCommands::Manifest { app, browser } => {
@@ -89,7 +81,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-crepuscularity-webext = { version = "0.3.6" }
+crepuscularity-webext = { version = "0.2.7" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde-wasm-bindgen = "0.6"
@@ -103,18 +95,25 @@ pub fn runtime_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-// Add application behavior to these startup hooks; the scaffold starts with no-op hooks.
 #[wasm_bindgen]
-pub fn popup_main() {}
+pub fn popup_main() {
+    // TODO: implement popup scaffolding
+}
 
 #[wasm_bindgen]
-pub fn options_main() {}
+pub fn options_main() {
+    // TODO: implement options scaffolding
+}
 
 #[wasm_bindgen]
-pub fn content_main() {}
+pub fn content_main() {
+    // TODO: implement content script scaffolding
+}
 
 #[wasm_bindgen]
-pub fn background_main() {}
+pub fn background_main() {
+    // TODO: implement background script scaffolding
+}
 
 #[wasm_bindgen]
 pub fn settings_seed() -> Result<(), JsValue> {
@@ -162,8 +161,6 @@ fn scaffold_extension(name: &str) {
         ui::error(&format!("directory already exists: {slug}"));
     }
 
-    scaffold::create_project_dir(&base).unwrap_or_else(|e| ui::error(&e));
-
     scaffold::ensure_dir(&base.join("runtime/src"))
         .unwrap_or_else(|e| ui::error(&format!("create runtime/src dir: {e}")));
     scaffold::ensure_dir(&base.join("views"))
@@ -175,7 +172,7 @@ fn scaffold_extension(name: &str) {
     scaffold::write_template(
         &base.join("runtime/Cargo.toml"),
         WEBEXT_CARGO_TOML_TEMPLATE,
-        &[("{{slug}}", &scaffold::cargo_package_name(&slug))],
+        &[("{{slug}}", &slug)],
     )
     .unwrap_or_else(|e| ui::error(&format!("write runtime/Cargo.toml: {e}")));
 
@@ -202,6 +199,7 @@ fn scaffold_extension(name: &str) {
 }
 
 fn scaffold_crepus_toml(name: &str) -> String {
+    let name = toml::Value::String(name.to_owned());
     format!(
         r#"[[targets]]
 type = "webext"
@@ -210,7 +208,7 @@ app = "."
 browsers = ["chromium"]
 
 [targets.extension]
-name = "{name}"
+name = {name}
 version = "0.1.0"
 description = "A browser extension built with crepuscularity"
 
@@ -229,8 +227,8 @@ fn auto_detect_pages(app_path: &Path, manifest: &mut crepuscularity_webext::Exte
     let pages_dir = app_path.join("pages");
     let opts = &mut manifest.options;
 
-    // Detect a popup only when neither configured popup field is set.
-    if opts.action_popup.is_none() && opts.popup_html.is_none() {
+    // action_popup: look for popup.crepus or action.crepus
+    if opts.action_popup.is_none() {
         for stem in ["popup", "action"] {
             let p = pages_dir.join(format!("{stem}.crepus"));
             if p.exists() {
@@ -240,8 +238,8 @@ fn auto_detect_pages(app_path: &Path, manifest: &mut crepuscularity_webext::Exte
         }
     }
 
-    // Detect options UI only when neither configured options field is set.
-    if opts.options_ui.is_none() && opts.options_page.is_none() {
+    // options_ui: look for options.crepus
+    if opts.options_ui.is_none() {
         let p = pages_dir.join("options.crepus");
         if p.exists() {
             opts.options_ui = Some(crepuscularity_webext::OptionsUiSpec {
@@ -278,9 +276,6 @@ fn auto_detect_icons(app_path: &Path, manifest: &mut crepuscularity_webext::Exte
 
     if let Ok(entries) = std::fs::read_dir(&icons_dir) {
         for entry in entries.flatten() {
-            if !entry.path().is_file() {
-                continue;
-            }
             let name = entry.file_name().to_string_lossy().to_string();
 
             // Match icon{size}.png (not action_* icons)
@@ -320,9 +315,9 @@ fn build_extension(
     dev: bool,
     browser: Option<BrowserTarget>,
     options: BuildOptions,
-) -> Result<(), String> {
-    let loaded = load_extension_manifest(app_path, None)?;
-    for browser in selected_browsers(&loaded.config, browser)? {
+) {
+    let loaded = load_extension_manifest(app_path, None);
+    for browser in selected_browsers(&loaded.config, browser) {
         build_extension_with_manifest(
             app_path,
             loaded.manifest.clone(),
@@ -330,9 +325,8 @@ fn build_extension(
             dev,
             browser,
             options,
-        )?;
+        );
     }
-    Ok(())
 }
 
 fn build_extension_with_manifest(
@@ -342,9 +336,9 @@ fn build_extension_with_manifest(
     dev: bool,
     browser: Option<BrowserTarget>,
     options: BuildOptions,
-) -> Result<(), String> {
+) {
     let t0 = Instant::now();
-    build_extension_inner(app_path, &mut manifest, config, dev, t0, browser, options)
+    build_extension_inner(app_path, &mut manifest, config, dev, t0, browser, options);
 }
 
 fn build_extension_inner(
@@ -355,7 +349,7 @@ fn build_extension_inner(
     t0: Instant,
     browser: Option<BrowserTarget>,
     options: BuildOptions,
-) -> Result<(), String> {
+) {
     // Auto-detect options from project structure
     auto_detect_pages(app_path, manifest);
     auto_detect_icons(app_path, manifest);
@@ -369,55 +363,38 @@ fn build_extension_inner(
     eprintln!("{} building {ext_name}", style(label).dim());
     eprintln!();
 
-    let output = output::OutputDirectory::new(
-        app_path,
-        browser.map_or("unpacked", |target| target.dist_dir()),
-    )?;
-    let dist = output.path();
+    let dist = match browser {
+        Some(target) => app_path.join("dist").join(target.dist_dir()),
+        None => app_path.join("dist/unpacked"),
+    };
     let src_dir = dist.join("src");
     let vendor_dir = dist.join("vendor");
-    std::fs::create_dir_all(&src_dir).map_err(|e| format!("create src/ dir: {e}"))?;
-    std::fs::create_dir_all(&vendor_dir).map_err(|e| format!("create vendor/ dir: {e}"))?;
+    std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
+        ui::error(&format!("create src/ dir: {e}"));
+    });
+    std::fs::create_dir_all(&vendor_dir).unwrap_or_else(|e| {
+        ui::error(&format!("create vendor/ dir: {e}"));
+    });
 
     // ── Step 1: manifest.json ────────────────────────────────────────────────
     let manifest_json = generate_manifest_json(manifest, browser, dev);
-    write_manifest_json(dist, &manifest_json)?;
+    write_manifest_json(&dist, &manifest_json);
 
     // ── Step 2: runtime assets ───────────────────────────────────────────────
-    write_runtime_assets(app_path, dist, &src_dir, &vendor_dir, dev, manifest)?;
+    write_runtime_assets(app_path, &dist, &src_dir, &vendor_dir, dev, manifest);
 
     // ── Step 3: WASM runtime ─────────────────────────────────────────────────
-    build_wasm_runtime_if_exists(app_path, &vendor_dir, options)?;
+    build_wasm_runtime_if_exists(app_path, &vendor_dir, options);
 
     // ── Step 4: pre-render popup HTML ────────────────────────────────────────
-    prerender_and_write_popup_html(app_path, &src_dir, manifest)?;
+    prerender_and_write_popup_html(app_path, &src_dir, manifest);
 
     // ── Capability check ────────────────────────────────────────────────────
     report_missing_capabilities(app_path, manifest);
 
-    validate::validate_manifest_assets(dist, &manifest_json)?;
-    if dev {
-        let marker = output.destination().join("src/.reload-id");
-        if std::fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.file_type().is_file()) {
-            if let Some(id) = std::fs::read_to_string(&marker)
-                .ok()
-                .and_then(|text| text.trim().parse::<u64>().ok())
-            {
-                std::fs::write(src_dir.join(".reload-id"), id.to_string())
-                    .map_err(|error| format!("preserve extension reload marker: {error}"))?;
-            }
-        }
-    }
     if browser == Some(BrowserTarget::Safari) && !dev {
-        package_safari(
-            app_path,
-            dist,
-            output.destination(),
-            manifest,
-            config.safari.as_ref(),
-        )?;
+        package_safari(app_path, &dist, manifest, config.safari.as_ref());
     }
-    let dist = output.publish()?;
 
     eprintln!(
         "\n{} built to {}",
@@ -451,7 +428,6 @@ fn build_extension_inner(
         ),
     }
     ui::done_in(t0.elapsed());
-    Ok(())
 }
 
 fn generate_manifest_json(
@@ -469,50 +445,45 @@ fn generate_manifest_json(
     json
 }
 
-fn write_manifest_json(dist: &Path, json: &str) -> Result<(), String> {
+fn write_manifest_json(dist: &Path, json: &str) {
     let sp = ui::spinner("generating manifest.json");
-    std::fs::write(dist.join("manifest.json"), json)
-        .map_err(|e| format!("write manifest.json: {e}"))?;
+    std::fs::write(dist.join("manifest.json"), json).unwrap_or_else(|e| {
+        ui::error(&format!("write manifest.json: {e}"));
+    });
     ui::spinner_ok(&sp, "manifest.json");
-    Ok(())
 }
 
-fn build_wasm_runtime_if_exists(
-    app_path: &Path,
-    vendor_dir: &Path,
-    options: BuildOptions,
-) -> Result<(), String> {
+fn build_wasm_runtime_if_exists(app_path: &Path, vendor_dir: &Path, options: BuildOptions) {
     let runtime_dir = app_path.join("runtime");
     if runtime_dir.exists() {
-        build_wasm_runtime(&runtime_dir, vendor_dir, options)?;
+        build_wasm_runtime(app_path, &runtime_dir, vendor_dir, options);
     } else {
         ui::warning("no runtime/ directory — skipping WASM compile");
         ui::warning("run `crepus webext new` to scaffold a full project");
     }
-    Ok(())
 }
 
 fn prerender_and_write_popup_html(
     app_path: &Path,
     src_dir: &Path,
     manifest: &crepuscularity_webext::ExtensionManifest,
-) -> Result<(), String> {
+) {
     let popup_template = app_path.join("views/popup.crepus");
     if popup_template.exists() {
         let sp = ui::spinner("pre-rendering popup.html");
         match prerender_popup_html(app_path, &popup_template, manifest) {
             Ok(html) => {
-                std::fs::write(src_dir.join("popup.html"), &html)
-                    .map_err(|e| format!("write popup.html: {e}"))?;
+                std::fs::write(src_dir.join("popup.html"), &html).unwrap_or_else(|e| {
+                    ui::error(&format!("write popup.html: {e}"));
+                });
                 ui::spinner_ok(&sp, "popup.html (pre-rendered from popup.crepus)");
             }
             Err(e) => {
                 sp.finish_and_clear();
-                return Err(format!("popup pre-render failed: {e}"));
+                ui::warning(&format!("popup pre-render failed: {e}"));
             }
         }
     }
-    Ok(())
 }
 
 fn report_missing_capabilities(
@@ -541,49 +512,45 @@ fn report_missing_capabilities(
 fn selected_browsers(
     config: &crate::crepus_toml::WebextTargetConfig,
     browser: Option<BrowserTarget>,
-) -> Result<Vec<Option<BrowserTarget>>, String> {
+) -> Vec<Option<BrowserTarget>> {
     if let Some(browser) = browser {
-        return Ok(vec![Some(browser)]);
+        return vec![Some(browser)];
     }
     if config.browsers.is_empty() {
-        return Ok(vec![None]);
+        return vec![None];
     }
     config
         .browsers
         .iter()
         .map(|browser| {
-            BrowserTarget::parse(browser).map(Some).ok_or_else(|| {
-                format!(
+            BrowserTarget::parse(browser).unwrap_or_else(|| {
+                ui::error(&format!(
                     "unsupported webext browser {browser:?}; expected chromium, firefox, or safari"
-                )
+                ))
             })
         })
+        .map(Some)
         .collect()
 }
 
 fn package_safari(
     app_path: &Path,
     dist: &Path,
-    destination: &Path,
     manifest: &crepuscularity_webext::ExtensionManifest,
     safari: Option<&crate::crepus_toml::SafariTomlSection>,
-) -> Result<(), String> {
+) {
     if !cfg!(target_os = "macos") {
-        return Err("Safari packaging requires macOS with Xcode".into());
+        ui::error("Safari packaging requires macOS with Xcode");
     }
-    let safari = safari.ok_or("Safari builds need [targets.safari] with bundle_identifier")?;
+    let safari = safari
+        .unwrap_or_else(|| ui::error("Safari builds need [targets.safari] with bundle_identifier"));
     let project = safari
         .project_location
         .as_deref()
         .map(|path| app_path.join(path))
         .unwrap_or_else(|| app_path.join("dist/safari-app"));
-    let project = crate::web::absolute_resolved(&project)?;
-    let destination = crate::web::absolute_resolved(destination)?;
-    if project.starts_with(&destination) || destination.starts_with(&project) {
-        return Err("Safari project location must not overlap the browser output directory".into());
-    }
     if project.exists() {
-        return Err(format!(
+        ui::error(&format!(
             "Safari project already exists at {}; remove it or set targets.safari.project_location",
             project.display()
         ));
@@ -598,71 +565,17 @@ fn package_safari(
         app_name,
         &safari.bundle_identifier,
         &safari.platforms,
-    )?;
-    // shortcut: failed packaging can leave a partial project; add owned recovery if automatic retries need it.
+    );
     let output = Command::new("xcrun")
         .args(args)
         .output()
-        .map_err(|error| format!("Safari packaging requires macOS with Xcode: {error}"))?;
+        .unwrap_or_else(|_| ui::error("Safari packaging requires macOS with Xcode"));
     if !output.status.success() {
-        return Err(format!(
+        ui::error(&format!(
             "Safari packaging failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    // Some Xcode packagers derive the host ID from the app name instead of this ID.
-    normalize_safari_project(&project, &safari.bundle_identifier)?;
-    Ok(())
-}
-
-fn normalize_safari_project(project: &Path, bundle_identifier: &str) -> Result<(), String> {
-    let mut projects = Vec::new();
-    for entry in walkdir::WalkDir::new(project) {
-        let entry = entry.map_err(|error| format!("inspect generated Safari project: {error}"))?;
-        if entry.file_type().is_file()
-            && entry.file_name() == "project.pbxproj"
-            && entry.path().parent().and_then(Path::extension) == Some("xcodeproj".as_ref())
-        {
-            projects.push(entry.into_path());
-        }
-    }
-    let [path] = projects.as_slice() else {
-        return Err("Safari packaging must generate exactly one Xcode project".into());
-    };
-    let output = Command::new("plutil")
-        .args(["-convert", "json", "-o", "-"])
-        .arg(path)
-        .output()
-        .map_err(|error| format!("read generated Safari project: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "read generated Safari project: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let mut graph = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode generated Safari project: {error}"))?;
-    if !safari::normalize_host_identifiers(&mut graph, bundle_identifier)? {
-        return Ok(());
-    }
-    let json = tempfile::NamedTempFile::new_in(path.parent().expect("project parent"))
-        .map_err(|error| format!("stage Safari project identifiers: {error}"))?;
-    serde_json::to_writer(json.as_file(), &graph)
-        .map_err(|error| format!("encode Safari project identifiers: {error}"))?;
-    // plutil cannot edit OpenStep in place; Xcode also accepts XML project plists.
-    let output = Command::new("plutil")
-        .args(["-convert", "xml1", "-o"])
-        .arg(path)
-        .arg(json.path())
-        .output()
-        .map_err(|error| format!("write Safari project identifiers: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "write Safari project identifiers: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
 }
 
 fn safari_packager_args(
@@ -671,7 +584,7 @@ fn safari_packager_args(
     app_name: &str,
     bundle_identifier: &str,
     platforms: &[String],
-) -> Result<Vec<String>, String> {
+) -> Vec<String> {
     let mut args = vec![
         "safari-web-extension-packager".to_string(),
         "--project-location".to_string(),
@@ -690,15 +603,12 @@ fn safari_packager_args(
         [macos, ios] if macos == "macos" && ios == "ios" => {}
         [ios] if ios == "ios" => args.push("--ios-only".to_string()),
         [macos] if macos == "macos" => args.push("--macos-only".to_string()),
-        _ => {
-            return Err(
-                "targets.safari.platforms must be [\"macos\"], [\"ios\"], or [\"macos\", \"ios\"]"
-                    .into(),
-            )
-        }
+        _ => ui::error(
+            "targets.safari.platforms must be [\"macos\"], [\"ios\"], or [\"macos\", \"ios\"]",
+        ),
     }
     args.push(dist.display().to_string());
-    Ok(args)
+    args
 }
 
 fn write_runtime_assets(
@@ -708,13 +618,15 @@ fn write_runtime_assets(
     vendor_dir: &Path,
     dev: bool,
     manifest: &crepuscularity_webext::ExtensionManifest,
-) -> Result<(), String> {
+) {
     let sp = ui::spinner("writing runtime assets");
     use crepuscularity_webext::extension_assets as a;
 
     macro_rules! w {
         ($name:expr, $path:expr, $content:expr) => {
-            std::fs::write($path, $content).map_err(|e| format!("write {}: {e}", $name))?;
+            std::fs::write($path, $content).unwrap_or_else(|e| {
+                ui::error(&format!("write {}: {e}", $name));
+            });
         };
     }
 
@@ -729,8 +641,9 @@ fn write_runtime_assets(
     );
     let custom_bg = app_path.join("src/background.js");
     if custom_bg.exists() {
-        std::fs::copy(&custom_bg, src_dir.join("background.js"))
-            .map_err(|e| format!("copy custom background.js: {e}"))?;
+        std::fs::copy(&custom_bg, src_dir.join("background.js")).unwrap_or_else(|e| {
+            ui::error(&format!("copy custom background.js: {e}"));
+        });
     }
     w!("content.js", src_dir.join("content.js"), a::CONTENT_JS);
     w!("content.css", src_dir.join("content.css"), a::CONTENT_CSS);
@@ -748,13 +661,16 @@ fn write_runtime_assets(
         w!("dev.js", src_dir.join("dev.js"), a::DEV_JS);
     }
     w!("unocss.js", vendor_dir.join("unocss.js"), a::UNOCSS_JS);
-    copy_app_assets(app_path, dist).map_err(|e| format!("copy app assets: {e}"))?;
-    render_crepus_css_assets(app_path, dist)
-        .map_err(|e| format!("render extension .css.crepus assets: {e}"))?;
-    render_crepus_pages(app_path, dist, manifest)
-        .map_err(|e| format!("render extension .crepus pages: {e}"))?;
+    copy_app_assets(app_path, dist).unwrap_or_else(|e| {
+        ui::error(&format!("copy app assets: {e}"));
+    });
+    render_crepus_css_assets(app_path, dist).unwrap_or_else(|e| {
+        ui::error(&format!("render extension .css.crepus assets: {e}"));
+    });
+    render_crepus_pages(app_path, dist, manifest).unwrap_or_else(|e| {
+        ui::error(&format!("render extension .crepus pages: {e}"));
+    });
     ui::spinner_ok(&sp, "runtime assets");
-    Ok(())
 }
 
 struct LoadedExtensionManifest {
@@ -762,16 +678,13 @@ struct LoadedExtensionManifest {
     config: crate::crepus_toml::WebextTargetConfig,
 }
 
-fn load_extension_manifest(
-    app_path: &Path,
-    target_id: Option<&str>,
-) -> Result<LoadedExtensionManifest, String> {
+fn load_extension_manifest(app_path: &Path, target_id: Option<&str>) -> LoadedExtensionManifest {
     let crepus_toml = app_path.join("crepus.toml");
     if crepus_toml.is_file() {
         let raw = std::fs::read_to_string(&crepus_toml)
-            .map_err(|e| format!("read {}: {e}", crepus_toml.display()))?;
+            .unwrap_or_else(|e| ui::error(&format!("read {}: {e}", crepus_toml.display())));
         let manifest = crate::crepus_toml::CrepusManifest::parse(&raw)
-            .map_err(|e| format!("parse {}: {e}", crepus_toml.display()))?;
+            .unwrap_or_else(|e| ui::error(&format!("parse {}: {e}", crepus_toml.display())));
         let targets = manifest.resolved_targets(app_path);
         let webext: Vec<_> = targets
             .into_iter()
@@ -780,41 +693,42 @@ fn load_extension_manifest(
             .collect();
         match webext.as_slice() {
             [target] => {
-                return Ok(LoadedExtensionManifest {
-                    manifest: target.webext.clone().ok_or_else(|| {
-                        format!(
+                return LoadedExtensionManifest {
+                    manifest: target.webext.clone().unwrap_or_else(|| {
+                        ui::error(&format!(
                             "webext target {:?} in {} needs [targets.extension]",
                             target.id,
                             crepus_toml.display()
-                        )
-                    })?,
+                        ))
+                    }),
                     config: target.webext_config.clone(),
-                })
+                };
             }
-            [] if target_id.is_some() => {
-                return Err(format!(
-                    "no webext target {target_id:?} in {}",
-                    crepus_toml.display()
-                ))
+            [] => {
+                if let Some(id) = target_id {
+                    ui::error(&format!(
+                        "no webext target {:?} in {}",
+                        id,
+                        crepus_toml.display()
+                    ));
+                }
             }
-            [] => {}
-            many => {
-                return Err(format!(
-                    "{} defines {} webext targets; pass --target ID",
-                    crepus_toml.display(),
-                    many.len()
-                ))
-            }
+            many => ui::error(&format!(
+                "{} defines {} webext targets; pass --target ID",
+                crepus_toml.display(),
+                many.len()
+            )),
         }
     }
-    Err(format!(
+
+    ui::error(&format!(
         "no crepus.toml webext target found in {}",
         app_path.display()
-    ))
+    ));
 }
 
 pub(crate) fn build_app_path(app_path: &Path, options: BuildOptions) {
-    build_extension(app_path, false, None, options).unwrap_or_else(|error| ui::error(&error));
+    build_extension(app_path, false, None, options);
 }
 
 pub(crate) fn build_app_target(
@@ -823,28 +737,27 @@ pub(crate) fn build_app_target(
     config: &crate::crepus_toml::WebextTargetConfig,
     options: BuildOptions,
 ) {
-    for browser in selected_browsers(config, None).unwrap_or_else(|error| ui::error(&error)) {
-        build_extension_with_manifest(app_path, manifest.clone(), config, false, browser, options)
-            .unwrap_or_else(|error| ui::error(&error));
+    for browser in selected_browsers(config, None) {
+        build_extension_with_manifest(app_path, manifest.clone(), config, false, browser, options);
     }
 }
 
 fn build_wasm_runtime(
+    app_path: &Path,
     runtime_dir: &Path,
     vendor_dir: &Path,
     options: BuildOptions,
-) -> Result<(), String> {
+) {
     if !compile_wasm_runtime_step(runtime_dir, options) {
-        return Err("extension runtime compilation failed".into());
+        return;
     }
 
-    let Some(wasm_path) = find_built_wasm_step(runtime_dir, options) else {
-        return Err("extension runtime WASM artifact was not found".into());
+    let Some(wasm_path) = find_built_wasm_step(app_path, runtime_dir, options) else {
+        return;
     };
 
-    run_wasm_bindgen_step(&wasm_path, vendor_dir)?;
+    run_wasm_bindgen_step(&wasm_path, vendor_dir);
     optimize_wasm_step(vendor_dir, options);
-    Ok(())
 }
 
 fn compile_wasm_runtime_step(runtime_dir: &Path, options: BuildOptions) -> bool {
@@ -871,23 +784,25 @@ fn compile_wasm_runtime_step(runtime_dir: &Path, options: BuildOptions) -> bool 
     }
 }
 
-fn find_built_wasm_step(runtime_dir: &Path, options: BuildOptions) -> Option<PathBuf> {
-    let target = wasm_profile_dir(runtime_dir, options)
-        .map_err(|error| ui::warning(&error))
-        .ok()?;
-    let wasm_file = find_wasm_file(&target, runtime_dir);
+fn find_built_wasm_step(
+    app_path: &Path,
+    runtime_dir: &Path,
+    options: BuildOptions,
+) -> Option<PathBuf> {
+    let (workspace_target, local_target) = wasm_profile_dirs(app_path, runtime_dir, options);
+    let wasm_file = find_wasm_file(&workspace_target).or_else(|| find_wasm_file(&local_target));
 
     if wasm_file.is_none() {
         ui::warning(&format!(
-            "runtime library .wasm not found in {} (check runtime Cargo.toml [lib] crate-type)",
-            target.display()
+            "built .wasm not found in target/wasm32-unknown-unknown/{}/",
+            options.cargo_profile()
         ));
     }
 
     wasm_file
 }
 
-fn run_wasm_bindgen_step(wasm_path: &Path, vendor_dir: &Path) -> Result<(), String> {
+fn run_wasm_bindgen_step(wasm_path: &Path, vendor_dir: &Path) {
     let sp = ui::spinner("running wasm-bindgen");
     match run_wasm_bindgen(wasm_path, vendor_dir, "runtime") {
         Ok(()) => {
@@ -895,10 +810,19 @@ fn run_wasm_bindgen_step(wasm_path: &Path, vendor_dir: &Path) -> Result<(), Stri
         }
         Err(err) => {
             sp.finish_and_clear();
-            return Err(format!("extension wasm-bindgen failed: {err}"));
+            if err.starts_with("wasm-bindgen:") {
+                let _ = std::fs::copy(wasm_path, vendor_dir.join("runtime_bg.wasm"));
+                ui::warning("wasm-bindgen not found — copied raw .wasm");
+                ui::warning("install: cargo install wasm-bindgen-cli");
+            } else {
+                eprintln!("  {} wasm-bindgen failed", ui::err());
+                for line in err.lines().take(10) {
+                    eprintln!("    {}", style(line).dim());
+                }
+                ui::warning("install wasm-bindgen-cli: cargo install wasm-bindgen-cli");
+            }
         }
     }
-    Ok(())
 }
 
 fn optimize_wasm_step(vendor_dir: &Path, options: BuildOptions) {
@@ -1023,11 +947,9 @@ fn prerender_popup_html(
     use crepuscularity_core::context::TemplateContext;
     use crepuscularity_web::render_from_files;
 
-    let views_dir = template_path
-        .parent()
-        .ok_or_else(|| "popup template has no parent directory".to_string())?;
+    let source = std::fs::read_to_string(template_path).map_err(|e| e.to_string())?;
     let mut files = HashMap::new();
-    collect_crepus_pages(views_dir, &mut files, &mut Vec::new())?;
+    files.insert("popup.crepus".to_string(), source);
 
     let render = |show_help: bool, show_crepus: bool| -> Result<String, String> {
         let mut ctx = TemplateContext::new();
@@ -1043,7 +965,7 @@ fn prerender_popup_html(
     let help_html = render(true, false)?;
     let crepus_html = render(false, true)?;
 
-    let title = crepuscularity_web::escape_html(&manifest.extension.name);
+    let title = &manifest.extension.name;
     // Inline the CSS so the popup is a single self-contained file with zero
     // external fetches before it renders. UnoCSS is not needed here — the popup
     // uses BEM class names from popup.css, not utility classes.
@@ -1071,9 +993,7 @@ fn prerender_popup_html(
 // ── manifest ──────────────────────────────────────────────────────────────────
 
 fn print_manifest(app_path: &Path, browser: Option<BrowserTarget>) {
-    let manifest = load_extension_manifest(app_path, None)
-        .unwrap_or_else(|error| ui::error(&error))
-        .manifest;
+    let manifest = load_extension_manifest(app_path, None).manifest;
     match browser {
         Some(target) => println!("{}", manifest.to_manifest_v3_json_for_browser(target)),
         None => println!("{}", manifest.to_manifest_v3_json()),
@@ -1109,13 +1029,6 @@ fn copy_dir_contents(source: &Path, destination: &Path) -> std::io::Result<()> {
             {
                 continue;
             }
-            // APFS clones can notify on the source; an existing destination forces an ordinary copy.
-            #[cfg(target_vendor = "apple")]
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&target)?;
             std::fs::copy(entry.path(), target)?;
         }
     }
@@ -1197,8 +1110,10 @@ fn render_crepus_pages(
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&src_dir).map_err(|e| e.to_string())?;
 
+    let cache = DriverCache::open(app_path);
+
     for entry in &entries {
-        render_crepus_page(entry, &files, &src_dir, &out_dir, manifest)?;
+        render_crepus_page(entry, &files, &src_dir, &out_dir, manifest, &cache)?;
     }
     Ok(())
 }
@@ -1209,6 +1124,7 @@ fn render_crepus_page(
     src_dir: &Path,
     out_dir: &Path,
     manifest: &crepuscularity_webext::ExtensionManifest,
+    cache: &DriverCache,
 ) -> Result<(), String> {
     let source = files
         .get(entry)
@@ -1220,17 +1136,17 @@ fn render_crepus_page(
     // WASM exports use underscore, not hyphen
     let fn_name = stem.replace('-', "_");
 
-    let js_vendor_prefix = page_script_prefix(&page_script_relative_path(entry).to_string_lossy());
+    let js_vendor_prefix = page_script_prefix(entry);
     let js = format!(
         r#"import init, * as runtime from "{prefix}vendor/runtime.js";
 try {{
   const wasmBytes = await fetch("{prefix}vendor/runtime_bg.wasm").then(r => r.arrayBuffer());
   await init({{ module_or_path: wasmBytes }});
-  const main = runtime[{main_export}];
+  const main = runtime.{fn}_main;
   if (typeof main === "function") {{
     await main();
   }} else {{
-    const render = runtime[{render_export}];
+    const render = runtime.render_{fn};
     if (typeof render === "function") {{
       const output = await render({{}});
       const root = document.getElementById("root");
@@ -1302,8 +1218,7 @@ try {{
   }}
 }}"#,
         prefix = js_vendor_prefix,
-        main_export = serde_json::to_string(&format!("{fn_name}_main")).expect("export string"),
-        render_export = serde_json::to_string(&format!("render_{fn_name}")).expect("export string")
+        fn = fn_name
     );
     let js_output = src_dir.join(page_script_relative_path(entry));
     if let Some(parent) = js_output.parent() {
@@ -1312,9 +1227,13 @@ try {{
     std::fs::write(&js_output, &js).map_err(|e| format!("write {}: {e}", js_output.display()))?;
 
     let html = render_crepus_page_html(source, files, entry, manifest)?;
-    let output = out_dir.join(entry).with_extension("html");
+    let output = out_dir
+        .join(entry.trim_end_matches(".crepus"))
+        .with_extension("html");
 
-    if std::fs::read(&output).is_ok_and(|existing| existing == html.as_bytes()) {
+    // Cache skip: avoid re-rendering unchanged page templates.
+    let fp = Fingerprint::new(source, Some(entry), "webext-page");
+    if output.is_file() && cache.is_up_to_date(&fp, &html) {
         return Ok(());
     }
 
@@ -1322,6 +1241,7 @@ try {{
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(output, &html).map_err(|e| e.to_string())?;
+    cache.record(&fp, &html);
     Ok(())
 }
 
@@ -1332,7 +1252,7 @@ fn collect_crepus_pages(
 ) -> Result<(), String> {
     use rayon::prelude::*;
 
-    let template_files: Vec<_> = walkdir::WalkDir::new(root)
+    let crepus_files: Vec<_> = walkdir::WalkDir::new(root)
         .into_iter()
         .collect::<Result<Vec<_>, walkdir::Error>>()
         .map_err(|e| e.to_string())?
@@ -1340,12 +1260,12 @@ fn collect_crepus_pages(
         .filter(|e| {
             let path = e.path();
             let is_file_or_link = e.file_type().is_file() || e.file_type().is_symlink();
-            is_file_or_link && crate::web::is_framework_template(path)
+            is_file_or_link && path.extension().and_then(|ext| ext.to_str()) == Some("crepus")
         })
         .map(|e| e.path().to_owned())
         .collect();
 
-    let results: Result<Vec<Option<(String, String)>>, String> = template_files
+    let results: Result<Vec<(String, String)>, String> = crepus_files
         .into_par_iter()
         .map(|path| {
             let rel = path
@@ -1353,26 +1273,13 @@ fn collect_crepus_pages(
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let source = match std::fs::read_to_string(&path) {
-                Ok(source) => source,
-                // Non-entry assets are copied verbatim elsewhere. Keep legacy-encoded
-                // HTML opaque; attempting to include it still fails strict bundle lookup.
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::InvalidData
-                        && path.extension().and_then(|ext| ext.to_str()) != Some("crepus") =>
-                {
-                    return Ok(None);
-                }
-                Err(error) => return Err(format!("read {}: {error}", path.display())),
-            };
-            Ok(Some((rel, source)))
+            let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            Ok((rel, source))
         })
         .collect();
 
-    for (rel, source) in results?.into_iter().flatten() {
-        if Path::new(&rel).extension().and_then(|ext| ext.to_str()) == Some("crepus") {
-            entries.push(rel.clone());
-        }
+    for (rel, source) in results? {
+        entries.push(rel.clone());
         files.insert(rel, source);
     }
     entries.sort();
@@ -1403,8 +1310,7 @@ fn render_crepus_page_html(
     } else {
         format!("{} {}", manifest.extension.name, title_suffix)
     };
-    let title = crepuscularity_web::escape_html(&title);
-    let script_src = crepuscularity_web::escape_html(&page_script_src(entry));
+    let script_src = page_script_src(entry);
     let script = format!(r#"<script type="module" src="{script_src}"></script>"#);
     let fonts = google_fonts_head_markup(&decorators.google_fonts);
     let style = if decorators.inline_css.is_empty() {
@@ -1446,9 +1352,14 @@ fn inject_dev_content_script(manifest_json: &str) -> String {
 
 fn watch_and_reload(app_path: &Path, browser: Option<BrowserTarget>, options: BuildOptions) {
     use console::style;
+    use notify::Watcher;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::channel;
 
-    let mut reload_id = 1;
+    eprintln!();
+    eprintln!("  {}", style("watching for changes — Ctrl+C to stop").dim());
+
+    let reload_id = AtomicU64::new(1);
     let src_dir = match browser {
         Some(target) => app_path.join("dist").join(target.dist_dir()).join("src"),
         None => app_path.join("dist/unpacked/src"),
@@ -1456,58 +1367,58 @@ fn watch_and_reload(app_path: &Path, browser: Option<BrowserTarget>, options: Bu
     let _ = std::fs::write(src_dir.join(".reload-id"), "1");
 
     let (tx, rx) = channel();
-    let mut watcher = match watch::ExtensionWatcher::new(app_path, tx) {
-        Ok(watcher) => watcher,
-        Err(error) => {
-            ui::warning(&format!("file watcher failed: {error}"));
-            return;
-        }
-    };
-
-    eprintln!();
-    eprintln!("  {}", style("watching for changes — Ctrl+C to stop").dim());
-
-    // Rebuild only after a full cooldown with no new events.
-    while rx.recv().is_ok() {
-        if !extension_events_settled(|| {
-            rx.recv_timeout(std::time::Duration::from_millis(COOLDOWN_MS))
+    let mut watcher =
+        match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                if event.kind.is_modify() || matches!(event.kind, notify::EventKind::Create(_)) {
+                    let _ = tx.send(());
+                }
+            }
         }) {
-            break;
+            Ok(w) => w,
+            Err(e) => {
+                ui::warning(&format!("file watcher failed: {e}"));
+                return;
+            }
+        };
+
+    let dirs = [
+        "runtime/src",
+        "runtime/views",
+        "src",
+        "pages",
+        "views",
+        "icons",
+        "resources",
+    ];
+    for dir in &dirs {
+        let d = app_path.join(dir);
+        if d.exists() {
+            let _ = watcher.watch(&d, notify::RecursiveMode::Recursive);
         }
+    }
+    let _ = watcher.watch(
+        app_path.join("crepus.toml").as_path(),
+        notify::RecursiveMode::NonRecursive,
+    );
+
+    // Throttle: rebuild at most every 500ms
+    loop {
+        let _ = rx.recv();
+        // drain pending events
+        while rx.try_recv().is_ok() {}
+        std::thread::sleep(std::time::Duration::from_millis(COOLDOWN_MS));
 
         eprintln!();
         let sp = ui::spinner("rebuilding");
         let t0 = std::time::Instant::now();
-        if let Err(error) = watcher.refresh() {
-            ui::warning(&format!("refresh file watcher: {error}"));
-        }
-        let result = build_extension(app_path, true, browser, options);
+        build_extension(app_path, true, browser, options);
         sp.finish_and_clear();
-        if let Err(error) = result {
-            ui::warning(&error);
-            continue;
-        }
 
-        advance_extension_reload_id(&src_dir, &mut reload_id);
+        let id = reload_id.fetch_add(1, Ordering::SeqCst);
+        let _ = std::fs::write(src_dir.join(".reload-id"), id.to_string());
         ui::done_in(t0.elapsed());
     }
-}
-
-fn extension_events_settled(
-    mut receive: impl FnMut() -> Result<(), std::sync::mpsc::RecvTimeoutError>,
-) -> bool {
-    loop {
-        match receive() {
-            Ok(()) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return true,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
-        }
-    }
-}
-
-fn advance_extension_reload_id(src_dir: &Path, reload_id: &mut u64) {
-    *reload_id += 1;
-    let _ = std::fs::write(src_dir.join(".reload-id"), reload_id.to_string());
 }
 
 fn title_case(value: &str) -> String {
@@ -1532,38 +1443,6 @@ mod safari_tests {
     use super::*;
 
     #[test]
-    fn extension_dev_coalesces_events_until_the_quiet_period() {
-        use std::sync::mpsc::RecvTimeoutError;
-        let mut events = [Ok(()), Ok(()), Err(RecvTimeoutError::Timeout)].into_iter();
-        assert!(extension_events_settled(|| events.next().unwrap()));
-        assert!(events.next().is_none());
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(()).unwrap();
-        tx.send(()).unwrap();
-        assert!(extension_events_settled(|| {
-            rx.recv_timeout(std::time::Duration::ZERO)
-        }));
-        assert!(rx.try_recv().is_err());
-        drop(tx);
-        assert!(!extension_events_settled(|| {
-            rx.recv_timeout(std::time::Duration::ZERO)
-        }));
-    }
-
-    #[test]
-    fn extension_dev_advances_reload_id_on_the_first_rebuild() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join(".reload-id");
-        let mut id = 1;
-        std::fs::write(&path, "1").unwrap();
-        for expected in ["2", "3"] {
-            advance_extension_reload_id(tmp.path(), &mut id);
-            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
-        }
-    }
-
-    #[test]
     fn safari_packager_args_include_configured_ios_target() {
         let args = safari_packager_args(
             Path::new("dist/safari"),
@@ -1571,8 +1450,7 @@ mod safari_tests {
             "Example",
             "com.example.extension",
             &["ios".to_string()],
-        )
-        .unwrap();
+        );
         assert_eq!(
             args,
             vec![
@@ -1598,19 +1476,7 @@ fn page_script_src(entry: &str) -> String {
     let relative = page_script_relative_path(entry)
         .to_string_lossy()
         .replace('\\', "/");
-    let path = format!("{}src/{relative}", page_script_prefix(entry));
-    let mut encoded = String::with_capacity(path.len());
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 15) as usize] as char);
-        }
-    }
-    encoded
+    format!("{}src/{relative}", page_script_prefix(entry))
 }
 
 fn page_script_prefix(entry: &str) -> String {
@@ -1622,7 +1488,7 @@ fn page_script_prefix(entry: &str) -> String {
 }
 
 fn page_script_relative_path(entry: &str) -> PathBuf {
-    Path::new("__crepus_pages").join(Path::new(entry).with_extension("js"))
+    Path::new(entry).with_extension("js")
 }
 
 #[cfg(test)]
@@ -1630,110 +1496,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_detection_ignores_directories_and_preserves_explicit_maps() {
-        let root = tempfile::tempdir().unwrap();
-        let icons = root.path().join("icons");
-        std::fs::create_dir_all(icons.join("icon128")).unwrap();
-        std::fs::write(icons.join("icon16.png"), b"icon").unwrap();
-        std::fs::write(icons.join("action_disabled_32.png"), b"action").unwrap();
-        let mut manifest: crepuscularity_webext::ExtensionManifest =
-            toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
-        auto_detect_icons(root.path(), &mut manifest);
-        assert_eq!(manifest.options.icons.len(), 1);
-        assert_eq!(
-            manifest.options.icons.get("16").map(String::as_str),
-            Some("icons/icon16.png")
-        );
-        assert_eq!(manifest.options.action_icons.len(), 1);
-        assert_eq!(
-            manifest.options.action_icons.get("32").map(String::as_str),
-            Some("icons/action_disabled_32.png")
-        );
-
-        manifest.options.icons.clear();
-        manifest
-            .options
-            .icons
-            .insert("64".into(), "custom/icon.png".into());
-        manifest.options.action_icons.clear();
-        manifest
-            .options
-            .action_icons
-            .insert("48".into(), "custom/action.png".into());
-        let icons = manifest.options.icons.clone();
-        let action_icons = manifest.options.action_icons.clone();
-        auto_detect_icons(root.path(), &mut manifest);
-        assert_eq!(manifest.options.icons, icons);
-        assert_eq!(manifest.options.action_icons, action_icons);
-    }
-
-    #[test]
-    fn page_detection_preserves_explicit_popup_and_keeps_defaults() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join("pages")).unwrap();
-        std::fs::write(root.path().join("pages/popup.crepus"), "div").unwrap();
-        let mut manifest: crepuscularity_webext::ExtensionManifest =
-            toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
-        manifest.options.popup_html = Some("pages/custom.html?mode=compact#popup".into());
-        auto_detect_pages(root.path(), &mut manifest);
-        assert_eq!(
-            manifest.to_manifest_v3().action.unwrap().default_popup,
-            "pages/custom.html?mode=compact#popup"
-        );
-
-        manifest.options.popup_html = None;
-        auto_detect_pages(root.path(), &mut manifest);
-        assert_eq!(
-            manifest.to_manifest_v3().action.unwrap().default_popup,
-            "pages/popup.html"
-        );
-
-        manifest.options.action_popup = Some("pages/custom.html#action".into());
-        auto_detect_pages(root.path(), &mut manifest);
-        assert_eq!(
-            manifest.to_manifest_v3().action.unwrap().default_popup,
-            "pages/custom.html#action"
-        );
-    }
-
-    #[test]
-    fn page_detection_preserves_explicit_options_and_keeps_defaults() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join("pages")).unwrap();
-        std::fs::write(root.path().join("pages/options.crepus"), "div").unwrap();
-        let mut manifest: crepuscularity_webext::ExtensionManifest =
-            toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
-        manifest.options.options_page = Some("pages/custom.html?mode=compact#settings".into());
-        auto_detect_pages(root.path(), &mut manifest);
-        let generated = manifest.to_manifest_v3();
-        assert!(generated.options_ui.is_none());
-        assert_eq!(
-            generated.options_page.as_deref(),
-            Some("pages/custom.html?mode=compact#settings")
-        );
-
-        manifest.options.options_page = None;
-        auto_detect_pages(root.path(), &mut manifest);
-        let generated = manifest.to_manifest_v3();
-        assert_eq!(
-            generated.options_ui.as_ref().unwrap().page,
-            "pages/options.html"
-        );
-
-        manifest.options.options_ui.as_mut().unwrap().page = "pages/custom.html#ui".into();
-        auto_detect_pages(root.path(), &mut manifest);
-        assert_eq!(
-            manifest.to_manifest_v3().options_ui.unwrap().page,
-            "pages/custom.html#ui"
-        );
-    }
-
-    #[test]
-    fn scaffold_startup_hooks_are_non_panicking_placeholders() {
-        for name in ["popup", "options", "content", "background"] {
-            assert!(WEBEXT_LIB_RS.contains(&format!("pub fn {name}_main() {{}}")));
+    fn scaffold_crepus_toml_preserves_special_characters_in_names() {
+        for name in [
+            "My \"Extension\"",
+            r"My\Extension",
+            "My\nExtension",
+            "Crépuscule 🌙",
+            "\"\nextra = true\n#",
+        ] {
+            let source = scaffold_crepus_toml(name);
+            let manifest: crate::crepus_toml::CrepusManifest =
+                toml::from_str(&source).expect("valid scaffold manifest");
+            assert_eq!(manifest.targets[0].extension.as_ref().unwrap().name, name);
+            let value: toml::Value = toml::from_str(&source).unwrap();
+            let extension = value["targets"][0]["extension"].as_table().unwrap();
+            assert_eq!(extension.len(), 3, "name must not add manifest keys");
+            assert_eq!(
+                manifest.targets[0]
+                    .capabilities
+                    .as_ref()
+                    .unwrap()
+                    .host_permissions,
+                vec!["https://example.com/*"]
+            );
         }
-        assert!(!WEBEXT_LIB_RS.contains("todo!("));
     }
 
     #[test]
@@ -1793,151 +1579,6 @@ mod tests {
     }
 
     #[test]
-    fn generated_page_clients_do_not_overwrite_extension_runtime_assets() {
-        use crepuscularity_webext::extension_assets as assets;
-        for custom in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let app = root.path().join("app");
-            let dist = root.path().join("dist");
-            std::fs::create_dir_all(app.join("pages")).unwrap();
-            std::fs::create_dir_all(dist.join("src")).unwrap();
-            std::fs::create_dir_all(dist.join("vendor")).unwrap();
-            for name in ["background", "options", "content"] {
-                std::fs::write(
-                    app.join(format!("pages/{name}.crepus")),
-                    "div #root \"Page\"",
-                )
-                .unwrap();
-            }
-            if custom {
-                std::fs::create_dir_all(app.join("src")).unwrap();
-                std::fs::write(
-                    app.join("src/background.js"),
-                    "// custom background fixture",
-                )
-                .unwrap();
-            }
-            let manifest: crepuscularity_webext::ExtensionManifest =
-                toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
-            write_runtime_assets(
-                &app,
-                &dist,
-                &dist.join("src"),
-                &dist.join("vendor"),
-                false,
-                &manifest,
-            )
-            .unwrap();
-            let background = if custom {
-                "// custom background fixture"
-            } else {
-                assets::BACKGROUND_JS
-            };
-            for (name, expected) in [
-                ("background", background),
-                ("options", assets::OPTIONS_JS),
-                ("content", assets::CONTENT_JS),
-            ] {
-                assert_eq!(
-                    std::fs::read_to_string(dist.join(format!("src/{name}.js"))).unwrap(),
-                    expected
-                );
-                let client =
-                    std::fs::read_to_string(dist.join(format!("src/__crepus_pages/{name}.js")))
-                        .unwrap();
-                assert!(client.contains("../../vendor/runtime.js"), "{client}");
-                assert!(client.contains("../../vendor/runtime_bg.wasm"), "{client}");
-                let html =
-                    std::fs::read_to_string(dist.join(format!("pages/{name}.html"))).unwrap();
-                assert!(
-                    html.contains(&format!("../src/__crepus_pages/{name}.js")),
-                    "{html}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn generated_page_script_urls_and_titles_escape_authored_names() {
-        let root = tempfile::tempdir().unwrap();
-        let app = root.path().join("app");
-        let dist = root.path().join("dist");
-        std::fs::create_dir_all(app.join("pages")).unwrap();
-        let manifest: crepuscularity_webext::ExtensionManifest =
-            toml::from_str("[extension]\nname='A&B <Docs> &quot;'\nversion='1.0.0'\n").unwrap();
-        let cases = [
-            ("quote\"part", "quote%22part"),
-            ("query?part", "query%3Fpart"),
-            ("literal%20", "literal%2520"),
-            ("my page", "my%20page"),
-            ("雪", "%E9%9B%AA"),
-        ];
-        for (name, _) in cases {
-            std::fs::write(app.join(format!("pages/{name}.crepus")), "span \"Page\"").unwrap();
-        }
-        render_crepus_pages(&app, &dist, &manifest).unwrap();
-        for (name, encoded) in cases {
-            let html = std::fs::read_to_string(dist.join(format!("pages/{name}.html"))).unwrap();
-            assert!(
-                html.contains(&format!("src=\"../src/__crepus_pages/{encoded}.js\"")),
-                "{html}"
-            );
-            assert!(
-                html.contains("<title>A&amp;B &lt;Docs&gt; &amp;quot; "),
-                "{html}"
-            );
-            assert!(dist.join(format!("src/__crepus_pages/{name}.js")).is_file());
-        }
-    }
-
-    #[test]
-    fn generated_pages_preserve_dotted_filenames_and_quote_export_names() {
-        let root = tempfile::tempdir().unwrap();
-        let app = root.path().join("app");
-        let dist = root.path().join("dist");
-        std::fs::create_dir_all(app.join("pages")).unwrap();
-        for name in [
-            "options.v1",
-            "options.v2",
-            "repeat.crepus",
-            "my page",
-            "hyphen-name",
-        ] {
-            std::fs::write(
-                app.join(format!("pages/{name}.crepus")),
-                format!("div \"{name}\""),
-            )
-            .unwrap();
-        }
-        let manifest: crepuscularity_webext::ExtensionManifest =
-            toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
-        render_crepus_pages(&app, &dist, &manifest).unwrap();
-        for name in [
-            "options.v1",
-            "options.v2",
-            "repeat.crepus",
-            "my page",
-            "hyphen-name",
-        ] {
-            let html = std::fs::read_to_string(dist.join(format!("pages/{name}.html"))).unwrap();
-            assert!(html.contains(name), "{html}");
-            let js = std::fs::read_to_string(dist.join(format!("src/__crepus_pages/{name}.js")))
-                .unwrap();
-            let exported = name.replace('-', "_");
-            assert!(
-                js.contains(&format!("runtime[\"{exported}_main\"]")),
-                "{js}"
-            );
-            assert!(
-                js.contains(&format!("runtime[\"render_{exported}\"]")),
-                "{js}"
-            );
-        }
-        assert!(!dist.join("pages/options.html").exists());
-        assert!(!dist.join("pages/repeat.html").exists());
-    }
-
-    #[test]
     fn renders_extension_pages_from_crepus_sources() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let app = tmp.path().join("app");
@@ -1973,27 +1614,59 @@ mod tests {
         assert!(html.contains("<title>Test Extension Options</title>"));
         assert!(html.contains("<section id=\"root\">"));
         assert!(html.contains("#root{color:#000}"));
-        assert!(html.contains("../src/__crepus_pages/options.js"));
-        let js =
-            std::fs::read_to_string(dist.join("src/__crepus_pages/options.js")).expect("read js");
-        assert!(js.contains(r#"runtime["options_main"]"#));
-        assert!(js.contains(r#"runtime["render_options"]"#));
+        assert!(html.contains("../src/options.js"));
+        let js = std::fs::read_to_string(dist.join("src/options.js")).expect("read js");
+        assert!(js.contains("runtime.options_main"));
+        assert!(js.contains("runtime.render_options"));
         assert!(js.contains(r#"document.getElementById("root")"#));
-        let output = dist.join("pages/options.html");
-        std::fs::write(&output, [0xff, 0xfe]).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires installed Bun to execute the actual emitted extension script"]
+    fn emitted_page_displays_unprintable_errors_and_preserves_missing_root_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("app");
+        let dist = root.path().join("dist");
+        std::fs::create_dir_all(app.join("pages")).unwrap();
+        std::fs::write(app.join("pages/options.crepus"), "p \"Options\"").unwrap();
+        let manifest = toml::from_str("[extension]\nname='Test'\nversion='1.0.0'\n").unwrap();
         render_crepus_pages(&app, &dist, &manifest).unwrap();
-        assert_eq!(std::fs::read(&output).unwrap(), html.as_bytes());
-        let sentinel =
-            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
-        std::fs::File::options()
-            .write(true)
-            .open(&output)
-            .unwrap()
-            .set_times(std::fs::FileTimes::new().set_modified(sentinel))
+        let harness = root.path().join("check.mjs");
+        std::fs::write(&harness, r#"
+import { strict as assert } from 'node:assert';
+const source = await Bun.file(process.argv[2]).text();
+const body = source.slice(source.indexOf('\n') + 1);
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+const run = new AsyncFunction('runtime', 'init', 'document', 'fetch', body);
+const fetchWasm = async () => ({ arrayBuffer: async () => new ArrayBuffer(0) });
+const error = new Error('ordinary failure');
+for (const [value, expected] of [
+  [error, error.stack], ['failed', 'failed'],
+  [Object.create(null), 'Runtime threw an unprintable value'],
+  [new Proxy({}, {get() {throw new Error('getter');}}), 'Runtime threw an unprintable value'],
+  [{get stack() {throw new Error('stack');}, toString() {return 'printable';}}, 'printable'],
+]) {
+  const root = {textContent: 'before'};
+  await run({options_main() {throw value;}}, async () => {}, {getElementById: () => root}, fetchWasm);
+  assert.equal(root.textContent, expected);
+}
+const failure = Object.create(null);
+await assert.rejects(run({options_main() {throw failure;}}, async () => {}, {getElementById: () => null}, fetchWasm), value => value === failure);
+console.log('six emitted-page error cases passed');
+"#).unwrap();
+        let output = std::process::Command::new("bun")
+            .arg(&harness)
+            .arg(dist.join("src/options.js"))
+            .output()
             .unwrap();
-        let preserved = output.metadata().unwrap().modified().unwrap();
-        render_crepus_pages(&app, &dist, &manifest).unwrap();
-        assert_eq!(output.metadata().unwrap().modified().unwrap(), preserved);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("six emitted-page error cases passed")
+        );
     }
 
     #[test]
@@ -2030,7 +1703,7 @@ mod tests {
         render_crepus_pages(&app, &dist, &manifest).expect("render pages");
         let html =
             std::fs::read_to_string(dist.join("pages/settings/options.html")).expect("read html");
-        assert!(html.contains("../../src/__crepus_pages/settings/options.js"));
+        assert!(html.contains("../../src/settings/options.js"));
     }
 
     #[test]
@@ -2076,15 +1749,14 @@ mod tests {
         let settings_html = std::fs::read_to_string(dist.join("pages/settings/options.html"))
             .expect("settings html");
 
-        assert!(admin_html.contains("../../src/__crepus_pages/admin/options.js"));
-        assert!(settings_html.contains("../../src/__crepus_pages/settings/options.js"));
-        let admin_js = std::fs::read_to_string(dist.join("src/__crepus_pages/admin/options.js"))
-            .expect("admin js");
+        assert!(admin_html.contains("../../src/admin/options.js"));
+        assert!(settings_html.contains("../../src/settings/options.js"));
+        let admin_js =
+            std::fs::read_to_string(dist.join("src/admin/options.js")).expect("admin js");
         let settings_js =
-            std::fs::read_to_string(dist.join("src/__crepus_pages/settings/options.js"))
-                .expect("settings js");
-        assert!(admin_js.contains(r#"from "../../../vendor/runtime.js""#));
-        assert!(settings_js.contains(r#"from "../../../vendor/runtime.js""#));
+            std::fs::read_to_string(dist.join("src/settings/options.js")).expect("settings js");
+        assert!(admin_js.contains(r#"from "../../vendor/runtime.js""#));
+        assert!(settings_js.contains(r#"from "../../vendor/runtime.js""#));
     }
 
     #[test]

@@ -651,6 +651,16 @@ pub fn compile_moonshine_vue_with_resolver(
     let handler = fresh("__crepusVueEventHandler");
     let slot_props = fresh("__crepusVueSlotProps");
     let slot_outlet = fresh("__crepusVueSlotOutlet");
+    let expose_component = fresh("__crepusVueExposeComponent");
+    let expose_refs = fresh("__crepusVueExposeRefs");
+    let exposed = fresh("__crepusVueExposed");
+    let component_view = fresh("__crepusVueComponentView");
+    let shallow_unwrap = fresh("__crepusVueShallowUnwrap");
+    let bind_ref = fresh("__crepusVueBindRef");
+    let component_ref = fresh("__crepusVueComponentRef");
+    let element_ref_marker = fresh("__crepusVueElementRef");
+    let component_ref_marker = fresh("__crepusVueComponentRefProp");
+    let ref_value = fresh("__crepusVueRefValue");
     let text_helper = if matches!(target, MoonshineModuleTarget::Ssr) {
         "toDisplayStringSSR"
     } else {
@@ -691,6 +701,12 @@ pub fn compile_moonshine_vue_with_resolver(
         models: Vec::new(),
         model_node: fresh("__crepusVueModelElement"),
         model_bindings: model_bindings(&parsed.program, &setup_semantic),
+        bind_ref: bind_ref.clone(),
+        element_ref_marker: element_ref_marker.clone(),
+        component_ref_marker: component_ref_marker.clone(),
+        ref_value: ref_value.clone(),
+        element_refs: false,
+        component_refs: false,
     };
     let module_type_scopes: Vec<_> = parsed
         .program
@@ -735,6 +751,8 @@ pub fn compile_moonshine_vue_with_resolver(
     let mut emit_events = HashSet::new();
     let mut emits_spans = Vec::new();
     let mut props_spans = Vec::new();
+    let mut expose_spans = Vec::new();
+    let mut expose_has_arg = false;
     let mut props_type = scriptless.then(|| "{}".to_owned());
     let props_view = fresh("__crepusVuePropsView");
     let mut boolean_props_view = false;
@@ -1149,6 +1167,70 @@ pub fn compile_moonshine_vue_with_resolver(
                 imports.push('\n');
                 edits.push((span.start as usize, span.end as usize, String::new()));
             }
+            Statement::ExpressionStatement(statement) => {
+                if let Expression::CallExpression(call) = &statement.expression {
+                    if let Expression::Identifier(callee) = &call.callee {
+                        if callee.name == "defineExpose"
+                            && !callee.reference_id.get().is_some_and(|id| {
+                                setup_semantic
+                                    .scoping()
+                                    .get_reference(id)
+                                    .symbol_id()
+                                    .is_some()
+                            })
+                        {
+                            if !expose_spans.is_empty() {
+                                return Err(
+                                    "native Vue defineExpose may only be called once".into()
+                                );
+                            }
+                            if call.optional
+                                || call.type_arguments.is_some()
+                                || call.arguments.len() > 1
+                                || matches!(
+                                    call.arguments.first(),
+                                    Some(Argument::SpreadElement(_))
+                                )
+                            {
+                                return Err("native Vue defineExpose requires at most one plain object argument without type arguments or spread".into());
+                            }
+                            expose_spans.push(callee.span);
+                            if let Some(arg) = call.arguments.first() {
+                                expose_has_arg = true;
+                                let arg_span = arg.span();
+                                let arg_src =
+                                    &script[arg_span.start as usize..arg_span.end as usize];
+                                let replacement = if slots.server {
+                                    format!("const {exposed} = () => ({arg_src}) satisfies object")
+                                } else {
+                                    format!(
+                                        "const {exposed} = {expose_component}({expose_refs}({arg_src}))"
+                                    )
+                                };
+                                edits.push((
+                                    call.span.start as usize,
+                                    call.span.end as usize,
+                                    replacement,
+                                ));
+                            } else if slots.server {
+                                edits.push((
+                                    statement.span.start as usize,
+                                    statement.span.end as usize,
+                                    String::new(),
+                                ));
+                            } else {
+                                edits.push((
+                                    call.span.start as usize,
+                                    call.span.end as usize,
+                                    format!(
+                                        "const {exposed} = {expose_component}({expose_refs}({{}}))"
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             Statement::ExportNamedDeclaration(_)
             | Statement::ExportDefaultDeclaration(_)
             | Statement::ExportAllDeclaration(_) => {
@@ -1186,6 +1268,7 @@ pub fn compile_moonshine_vue_with_resolver(
         semantic: &'s oxc_semantic::Semantic<'a>,
         props_spans: &'s [oxc_span::Span],
         emits_spans: &'s [oxc_span::Span],
+        expose_spans: &'s [oxc_span::Span],
         function_depth: usize,
         error: Option<String>,
     }
@@ -1221,6 +1304,14 @@ pub fn compile_moonshine_vue_with_resolver(
                             .into(),
                     );
                 }
+            } else if id.name == "defineExpose" {
+                if !self
+                    .expose_spans
+                    .iter()
+                    .any(|span| span.start <= id.span.start && span.end >= id.span.end)
+                {
+                    self.error = Some("unsupported native Vue macro defineExpose".into());
+                }
             } else if id.name == "withDefaults"
                 && self
                     .props_spans
@@ -1230,7 +1321,7 @@ pub fn compile_moonshine_vue_with_resolver(
                 // Validated finite wrapper is erased with its nested defineProps.
             } else if matches!(
                 id.name.as_str(),
-                "defineExpose" | "defineModel" | "defineOptions" | "defineSlots" | "withDefaults"
+                "defineModel" | "defineOptions" | "defineSlots" | "withDefaults"
             ) {
                 self.error = Some(format!("unsupported native Vue macro {}", id.name));
             }
@@ -1262,6 +1353,7 @@ pub fn compile_moonshine_vue_with_resolver(
         semantic: &setup_semantic,
         props_spans: &props_spans,
         emits_spans: &emits_spans,
+        expose_spans: &expose_spans,
         function_depth: 0,
         error: None,
     };
@@ -1406,6 +1498,39 @@ pub fn compile_moonshine_vue_with_resolver(
     if select_scheduler && !default_props_view {
         imports.push_str(&format!("import {{withVueScheduler as {defaults_scheduler}}} from '@tschk/moonshine-vue/props';\n"));
     }
+    if slots.server {
+        if expose_has_arg {
+            imports.push_str(&format!(
+                "import type {{ ComponentView as {component_view}, ShallowUnwrap as {shallow_unwrap} }} from '@tschk/moonshine-vue/app';\n"
+            ));
+        } else {
+            imports.push_str(&format!(
+                "import type {{ ComponentView as {component_view} }} from '@tschk/moonshine-vue/app';\n"
+            ));
+        }
+    } else {
+        if slots.component_refs {
+            imports.push_str(&format!(
+                "import {{ componentRef as {component_ref}, exposeComponent as {expose_component} }} from '@tschk/moonshine-dom/component-instance';\n"
+            ));
+        } else {
+            imports.push_str(&format!(
+                "import {{ exposeComponent as {expose_component} }} from '@tschk/moonshine-dom/component-instance';\n"
+            ));
+        }
+        if slots.element_refs {
+            imports.push_str(&format!(
+                "import {{ bindRef as {bind_ref}, exposeRefs as {expose_refs} }} from '@tschk/moonshine-vue/expose';\n"
+            ));
+        } else {
+            imports.push_str(&format!(
+                "import {{ exposeRefs as {expose_refs} }} from '@tschk/moonshine-vue/expose';\n"
+            ));
+        }
+        imports.push_str(&format!(
+            "import type {{ ComponentView as {component_view} }} from '@tschk/moonshine-vue/app';\n"
+        ));
+    }
     let select_scope_declaration = if select_scheduler {
         format!(
             "const {} = {}();",
@@ -1416,7 +1541,25 @@ pub fn compile_moonshine_vue_with_resolver(
     };
     let model_declarations = slots.models.join("\n");
     let slot_declarations = slots.declarations.join("\n");
-    let body = format!("{instance}\n{select_scope_declaration}\n{model_declarations}\n{slot_declarations}\nreturn <>{jsx}</>;");
+    let default_expose = if expose_spans.is_empty() && !slots.server {
+        format!("const {exposed} = {expose_component}({expose_refs}({{}}));\n")
+    } else {
+        String::new()
+    };
+    let child_type = if slots.server {
+        "import('@tschk/moonshine-dom/ssr').SSRChild"
+    } else {
+        "import('@tschk/moonshine-dom/dom').DOMChild"
+    };
+    let exported_type = if !slots.server {
+        format!("typeof {exposed}")
+    } else if expose_has_arg {
+        format!("{shallow_unwrap}<typeof {exposed}>")
+    } else {
+        "{}".to_owned()
+    };
+    let return_brand = format!("{component_view}<{child_type}, {exported_type}, typeof {props}>");
+    let body = format!("{instance}\n{select_scope_declaration}\n{model_declarations}\n{slot_declarations}\n{default_expose}return (<>{jsx}</>) as {return_brand};");
     let body = if default_props_view || select_scheduler {
         format!("return {defaults_scheduler}(() => {{\n{body}\n}});")
     } else {
@@ -1424,8 +1567,24 @@ pub fn compile_moonshine_vue_with_resolver(
     };
     let synthetic =
         format!("{imports}\nexport default function {name}({props}: {props_type}){{\n{body}\n}}");
-    let mut compiled =
-        crate::compile_moonshine_module(&synthetic, &path.with_extension("vue.tsx"), target)?;
+    let mut property_keys = Vec::new();
+    if !slots.server {
+        if slots.element_refs {
+            property_keys.push((element_ref_marker.as_str(), "\"ref\""));
+        }
+        if slots.component_refs {
+            property_keys.push((component_ref_marker.as_str(), component_ref.as_str()));
+        }
+    }
+    let mut compiled = crate::moonshine_module::compile_moonshine_module_with_hints(
+        &synthetic,
+        &path.with_extension("vue.tsx"),
+        target,
+        crate::moonshine_module::ModuleHints {
+            property_keys: &property_keys,
+            ..crate::moonshine_module::ModuleHints::default()
+        },
+    )?;
     compiled.styles = styles;
     Ok(compiled)
 }
@@ -1681,6 +1840,9 @@ fn camelized_ascii_prop(name: &str) -> Option<String> {
 }
 
 fn possible_boolean_literal(binding: &crepuscularity_core::ast::Binding) -> bool {
+    if binding.prop == "ref" {
+        return false;
+    }
     let allocator = Allocator::default();
     let Ok(value) = Parser::new(&allocator, &binding.value, SourceType::tsx()).parse_expression()
     else {
@@ -1855,7 +2017,7 @@ fn validate_components(
                             && !declared(&binding.prop))
                         || matches!(
                             binding.prop.as_str(),
-                            "children" | "ref" | "key" | "is" | "innerHTML" | "textContent"
+                            "children" | "key" | "is" | "innerHTML" | "textContent"
                         )
                 })
             {
@@ -2056,6 +2218,12 @@ struct SlotEmit {
     models: Vec<String>,
     model_node: String,
     model_bindings: HashMap<String, bool>,
+    bind_ref: String,
+    element_ref_marker: String,
+    component_ref_marker: String,
+    ref_value: String,
+    element_refs: bool,
+    component_refs: bool,
 }
 
 fn literal_text(value: &str) -> Result<String, String> {
@@ -2137,7 +2305,7 @@ fn emit(
                 .collect();
             let mut model_tag = element.tag.clone();
             let mut component_models = Vec::new();
-            if matches!(element.tag.as_str(), "input" | "textarea") {
+            if element.tag == "textarea" || (element.tag == "input" && !models.is_empty()) {
                 if models
                     .iter()
                     .any(|binding| binding.prop.starts_with("bind:"))
@@ -2305,6 +2473,11 @@ fn emit(
                 return Err("native Vue component/non-text models unsupported".into());
             }
             if element.tag == "option" && !slots.selections.is_empty() {
+                if element.bindings.iter().any(|binding| binding.prop == "ref") {
+                    return Err(
+                        "native Vue select model options do not support ref bindings".into(),
+                    );
+                }
                 model_tag = format!("{}{}", slots.model_node, slots.models.len());
                 let read = slots.selections.last().unwrap();
                 let arguments = if slots.server {
@@ -2359,18 +2532,65 @@ fn emit(
                     serde_json::to_string(&element.classes.join(" ")).map_err(|e| e.to_string())?
                 ))
             }
+            let component = element.tag.chars().next().is_some_and(char::is_uppercase);
+            if element
+                .bindings
+                .iter()
+                .filter(|binding| binding.prop == "ref")
+                .count()
+                > 1
+            {
+                return Err("native Vue duplicate ref bindings are unsupported".into());
+            }
             for binding in &element.bindings {
                 if is_model_binding(&binding.prop) {
                     continue;
                 }
+                if binding.prop == "ref" {
+                    let allocator = Allocator::default();
+                    let parsed = Parser::new(&allocator, &binding.value, SourceType::tsx())
+                        .parse_expression()
+                        .map_err(|_| "invalid native Vue template ref binding")?;
+                    let Expression::StringLiteral(literal) = &parsed else {
+                        return Err("native Vue template refs require a static string setup ref name; function and dynamic ref expressions are unsupported".into());
+                    };
+                    let target_name = literal.value.as_str();
+                    if target_name.is_empty()
+                        || slots.model_bindings.get(target_name) != Some(&true)
+                    {
+                        return Err(format!(
+                            "native Vue template ref {target_name:?} requires a top-level const ref or shallowRef setup declaration"
+                        ));
+                    }
+                    if !slots.server {
+                        if component {
+                            slots.component_refs = true;
+                            attrs.push_str(&format!(
+                                " {}={{{{ cleanup: \"commit\" as const, get: () => {target_name}.value, set: ({}: any) => {{ {target_name}.value = {}; }} }}}}",
+                                slots.component_ref_marker, slots.ref_value, slots.ref_value
+                            ));
+                        } else {
+                            slots.element_refs = true;
+                            attrs.push_str(&format!(
+                                " {}={{({}: any) => {}({}, {{ get: () => {target_name}.value, set: ({}: any) => {{ {target_name}.value = {}; }} }})}}",
+                                slots.element_ref_marker,
+                                slots.ref_value,
+                                slots.bind_ref,
+                                slots.ref_value,
+                                slots.ref_value,
+                                slots.ref_value
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 if matches!(
                     binding.prop.as_str(),
-                    "ref" | "key" | "is" | "innerHTML" | "textContent"
+                    "key" | "is" | "innerHTML" | "textContent"
                 ) {
                     return Err("native Vue model/ref/key/content bindings unsupported".into());
                 }
                 if matches!(binding.prop.as_str(), "class" | "style") {
-                    let component = element.tag.chars().next().is_some_and(char::is_uppercase);
                     if !component {
                         if binding.prop == "class"
                             && matches!(

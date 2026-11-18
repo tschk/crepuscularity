@@ -1,7 +1,10 @@
 //! Blit row-major RGB565 bytes into a **mipidsi** display (ILI9341, ST7789, …).
 
+#[cfg(not(feature = "std"))]
 use alloc::format;
 use core::convert::Infallible;
+#[cfg(feature = "std")]
+use std::format;
 
 use crate::DisplayError;
 use display_interface::WriteOnlyDataCommand;

@@ -15,12 +15,6 @@ export function crepusBin(): string {
 
 const BIND_BLOCKLIST = new Set<string>(["baseDir", "_"]) // ponytail: block security-sensitive keys only
 
-// Keep aligned with the native ViewStyle text-compatible input type contract.
-const HTML_INPUT_TYPES = new Set([
-  "text", "search", "tel", "url", "email", "password", "number", "date",
-  "datetime-local", "month", "time", "week", "color", "hidden",
-])
-
 export async function renderIr(path: string, context: Record<string, unknown> = {}): Promise<ViewIr> {
   const template = new TextDecoder("utf-8", { fatal: true }).decode(await Bun.file(path).arrayBuffer())
   const proc = Bun.spawn([crepusBin(), "native", "ir", "--stdin-json"], {
@@ -80,14 +74,9 @@ export class CrepusViewSession {
     if (parsed.handler.startsWith("bind:")) {
       const [, key, ...rest] = parsed.handler.split(":")
       if (rest.length > 0 && !BIND_BLOCKLIST.has(key)) {
-        const value = rest.join(":")
-        if (key === "__proto__") {
-          Object.defineProperty(this.context, key, {
-            value, writable: true, enumerable: true, configurable: true,
-          })
-        } else {
-          this.context[key] = value
-        }
+        Object.defineProperty(this.context, key, {
+          value: rest.join(":"), writable: true, enumerable: true, configurable: true,
+        })
       }
     }
     const callback = this.handlers.get(parsed.handler)
@@ -110,37 +99,14 @@ function renderNode(node: Record<string, unknown>): string {
       const onClick = node.onClick ? ` data-onclick="${escapeAttr(String(node.onClick))}"` : ""
       return `<button${onClick}>${label}</button>`
     }
-    case "link": {
-      const href = String(node.href ?? "")
-      let attrs = safeLinkHref(href) ? ` href="${escapeAttr(href)}"` : ""
-      for (const key of ["target", "rel"]) {
-        if (node[key] != null) attrs += ` ${key}="${escapeAttr(String(node[key]))}"`
-      }
-      return `<a${attrs}>${children(node)}</a>`
-    }
     case "image":
       return `<img src="${escapeAttr(String(node.src ?? ""))}" alt="${escapeAttr(String(node.alt ?? ""))}">`
     case "slotRotate":
       return `<span data-crepus-kind="slotRotate">${escapeHtml(String((node.phrases as unknown[] | undefined)?.[0] ?? ""))}</span>`
-    case "input": {
-      const bind = String(node.bind ?? "")
-      let attrs = ` data-bind="${escapeAttr(bind)}" placeholder="${escapeAttr(String(node.placeholder ?? ""))}"`
-      const style = node.style as Record<string, unknown> | undefined
-      if (typeof style?.formName === "string") attrs += ` name="${escapeAttr(style.formName)}"`
-      if (style?.required === true) attrs += " required"
-      const value = bind === "" ? style?.formValue : undefined
-      if (node.multiline) {
-        let text = value == null ? "" : escapeAttr(String(value))
-        // HTML discards one initial LF; encode CR to retain it through parsing.
-        if (text.startsWith("\n")) text = "\n" + text
-        return `<textarea${attrs}>${text}</textarea>`
-      }
-      const type = node.secure ? "password"
-        : typeof style?.inputType === "string" && HTML_INPUT_TYPES.has(style.inputType) ? style.inputType : null
-      const typeAttr = type === null ? "" : ` type="${escapeAttr(type)}"`
-      const initial = value == null ? "" : ` value="${escapeAttr(String(value))}"`
-      return `<input${typeAttr}${attrs}${initial}>`
-    }
+    case "input":
+      return node.multiline
+        ? `<textarea data-bind="${escapeAttr(String(node.bind ?? ""))}" placeholder="${escapeAttr(String(node.placeholder ?? ""))}"></textarea>`
+        : `<input data-bind="${escapeAttr(String(node.bind ?? ""))}" placeholder="${escapeAttr(String(node.placeholder ?? ""))}">`
     case "picker":
       return `<select data-bind="${escapeAttr(String(node.bind ?? ""))}">${(node.options as Array<Record<string, unknown>> | undefined ?? []).map((opt) => `<option value="${escapeAttr(String(opt.value ?? ""))}">${escapeHtml(String(opt.label ?? ""))}</option>`).join("")}</select>`
     default:
@@ -152,19 +118,10 @@ function children(node: Record<string, unknown>): string {
   return (node.children as Array<Record<string, unknown>> | undefined ?? []).map(renderNode).join("")
 }
 
-function safeLinkHref(value: string): boolean {
-  // Match browser scheme parsing; entity literals are escaped by the caller.
-  const normalized = value.replace(/^[\u0000-\u0020]+/, "").replace(/[\t\r\n]/g, "")
-  const colon = normalized.indexOf(":")
-  if (colon < 0) return true
-  const scheme = normalized.slice(0, colon).replace(/[A-Z]/g, letter => letter.toLowerCase())
-  return !["javascript", "vbscript", "data"].includes(scheme)
-}
-
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 }
 
 function escapeAttr(value: string): string {
-  return escapeHtml(value).replaceAll('"', "&quot;").replaceAll("\r", "&#13;")
+  return escapeHtml(value).replaceAll('"', "&quot;")
 }

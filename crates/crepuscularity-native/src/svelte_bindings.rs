@@ -792,7 +792,8 @@ pub(crate) fn transform_ssr_options(
         output.replace_range(start..end, &value);
     }
     let realm = &globals.realm;
-    output = format!("import {{hSource as {factory},optionBinding as {symbol}}} from \"@tschk/moonshine-dom/ssr\";\n{output}\nfunction {helper}(props:any):any{{const attrs={realm}.Object.create(null);for(const key of {realm}.Object.keys(props)){{if(key!==\"children\")attrs[key===\"{read}\"?\"value\":key]=props[key];}}const box=attrs.value;return {factory}(\"option\",{{...attrs,[{symbol}]:box}},props.children);}}\n");
+    let selection = fresh("__crepusOptionSelection");
+    output = format!("import {{hSource as {factory},hSelectionEntries as {selection},optionBinding as {symbol}}} from \"@tschk/moonshine-dom/ssr\";\n{output}\nfunction {helper}(props:any,children?:any):any{{if(arguments.length>1)return {selection}(\"option\",[],props,children);const attrs={realm}.Object.create(null);for(const key of {realm}.Object.keys(props)){{if(key!==\"children\")attrs[key===\"{read}\"?\"value\":key]=props[key];}}const box=attrs.value;return {factory}(\"option\",{{...attrs,[{symbol}]:box}},props.children);}}\n");
     Ok((output, Some(helper)))
 }
 

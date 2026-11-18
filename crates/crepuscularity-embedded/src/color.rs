@@ -9,7 +9,6 @@ pub enum Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Rgb565(pub u16);
 
-#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb888 {
     pub r: u8,

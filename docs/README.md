@@ -5,7 +5,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | Guide | Description |
 | --- | --- |
 | [DSL reference](dsl.md) | Syntax, control flow, attributes, animations, SwiftUI semantic tags |
-| [Input frontends](frontends.md) | `.crepus`, JSX/TSX, `.svelte`, `.vue` → one AST; what Svelte/Vue do not support |
+| [Input frontends](frontends.md) | `.crepus`, JSX/TSX, Svelte, Vue, Astro, Angular → one AST; support and limits |
 | [Components](components.md) | `include`, slots, defaults, multi-component files |
 | [CLI](cli.md) | `crepus` commands for apps, web, and extensions |
 | [Changelog](changelog.md) | Security and crate releases |
@@ -16,6 +16,7 @@ Guides and references for the `.crepus` DSL, tooling, and browser extensions.
 | [Browser extensions](webext.md) | Manifest V3 apps with `crepus webext` |
 | [Extension policy (MV3)](webext-policy.md) | CSP safety, store submission, permissions checklist |
 | [GPUI integration](gpui.md) | Desktop apps with GPUI |
+| [GPUI source inventory](reviews/gpui-inventory-2026-11-18.md) | Compiled templates, runtime previews, Kit adapter, and verification limits |
 | [ZPUI integration](zpui.md) | Experimental Zig adapter over View IR v7 |
 | [Lite shell](lite.md) | GPUI + V8 desktop shell and Rust plugin bridge |
 | [Native shells](native.md) | iOS/Android apps via native UI frameworks |
@@ -34,4 +35,9 @@ Implementation details for compilers and agents live in-repo at [`CREPUS_WEB_IMP
 
 **Published HTML**
 
-When you run `crepus web build --manifest docs-site/crepus.toml`, the `docs-site` target runs its local `docs-renderer` hook to turn Markdown in this directory into styled pages under `docs-site/dist/docs/` (for example `dsl.html`). The project’s GitHub Pages workflow uses that output for the public documentation site.
+`crepus web build --manifest docs-site/crepus.toml` builds the landing page and
+the configured LLM documentation sources. The current manifest does not configure
+a Markdown-to-HTML renderer; the former `docs-renderer` binary was removed.
+The Pages workflow checks the landing page and WASM artifacts, not individual
+guide pages. Markdown changes in this directory alone do not establish that the
+corresponding `/docs/*.html` pages have been rebuilt or published.

@@ -1,5 +1,5 @@
 import init, * as bindings from "./browser/crepuscularity_wasm.js";
-import { createParser } from "./parser.js";
+import { createParser } from "./parser.ts";
 
 export type * from "./parser.js";
 let parser: Promise<ReturnType<typeof createParser>> | undefined;

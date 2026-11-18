@@ -14,7 +14,7 @@ fn sole_child_labels_keep_their_identity_styles_and_handlers() {
             let expected = if child.contains("#child") {
                 "id=\"child\""
             } else if child.contains("text-red") {
-                "text_color=\"#fb2c36\""
+                "text_color=\"#ef4444\""
             } else {
                 "data_on_click=\"select\""
             };
@@ -29,7 +29,7 @@ fn direct_text_still_uses_the_existing_label_and_button_shapes() {
     let context = TemplateContext::new();
     let label = render_template_to_lvgl_xml("span text-red-500 \"Label\"", &context).unwrap();
     assert!(
-        label.contains("<lv_label text_color=\"#fb2c36\" text=\"Label\"/>"),
+        label.contains("<lv_label text_color=\"#ef4444\" text=\"Label\"/>"),
         "{label}"
     );
     let button = render_template_to_lvgl_xml("button\n  \"Label\"", &context).unwrap();

@@ -54,10 +54,9 @@ fn run_worker_loop(rx: Receiver<WorkerRequest>, bridge: std::sync::Arc<Bridge>, 
             }
             Ok(WorkerRequest::PostMessage { payload, reply }) => {
                 let json = serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string());
-                let json_literal = serde_json::to_string(&json).expect("JSON string serialization");
                 let script = format!(
                     r#"if (typeof globalThis.__crepusWorkerDeliverMessage === "function") {{
-  globalThis.__crepusWorkerDeliverMessage({json_literal});
+  globalThis.__crepusWorkerDeliverMessage({json});
 }}"#
                 );
                 let res = host.eval(&script).map(|_| ()).map_err(|e| e.to_string());
@@ -71,7 +70,6 @@ fn run_worker_loop(rx: Receiver<WorkerRequest>, bridge: std::sync::Arc<Bridge>, 
 fn worker_bootstrap_script() -> &'static str {
     r#"
 (() => {
-  const parseJson = JSON.parse;
   const state = {
     onmessage: null,
     listeners: new Set(),
@@ -110,15 +108,12 @@ fn worker_bootstrap_script() -> &'static str {
     }
   };
 
-  globalThis.__crepusWorkerDeliverMessage = json => dispatchMessage(parseJson(json));
+  globalThis.__crepusWorkerDeliverMessage = dispatchMessage;
 })();
 "#
 }
 
 /// Build this with [`WorkerRuntime::spawn`].
-///
-/// Dropping the runtime joins its worker, waiting for guest code to return.
-/// Keep teardown off the UI thread when the entry script may still be running.
 pub struct WorkerRuntime {
     pub handle: WorkerHandle,
     join: Option<std::thread::JoinHandle<()>>,
@@ -149,7 +144,6 @@ impl Drop for WorkerRuntime {
 
 impl WorkerHandle {
     /// Evaluate `script` in the worker isolate (serialized on the worker thread).
-    /// Blocks the caller until evaluation returns; do not call from the UI thread.
     pub fn eval(&self, script: &str) -> Result<String, String> {
         let (tx, rx) = mpsc::channel();
         self.tx
@@ -162,8 +156,7 @@ impl WorkerHandle {
             .map_err(|_| "worker reply channel closed".to_string())?
     }
 
-    /// Deliver `payload` as the guest message event's data if the dispatcher is defined.
-    /// Blocks the caller until message handlers return; do not call from the UI thread.
+    /// Deliver `payload` to guest `globalThis.__crepusWorkerDeliverMessage(payload)` if defined.
     pub fn post_message(&self, payload: Value) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.tx

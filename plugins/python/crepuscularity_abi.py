@@ -64,15 +64,14 @@ class CrepusAbiSession:
 
     def set_context(self, context: dict[str, Any]) -> None:
         self._check_callback()
-        self._check(self._lib.crepus_session_set_context_json(self._ptr, json.dumps(context).encode()))
+        self._check(self._lib.crepus_session_set_context_json(self._ptr, json.dumps(context, allow_nan=False).encode()))
 
     def patch_context(self, context: dict[str, Any]) -> None:
         self._check_callback()
-        self._check(self._lib.crepus_session_apply_context_patch_json(self._ptr, json.dumps(context).encode()))
+        self._check(self._lib.crepus_session_apply_context_patch_json(self._ptr, json.dumps(context, allow_nan=False).encode()))
 
     def on_event(self, callback: Callable[[dict[str, Any]], None]) -> None:
         self._check_callback()
-
         def trampoline(raw: bytes, _userdata: object) -> None:
             self._in_callback = True
             try:
